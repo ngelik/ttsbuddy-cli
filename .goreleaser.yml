@@ -1,0 +1,46 @@
+version: 2
+
+project_name: ttsbuddy
+
+builds:
+  - id: ttsbuddy
+    main: .
+    binary: ttsbuddy
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X github.com/ngelik/ttsbuddy-cli/cmd.Version={{.Version}}
+      - -X github.com/ngelik/ttsbuddy-cli/cmd.Commit={{.ShortCommit}}
+      - -X github.com/ngelik/ttsbuddy-cli/cmd.Date={{.Date}}
+
+archives:
+  - id: default
+    format_overrides:
+      - goos: darwin
+        format: zip
+
+brews:
+  - name: ttsbuddy
+    repository:
+      owner: ngelik
+      name: homebrew-tap
+    folder: Formula
+    homepage: https://ttsbuddy.com
+    description: "TTSBuddy CLI — convert text to speech from the command line"
+    install: |
+      bin.install "ttsbuddy"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
