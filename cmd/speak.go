@@ -15,6 +15,7 @@ import (
 
 	"github.com/ngelik/ttsbuddy-cli/internal/api"
 	"github.com/ngelik/ttsbuddy-cli/internal/config"
+	"github.com/ngelik/ttsbuddy-cli/internal/display"
 	"github.com/ngelik/ttsbuddy-cli/internal/markdown"
 	"github.com/spf13/cobra"
 )
@@ -155,15 +156,20 @@ func runSpeak(cmd *cobra.Command, args []string) error {
 		Speed: speed,
 	}
 
-	stderrMsg("Submitting TTS request...\n")
+	spin := display.New()
+	if !flagJSON && !flagQuiet {
+		spin.Start("Submitting TTS request...")
+	}
 
 	resp, status, err := api.WithRetry(ctx, api.DefaultRetryConfig(), func(key string) (*api.TTSResponse, int, error) {
 		return client.Speak(ctx, req, key)
 	}, idemKey)
 
 	if err != nil {
+		spin.Stop()
 		return handleAPIError(err, status)
 	}
+	spin.Stop()
 
 	// 9. Handle response
 	switch {
@@ -197,7 +203,11 @@ func runSpeak(cmd *cobra.Command, args []string) error {
 
 func pollUntilComplete(ctx context.Context, client *api.Client, initial *api.TTSResponse, resolved *config.ResolvedConfig) error {
 	jobID := initial.JobID
-	stderrMsg("Job %s accepted, polling for completion...\n", jobID)
+	spin := display.New()
+	if !flagJSON && !flagQuiet {
+		spin.Start(fmt.Sprintf("Job %s accepted, polling...", jobID[:8]))
+	}
+	defer spin.Stop()
 
 	// Parse timeout
 	timeout, err := time.ParseDuration(resolved.PollTimeout)
@@ -249,14 +259,13 @@ func pollUntilComplete(ctx context.Context, client *api.Client, initial *api.TTS
 			}
 			return &exitError{code: 1, msg: msg}
 		case "processing":
-			// Update delay from server hint
 			if resp.RetryAfterSeconds != nil {
 				delay = time.Duration(*resp.RetryAfterSeconds) * time.Second
 			} else {
 				delay = minDuration(delay*3/2, 15*time.Second)
 			}
 			elapsed := time.Since(deadline.Add(-timeout))
-			stderrMsg("Processing... (%s elapsed)\n", elapsed.Round(time.Second))
+			spin.Update(fmt.Sprintf("Processing... (%s)", elapsed.Round(time.Second)))
 		}
 	}
 }
@@ -306,15 +315,19 @@ func handleCompleted(ctx context.Context, client *api.Client, resp *api.TTSRespo
 		return &exitError{code: 2, msg: fmt.Sprintf("output directory does not exist: %s", dir)}
 	}
 
-	stderrMsg("Downloading audio...\n")
+	dlSpin := display.New()
+	if !flagJSON && !flagQuiet {
+		dlSpin.Start("Downloading audio...")
+	}
 
 	if err := client.DownloadAudio(ctx, resp.AudioURL, destPath); err != nil {
+		dlSpin.Stop()
 		// On download failure, show the URL so user can retry manually
 		fmt.Fprintf(os.Stderr, "Download failed: %v\nAudio URL: %s\n", err, resp.AudioURL)
 		return &exitError{code: 1, msg: "download failed"}
 	}
 
-	stderrMsg("Saved to %s\n", destPath)
+	dlSpin.StopWithMessage(fmt.Sprintf("Saved to %s", destPath))
 
 	// Show duration/size if available
 	if resp.Audio != nil && resp.Audio.DurationSeconds != nil {
