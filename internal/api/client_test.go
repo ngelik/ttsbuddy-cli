@@ -25,7 +25,7 @@ func TestSpeak200Completed(t *testing.T) {
 		if r.Header.Get("User-Agent") != "ttsbuddy-cli/test" {
 			t.Errorf("wrong user agent: %s", r.Header.Get("User-Agent"))
 		}
-		json.NewEncoder(w).Encode(TTSResponse{
+		_ = json.NewEncoder(w).Encode(TTSResponse{
 			Success:  true,
 			Status:   "completed",
 			JobID:    "job-123",
@@ -60,7 +60,7 @@ func TestSpeak202Processing(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(202)
 		retryAfter := 5
-		json.NewEncoder(w).Encode(TTSResponse{
+		_ = json.NewEncoder(w).Encode(TTSResponse{
 			Success:           true,
 			Status:            "processing",
 			JobID:             "job-456",
@@ -89,7 +89,7 @@ func TestSpeak202Processing(t *testing.T) {
 
 func TestSpeak200FailedReplay(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(TTSResponse{
+		_ = json.NewEncoder(w).Encode(TTSResponse{
 			Success: false,
 			Status:  "failed",
 			JobID:   "job-789",
@@ -117,7 +117,7 @@ func TestSpeak200FailedReplay(t *testing.T) {
 
 func TestSpeak200Expired(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(TTSResponse{
+		_ = json.NewEncoder(w).Encode(TTSResponse{
 			Success: false,
 			Status:  "expired",
 			JobID:   "job-exp",
@@ -140,7 +140,7 @@ func TestSpeak200Expired(t *testing.T) {
 func TestSpeak401(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(401)
-		json.NewEncoder(w).Encode(TTSResponse{
+		_ = json.NewEncoder(w).Encode(TTSResponse{
 			Success: false,
 			Error:   &APIError{Code: ErrInvalidKey, Message: "Invalid or missing API key"},
 			Meta:    &Meta{RequestID: "req-5", APIVersion: "2026-04"},
@@ -170,7 +170,7 @@ func TestSpeak429(t *testing.T) {
 		w.Header().Set("Retry-After", "10")
 		w.WriteHeader(429)
 		retryAfter := 10
-		json.NewEncoder(w).Encode(TTSResponse{
+		_ = json.NewEncoder(w).Encode(TTSResponse{
 			Success:           false,
 			Error:             &APIError{Code: ErrRateLimited, Message: "Rate limit exceeded"},
 			RetryAfterSeconds: &retryAfter,
@@ -200,7 +200,7 @@ func TestGetStatus200Completed(t *testing.T) {
 		if r.URL.Query().Get("id") != "job-123" {
 			t.Errorf("expected id=job-123, got %s", r.URL.Query().Get("id"))
 		}
-		json.NewEncoder(w).Encode(TTSResponse{
+		_ = json.NewEncoder(w).Encode(TTSResponse{
 			Success:  true,
 			Status:   "completed",
 			JobID:    "job-123",
@@ -226,7 +226,7 @@ func TestGetStatus200Completed(t *testing.T) {
 func TestGetStatus404(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(404)
-		json.NewEncoder(w).Encode(TTSResponse{
+		_ = json.NewEncoder(w).Encode(TTSResponse{
 			Success: false,
 			Error:   &APIError{Code: ErrNotFound, Message: "Job not found"},
 			Meta:    &Meta{RequestID: "req-8", APIVersion: "2026-04"},
@@ -246,7 +246,7 @@ func TestGetStatus404(t *testing.T) {
 
 func TestCompletedMissingAudio(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(TTSResponse{
+		_ = json.NewEncoder(w).Encode(TTSResponse{
 			Success:  true,
 			Status:   "completed",
 			JobID:    "job-no-audio",
@@ -295,7 +295,7 @@ func TestResolveStatusURL(t *testing.T) {
 func TestDownloadAudioAtomic(t *testing.T) {
 	content := []byte("fake mp3 data")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write(content)
+		_, _ = w.Write(content)
 	}))
 	defer srv.Close()
 
@@ -402,13 +402,13 @@ func TestRetryWithSameKey(t *testing.T) {
 		attempts++
 		if attempts < 3 {
 			w.WriteHeader(500)
-			json.NewEncoder(w).Encode(TTSResponse{
+			_ = json.NewEncoder(w).Encode(TTSResponse{
 				Success: false,
 				Error:   &APIError{Code: ErrInternalError, Message: "transient error"},
 			})
 			return
 		}
-		json.NewEncoder(w).Encode(TTSResponse{
+		_ = json.NewEncoder(w).Encode(TTSResponse{
 			Success: true,
 			Status:  "completed",
 			JobID:   "job-retry",
@@ -445,13 +445,13 @@ func TestRetryWithNewKey(t *testing.T) {
 		attempts++
 		if attempts == 1 {
 			w.WriteHeader(502)
-			json.NewEncoder(w).Encode(TTSResponse{
+			_ = json.NewEncoder(w).Encode(TTSResponse{
 				Success: false,
 				Error:   &APIError{Code: ErrTTSProviderError, Message: "Provider failed. Use a new Idempotency-Key."},
 			})
 			return
 		}
-		json.NewEncoder(w).Encode(TTSResponse{
+		_ = json.NewEncoder(w).Encode(TTSResponse{
 			Success: true,
 			Status:  "completed",
 			JobID:   "job-new-key",
@@ -482,7 +482,7 @@ func TestRetryWithNewKey(t *testing.T) {
 func TestRetryContextCancellation(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(500)
-		json.NewEncoder(w).Encode(TTSResponse{
+		_ = json.NewEncoder(w).Encode(TTSResponse{
 			Success: false,
 			Error:   &APIError{Code: ErrInternalError, Message: "error"},
 		})

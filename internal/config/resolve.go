@@ -10,7 +10,6 @@ type FlagValues struct {
 	APIKey    *string
 	Voice     *string
 	Speed     *float64
-	Output    *string
 	OutputDir *string
 	Timeout   *string
 }
@@ -82,10 +81,6 @@ func applyFlags(r *ResolvedConfig, f FlagValues) {
 	}
 	if f.Speed != nil {
 		r.Speed = *f.Speed
-	}
-	if f.Output != nil {
-		// Output is per-command, stored on ResolvedConfig is not needed;
-		// but OutputDir is global.
 	}
 	if f.OutputDir != nil {
 		r.OutputDir = *f.OutputDir

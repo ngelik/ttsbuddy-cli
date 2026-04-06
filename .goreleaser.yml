@@ -31,7 +31,7 @@ brews:
     repository:
       owner: ngelik
       name: homebrew-tap
-    folder: Formula
+    directory: Formula
     homepage: https://ttsbuddy.com
     description: "TTSBuddy CLI — convert text to speech from the command line"
     install: |

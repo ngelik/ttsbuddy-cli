@@ -433,10 +433,6 @@ type exitError struct {
 
 func (e *exitError) Error() string { return e.msg }
 
-func cliErr(code int, context string, err error) error {
-	return &exitError{code: code, msg: fmt.Sprintf("%s: %v", context, err)}
-}
-
 func handleAPIError(err error, status int) error {
 	var apiErr *api.APIResponseError
 	if errors.As(err, &apiErr) {

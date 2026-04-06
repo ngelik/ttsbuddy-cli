@@ -187,7 +187,9 @@ func RetryAfterHeader(resp *http.Response) int {
 		return 0
 	}
 	var seconds int
-	fmt.Sscanf(val, "%d", &seconds)
+	if _, err := fmt.Sscanf(val, "%d", &seconds); err != nil {
+		return 0
+	}
 	return seconds
 }
 
