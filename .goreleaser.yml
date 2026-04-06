@@ -31,7 +31,6 @@ archives:
 
 brews:
   - name: ttsbuddy
-    skip_upload: auto
     repository:
       owner: ngelik
       name: homebrew-tap
