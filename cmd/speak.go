@@ -97,8 +97,8 @@ func runSpeak(cmd *cobra.Command, args []string) error {
 		return &exitError{code: 2, msg: "no API key configured. Run: ttsbuddy config set key <your-key>"}
 	}
 
-	// 2. Read input text
-	text, inputFile, err := readInput(args, speakFile)
+	// 2. Read input text (fromStdin true when input came from pipe or explicit "-")
+	text, inputFile, fromStdin, err := readInput(args, speakFile)
 	if err != nil {
 		return err
 	}
@@ -133,9 +133,11 @@ func runSpeak(cmd *cobra.Command, args []string) error {
 	}
 
 	// 5. Generate idempotency key
+	// Stdin gets a random UUID (content may differ between pipe invocations).
+	// File/arg gets a deterministic content hash (safe to retry same input).
 	idemKey := speakIdempotencyKey
 	if idemKey == "" {
-		if speakFile == "-" {
+		if fromStdin {
 			idemKey = api.GenerateFromStdin()
 		} else {
 			idemKey = api.GenerateFromContent(text, voice, speed)
@@ -167,9 +169,18 @@ func runSpeak(cmd *cobra.Command, args []string) error {
 
 	if err != nil {
 		spin.Stop()
+		if ctx.Err() != nil {
+			fmt.Fprintln(os.Stderr, "\nInterrupted.")
+			os.Exit(130)
+		}
 		return handleAPIError(err, status)
 	}
 	spin.Stop()
+
+	// Save last job for any accepted request (both sync and async)
+	if resp.JobID != "" {
+		_ = config.SaveLastJob(resp.JobID)
+	}
 
 	// 9. Handle response
 	switch {
@@ -190,10 +201,6 @@ func runSpeak(cmd *cobra.Command, args []string) error {
 		return &exitError{code: 1, msg: msg}
 
 	case status == 202 || resp.Status == "processing":
-		// Save last job immediately after API accepts
-		if resp.JobID != "" {
-			_ = config.SaveLastJob(resp.JobID)
-		}
 		return pollUntilComplete(ctx, client, resp, resolved)
 
 	default:
@@ -205,7 +212,11 @@ func pollUntilComplete(ctx context.Context, client *api.Client, initial *api.TTS
 	jobID := initial.JobID
 	spin := display.New()
 	if !flagJSON && !flagQuiet {
-		spin.Start(fmt.Sprintf("Job %s accepted, polling...", jobID[:8]))
+		shortID := jobID
+		if len(shortID) > 8 {
+			shortID = shortID[:8]
+		}
+		spin.Start(fmt.Sprintf("Job %s accepted, polling...", shortID))
 	}
 	defer spin.Stop()
 
@@ -307,6 +318,13 @@ func handleCompleted(ctx context.Context, client *api.Client, resp *api.TTSRespo
 		destPath = speakOutput
 	} else {
 		destPath = api.AutoFilename(voice, resolved.OutputDir)
+
+		// Verify auto-generated path stays within the output directory (defense in depth)
+		absPath, _ := filepath.Abs(destPath)
+		absDir, _ := filepath.Abs(resolved.OutputDir)
+		if !strings.HasPrefix(absPath, absDir+string(filepath.Separator)) && absPath != absDir {
+			return &exitError{code: 2, msg: fmt.Sprintf("output path %s escapes output directory %s", destPath, resolved.OutputDir)}
+		}
 	}
 
 	// Verify output directory exists
@@ -348,6 +366,10 @@ func downloadToStdout(ctx context.Context, _ *api.Client, audioURL string) error
 
 	resp, err := httpPkg.DefaultClient.Do(httpReq)
 	if err != nil {
+		if ctx.Err() != nil {
+			fmt.Fprintln(os.Stderr, "\nInterrupted.")
+			os.Exit(130)
+		}
 		return &exitError{code: 1, msg: fmt.Sprintf("downloading audio: %v", err)}
 	}
 	defer resp.Body.Close()
@@ -357,12 +379,19 @@ func downloadToStdout(ctx context.Context, _ *api.Client, audioURL string) error
 	}
 
 	_, err = io.Copy(os.Stdout, resp.Body)
+	if err != nil && ctx.Err() != nil {
+		fmt.Fprintln(os.Stderr, "\nInterrupted.")
+		os.Exit(130)
+	}
 	return err
 }
 
 // --- Input helpers ---
 
-func readInput(args []string, filePath string) (string, string, error) {
+// maxInputBytes is 500k chars + small buffer. We reject before loading more.
+const maxInputBytes = 500_000 + 1024
+
+func readInput(args []string, filePath string) (text string, inputFile string, fromStdin bool, err error) {
 	hasArg := len(args) > 0 && args[0] != "-"
 	hasStdin := len(args) > 0 && args[0] == "-"
 	hasFile := filePath != ""
@@ -379,44 +408,57 @@ func readInput(args []string, filePath string) (string, string, error) {
 	}
 
 	if sources == 0 {
-		// Check if stdin has data (piped)
 		stat, _ := os.Stdin.Stat()
 		if (stat.Mode() & os.ModeCharDevice) == 0 {
-			// Stdin has piped data
-			data, err := io.ReadAll(os.Stdin)
-			if err != nil {
-				return "", "", &exitError{code: 1, msg: fmt.Sprintf("reading stdin: %v", err)}
-			}
-			return string(data), "", nil
+			t, e := readBounded(os.Stdin)
+			return t, "", true, e
 		}
-		return "", "", &exitError{code: 2, msg: "no input provided. Use: ttsbuddy speak \"text\", speak -f <file>, or pipe input"}
+		return "", "", false, &exitError{code: 2, msg: "no input provided. Use: ttsbuddy speak \"text\", speak -f <file>, or pipe input"}
 	}
 
 	if sources > 1 {
-		return "", "", &exitError{code: 2, msg: "only one input source allowed (text argument, -f file, or stdin -)"}
+		return "", "", false, &exitError{code: 2, msg: "only one input source allowed (text argument, -f file, or stdin -)"}
 	}
 
 	if hasArg {
-		return args[0], "", nil
+		return args[0], "", false, nil
 	}
 
 	if hasStdin {
-		data, err := io.ReadAll(os.Stdin)
-		if err != nil {
-			return "", "", &exitError{code: 1, msg: fmt.Sprintf("reading stdin: %v", err)}
-		}
-		return string(data), "", nil
+		t, e := readBounded(os.Stdin)
+		return t, "", true, e
 	}
 
-	// File input
-	data, err := os.ReadFile(filePath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return "", "", &exitError{code: 2, msg: fmt.Sprintf("file not found: %s", filePath)}
+	// File input — check size before reading
+	info, statErr := os.Stat(filePath)
+	if statErr != nil {
+		if os.IsNotExist(statErr) {
+			return "", "", false, &exitError{code: 2, msg: fmt.Sprintf("file not found: %s", filePath)}
 		}
-		return "", "", &exitError{code: 1, msg: fmt.Sprintf("reading file: %v", err)}
+		return "", "", false, &exitError{code: 1, msg: fmt.Sprintf("reading file: %v", statErr)}
 	}
-	return string(data), filePath, nil
+	if info.Size() > maxInputBytes {
+		return "", "", false, &exitError{code: 2, msg: fmt.Sprintf("file exceeds 500,000 characters (%d bytes). Split into smaller chunks.", info.Size())}
+	}
+
+	data, readErr := os.ReadFile(filePath)
+	if readErr != nil {
+		return "", "", false, &exitError{code: 1, msg: fmt.Sprintf("reading file: %v", readErr)}
+	}
+	return string(data), filePath, false, nil
+}
+
+// readBounded reads from r up to maxInputBytes, returning an error if exceeded.
+func readBounded(r io.Reader) (string, error) {
+	limited := io.LimitReader(r, maxInputBytes+1)
+	data, err := io.ReadAll(limited)
+	if err != nil {
+		return "", &exitError{code: 1, msg: fmt.Sprintf("reading input: %v", err)}
+	}
+	if len(data) > maxInputBytes {
+		return "", &exitError{code: 2, msg: "input exceeds 500,000 characters. Split into smaller chunks."}
+	}
+	return string(data), nil
 }
 
 func isMarkdownFile(path string) bool {

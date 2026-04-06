@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -45,22 +46,31 @@ func IsValidKey(key string) bool {
 	return validKeys[key]
 }
 
-// ConfigDir returns the path to ~/.ttsbuddy, creating it with 0700 if needed.
-func ConfigDir() (string, error) {
+// configDir returns the path to ~/.ttsbuddy without creating it.
+func configDir() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("cannot determine home directory: %w", err)
 	}
-	dir := filepath.Join(home, ".ttsbuddy")
+	return filepath.Join(home, ".ttsbuddy"), nil
+}
+
+// ConfigDir returns the path to ~/.ttsbuddy, creating it with 0700 if needed.
+// Use this only for write operations.
+func ConfigDir() (string, error) {
+	dir, err := configDir()
+	if err != nil {
+		return "", err
+	}
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return "", fmt.Errorf("cannot create config directory: %w", err)
 	}
 	return dir, nil
 }
 
-// ConfigPath returns the path to ~/.ttsbuddy/config.json.
+// ConfigPath returns the path to ~/.ttsbuddy/config.json without creating the directory.
 func ConfigPath() (string, error) {
-	dir, err := ConfigDir()
+	dir, err := configDir()
 	if err != nil {
 		return "", err
 	}
@@ -68,10 +78,11 @@ func ConfigPath() (string, error) {
 }
 
 // Load reads the config file. Returns a zero-value Config if the file doesn't exist.
+// Returns an error for real filesystem failures (permission denied, HOME unset, etc.).
 func Load() (*Config, error) {
 	path, err := ConfigPath()
 	if err != nil {
-		return &Config{}, nil
+		return nil, err
 	}
 
 	data, err := os.ReadFile(path)
@@ -90,7 +101,12 @@ func Load() (*Config, error) {
 }
 
 // Save writes the config to disk with 0600 permissions.
+// Creates ~/.ttsbuddy/ with 0700 if it doesn't exist.
 func Save(cfg *Config) error {
+	// Ensure directory exists for writes
+	if _, err := ConfigDir(); err != nil {
+		return err
+	}
 	path, err := ConfigPath()
 	if err != nil {
 		return err
@@ -146,8 +162,8 @@ func Set(key, value string) error {
 	case "voice":
 		cfg.DefaultVoice = value
 	case "speed":
-		var speed float64
-		if _, err := fmt.Sscanf(value, "%f", &speed); err != nil {
+		speed, parseErr := strconv.ParseFloat(value, 64)
+		if parseErr != nil {
 			return fmt.Errorf("invalid speed value: %s", value)
 		}
 		if speed < 0.5 || speed > 1.5 {

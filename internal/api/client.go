@@ -201,10 +201,29 @@ func parseResponse(resp *http.Response) (*TTSResponse, int, error) {
 
 	var ttsResp TTSResponse
 	if err := json.Unmarshal(data, &ttsResp); err != nil {
+		// Non-JSON response (e.g., reverse proxy HTML error page).
+		// For error status codes, synthesize an APIResponseError so retry
+		// and user-guidance logic still works based on HTTP status.
+		if resp.StatusCode >= 400 {
+			body := string(data)
+			if len(body) > 200 {
+				body = body[:200] + "..."
+			}
+			synthetic := TTSResponse{
+				Success: false,
+				Error: &APIError{
+					Code:    statusToErrorCode(resp.StatusCode),
+					Message: fmt.Sprintf("HTTP %d (non-JSON response): %s", resp.StatusCode, body),
+				},
+			}
+			return &synthetic, resp.StatusCode, &APIResponseError{
+				StatusCode: resp.StatusCode,
+				Response:   synthetic,
+			}
+		}
 		return nil, resp.StatusCode, fmt.Errorf("parsing response (status %d): %w", resp.StatusCode, err)
 	}
 
-	// For non-2xx responses with an error, wrap as APIResponseError
 	if resp.StatusCode >= 400 {
 		return &ttsResp, resp.StatusCode, &APIResponseError{
 			StatusCode: resp.StatusCode,
@@ -213,4 +232,21 @@ func parseResponse(resp *http.Response) (*TTSResponse, int, error) {
 	}
 
 	return &ttsResp, resp.StatusCode, nil
+}
+
+func statusToErrorCode(status int) string {
+	switch {
+	case status == 401:
+		return ErrInvalidKey
+	case status == 403:
+		return ErrInactiveSubscription
+	case status == 404:
+		return ErrNotFound
+	case status == 429:
+		return ErrRateLimited
+	case status >= 500:
+		return ErrInternalError
+	default:
+		return ErrInvalidRequest
+	}
 }
