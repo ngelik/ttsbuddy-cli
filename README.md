@@ -249,6 +249,45 @@ For full API details, see the [API Reference](https://ttsbuddy.com/docs/develope
 | "Text too long" | Split input into chunks under 500k characters |
 | Audio file not found | Files expire based on plan — re-generate |
 
+## Development
+
+### Running Tests
+
+```bash
+# Unit tests (deterministic, no network)
+make test
+
+# Unit tests with race detector
+go test -race ./...
+
+# Coverage report
+go test -coverprofile=coverage.out ./...
+go tool cover -func=coverage.out        # per-function summary
+go tool cover -html=coverage.out         # interactive HTML report
+
+# Lint (install with: make tools)
+make lint
+
+# Live API integration tests (requires running API)
+TTSBUDDY_API_KEY=ttsb_... TTSBUDDY_API_URL=http://localhost:54321/functions/v1/agent-tts \
+  ./scripts/integration_test.sh
+```
+
+### Test Architecture
+
+- **Internal packages** (`internal/api`, `internal/config`, `internal/markdown`) use standard Go unit tests with `httptest` servers — no network or live API needed.
+- **Command tests** (`cmd/`) use a **subprocess pattern** to safely test `os.Exit` paths and direct `os.Stdout/Stderr` writes. Each test re-invokes the test binary via `TestHelperProcess`, capturing real output and exit codes.
+- **Integration tests** (`scripts/integration_test.sh`) run the built binary against a live or local API, gated by `TTSBUDDY_API_KEY`.
+
+### Build
+
+```bash
+make build                   # build to bin/ttsbuddy
+make tools                   # install golangci-lint + goreleaser
+make release-snapshot        # test release build for all platforms
+make clean                   # remove bin/ and dist/
+```
+
 ## Documentation
 
 - [API Reference](https://ttsbuddy.com/docs/developers/api-reference) — full endpoint documentation
