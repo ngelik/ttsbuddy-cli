@@ -345,54 +345,86 @@ func TestDownloadAudioCleanupOnError(t *testing.T) {
 	}
 }
 
-func TestIdempotencyKeyDeterminism(t *testing.T) {
-	key1 := GenerateFromContent("hello world", "af_heart", 1.0)
-	key2 := GenerateFromContent("hello world", "af_heart", 1.0)
-	if key1 != key2 {
-		t.Errorf("same input should produce same key: %q != %q", key1, key2)
-	}
+// Tests for IsRetryable, NeedsNewIdempotencyKey, idempotency keys moved to
+// types_test.go and idempotency_test.go
 
-	key3 := GenerateFromContent("hello world", "bf_emma", 1.0)
-	if key1 == key3 {
-		t.Error("different voice should produce different key")
+func TestFetchVoices(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/voices" {
+			t.Errorf("expected /api/v1/voices, got %s", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`[{"id":"af_heart","name":"Heart","gender":"Female","language":"English"}]`))
+	}))
+	defer srv.Close()
+
+	client := NewClient("", "", "test")
+	voices, err := client.FetchVoices(context.Background(), srv.URL)
+	if err != nil {
+		t.Fatalf("FetchVoices error: %v", err)
+	}
+	if len(voices) != 1 || voices[0].ID != "af_heart" {
+		t.Errorf("expected af_heart, got %+v", voices)
 	}
 }
 
-func TestIdempotencyKeyUniqueness(t *testing.T) {
-	k1 := GenerateFromStdin()
-	k2 := GenerateFromStdin()
-	if k1 == k2 {
-		t.Error("stdin keys should be unique")
+func TestFetchVoicesFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(500)
+	}))
+	defer srv.Close()
+
+	client := NewClient("", "", "test")
+	_, err := client.FetchVoices(context.Background(), srv.URL)
+	if err == nil {
+		t.Error("expected error for 500 response")
 	}
 }
 
-func TestNeedsNewIdempotencyKey(t *testing.T) {
-	if NeedsNewIdempotencyKey(nil) {
-		t.Error("nil error should not need new key")
+func TestSpeakNonJSONError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(502)
+		_, _ = w.Write([]byte(`<html><body>Bad Gateway</body></html>`))
+	}))
+	defer srv.Close()
+
+	client := NewClient(srv.URL, "test_key", "test")
+	resp, status, err := client.Speak(context.Background(), SpeakRequest{Text: "test"}, "key")
+	if err == nil {
+		t.Fatal("expected error for non-JSON 502")
 	}
-	if NeedsNewIdempotencyKey(&APIError{Message: "some error"}) {
-		t.Error("generic error should not need new key")
+	if status != 502 {
+		t.Errorf("status: got %d, want 502", status)
 	}
-	if !NeedsNewIdempotencyKey(&APIError{Message: "failed. Use a new Idempotency-Key."}) {
-		t.Error("should detect 'new Idempotency-Key' in message")
+	apiErr, ok := err.(*APIResponseError)
+	if !ok {
+		t.Fatalf("expected APIResponseError, got %T", err)
+	}
+	if apiErr.ErrorCode() != ErrInternalError {
+		t.Errorf("code: got %q, want %q", apiErr.ErrorCode(), ErrInternalError)
+	}
+	if resp == nil || resp.Error == nil {
+		t.Fatal("expected synthetic response with error")
 	}
 }
 
-func TestIsRetryable(t *testing.T) {
-	if !IsRetryable(ErrRateLimited, 429) {
-		t.Error("429 should be retryable")
+func TestSpeakNonJSON403(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(403)
+		_, _ = w.Write([]byte(`Forbidden by proxy`))
+	}))
+	defer srv.Close()
+
+	client := NewClient(srv.URL, "test_key", "test")
+	_, _, err := client.Speak(context.Background(), SpeakRequest{Text: "test"}, "key")
+	if err == nil {
+		t.Fatal("expected error")
 	}
-	if !IsRetryable(ErrInternalError, 500) {
-		t.Error("500 should be retryable")
+	apiErr, ok := err.(*APIResponseError)
+	if !ok {
+		t.Fatalf("expected APIResponseError, got %T", err)
 	}
-	if !IsRetryable(ErrTTSProviderError, 502) {
-		t.Error("502 should be retryable")
-	}
-	if IsRetryable(ErrInvalidKey, 401) {
-		t.Error("401 should not be retryable")
-	}
-	if IsRetryable(ErrInactiveSubscription, 403) {
-		t.Error("403 should not be retryable")
+	if apiErr.ErrorCode() != ErrForbidden {
+		t.Errorf("code: got %q, want %q (should be generic FORBIDDEN, not INACTIVE_SUBSCRIPTION)", apiErr.ErrorCode(), ErrForbidden)
 	}
 }
 

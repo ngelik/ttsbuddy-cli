@@ -212,3 +212,161 @@ func TestIsValidKey(t *testing.T) {
 		t.Error("'bogus' should be invalid")
 	}
 }
+
+func TestGetAllKeys(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	cfg := &Config{
+		APIKey:       "ttsb_abc_secret",
+		DefaultVoice: "bf_emma",
+		DefaultSpeed: 0.8,
+		PollTimeout:  "5m",
+		OutputDir:    "/tmp",
+		APIURL:       "https://example.com",
+		TTSAPIBaseURL: "https://tts.example.com",
+	}
+	if err := Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Key should be redacted
+	val, _ := Get(loaded, "key")
+	if val != "ttsb_abc_..." {
+		t.Errorf("key should be redacted, got %q", val)
+	}
+
+	val, _ = Get(loaded, "voice")
+	if val != "bf_emma" {
+		t.Errorf("voice: got %q", val)
+	}
+
+	val, _ = Get(loaded, "speed")
+	if val != "0.8" {
+		t.Errorf("speed: got %q", val)
+	}
+
+	_, err = Get(loaded, "nonexistent")
+	if err == nil {
+		t.Error("expected error for unknown key")
+	}
+}
+
+func TestSetTimeoutValid(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	if err := Set("timeout", "5m"); err != nil {
+		t.Errorf("5m should be valid: %v", err)
+	}
+	if err := Set("timeout", "30s"); err != nil {
+		t.Errorf("30s should be valid: %v", err)
+	}
+}
+
+func TestSetTimeoutInvalid(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	err := Set("timeout", "garbage")
+	if err == nil {
+		t.Error("expected error for invalid timeout")
+	}
+	if _, ok := err.(*ValidationError); !ok {
+		t.Errorf("expected *ValidationError, got %T", err)
+	}
+}
+
+func TestValidationErrorType(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	err := Set("speed", "bad")
+	if _, ok := err.(*ValidationError); !ok {
+		t.Errorf("speed validation: expected *ValidationError, got %T", err)
+	}
+
+	err = Set("timeout", "bad")
+	if _, ok := err.(*ValidationError); !ok {
+		t.Errorf("timeout validation: expected *ValidationError, got %T", err)
+	}
+}
+
+func TestAtomicWriteNoTempLeftover(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	cfg := &Config{DefaultVoice: "af_heart"}
+	if err := Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	// No .tmp files should remain
+	dir := filepath.Join(tmp, ".ttsbuddy")
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		if filepath.Ext(e.Name()) != ".json" && e.Name() != "config.json" {
+			t.Errorf("unexpected file in config dir: %s", e.Name())
+		}
+	}
+}
+
+func TestLoadMalformedJSON(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	dir := filepath.Join(tmp, ".ttsbuddy")
+	_ = os.MkdirAll(dir, 0700)
+	_ = os.WriteFile(filepath.Join(dir, "config.json"), []byte("{not json}"), 0600)
+
+	_, err := Load()
+	if err == nil {
+		t.Error("expected error for malformed JSON")
+	}
+}
+
+func TestLoadDoesNotCreateDir(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	// Load should NOT create ~/.ttsbuddy
+	_, _ = Load()
+
+	dir := filepath.Join(tmp, ".ttsbuddy")
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Error("Load should not create config directory")
+	}
+}
+
+func TestResolveEnvSpeedWarning(t *testing.T) {
+	t.Setenv("TTSBUDDY_SPEED", "notanumber")
+	_, warnings := Resolve(&Config{}, FlagValues{})
+	found := false
+	for _, w := range warnings {
+		if len(w) > 0 {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected warning for invalid TTSBUDDY_SPEED")
+	}
+}
+
+func TestResolveEnvTimeoutWarning(t *testing.T) {
+	t.Setenv("TTSBUDDY_TIMEOUT", "notaduration")
+	_, warnings := Resolve(&Config{}, FlagValues{})
+	found := false
+	for _, w := range warnings {
+		if len(w) > 0 {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected warning for invalid TTSBUDDY_TIMEOUT")
+	}
+}
