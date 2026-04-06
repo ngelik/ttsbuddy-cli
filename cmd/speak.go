@@ -365,6 +365,10 @@ func handleCompleted(ctx context.Context, client *api.Client, resp *api.TTSRespo
 }
 
 func downloadToStdout(ctx context.Context, _ *api.Client, audioURL string) error {
+	if err := api.ValidateDownloadURL(audioURL); err != nil {
+		return &exitError{code: 1, msg: err.Error()}
+	}
+
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 
@@ -387,7 +391,7 @@ func downloadToStdout(ctx context.Context, _ *api.Client, audioURL string) error
 		return &exitError{code: 1, msg: fmt.Sprintf("download returned status %d", resp.StatusCode)}
 	}
 
-	_, err = io.Copy(os.Stdout, resp.Body)
+	_, err = api.CopyBounded(os.Stdout, resp.Body, 500*1024*1024)
 	if err != nil && ctx.Err() != nil {
 		fmt.Fprintln(os.Stderr, "\nInterrupted.")
 		os.Exit(130)

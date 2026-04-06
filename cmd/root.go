@@ -57,9 +57,16 @@ var rootCmd = &cobra.Command{
 		var warnings []string
 		resolvedCfg, warnings = config.Resolve(cfg, flags)
 
+		// Warn about insecure API URL when credentials are configured
+		if resolvedCfg.APIKey != "" {
+			if w := config.WarnInsecureURL(resolvedCfg.APIURL); w != "" {
+				warnings = append(warnings, w)
+			}
+		}
+
 		if !flagJSON {
 			for _, w := range warnings {
-				fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+				_, _ = fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
 			}
 		}
 		return nil

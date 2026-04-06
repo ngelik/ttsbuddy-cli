@@ -254,10 +254,11 @@ ttsbuddy speak "Hello" --no-download --json | jq -r '.audio_url'
 
 | Limit | Value |
 |-------|-------|
-| Requests per minute | 20 per API key |
+| POST requests per minute | 1 per API key |
+| GET requests per minute | 30 per API key |
 | Max text length | 500,000 characters |
 | Monthly TTS minutes | Depends on plan |
-| Audio file retention | Free: 1d, Pro: 7d, Ultimate: 30d |
+| Audio URL lifetime | Temporary — download immediately |
 
 For full API details, see the [API Reference](https://ttsbuddy.com/docs/developers/api-reference).
 

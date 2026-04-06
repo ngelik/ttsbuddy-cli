@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -86,9 +87,27 @@ func (c *Client) GetStatus(ctx context.Context, jobID string) (*TTSResponse, int
 }
 
 // DownloadAudio downloads an audio file atomically.
-// Writes to destPath.part first, then renames to destPath on success.
-// Cleans up the .part file on error.
+// maxAudioSize caps audio downloads to prevent disk/memory exhaustion.
+const maxAudioSize = 500 * 1024 * 1024 // 500MB
+
+// downloadClient follows redirects with scheme validation on each hop.
+var downloadClient = &http.Client{
+	CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 10 {
+			return fmt.Errorf("too many redirects")
+		}
+		return ValidateDownloadURL(req.URL.String())
+	},
+}
+
+// DownloadAudio downloads an audio file atomically.
+// Uses a unique temp file (os.CreateTemp) to avoid symlink races,
+// validates the URL scheme, and caps download size at 500MB.
 func (c *Client) DownloadAudio(ctx context.Context, audioURL, destPath string) error {
+	if err := ValidateDownloadURL(audioURL); err != nil {
+		return err
+	}
+
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 
@@ -97,7 +116,7 @@ func (c *Client) DownloadAudio(ctx context.Context, audioURL, destPath string) e
 		return fmt.Errorf("creating download request: %w", err)
 	}
 
-	resp, err := c.httpClient.Do(httpReq)
+	resp, err := downloadClient.Do(httpReq)
 	if err != nil {
 		return fmt.Errorf("downloading audio: %w", err)
 	}
@@ -107,31 +126,70 @@ func (c *Client) DownloadAudio(ctx context.Context, audioURL, destPath string) e
 		return fmt.Errorf("download failed with status %d", resp.StatusCode)
 	}
 
-	partPath := destPath + ".part"
-
-	f, err := os.Create(partPath)
+	// Create unique temp file in destination directory (no fixed .part path)
+	dir := filepath.Dir(destPath)
+	f, err := os.CreateTemp(dir, filepath.Base(destPath)+".part.*")
 	if err != nil {
 		return fmt.Errorf("creating temp file: %w", err)
 	}
+	tmp := f.Name()
 
-	_, copyErr := io.Copy(f, resp.Body)
+	_, copyErr := CopyBounded(f, resp.Body, maxAudioSize)
 	closeErr := f.Close()
 
 	if copyErr != nil {
-		_ = os.Remove(partPath)
+		_ = os.Remove(tmp)
 		return fmt.Errorf("writing audio data: %w", copyErr)
 	}
 	if closeErr != nil {
-		_ = os.Remove(partPath)
+		_ = os.Remove(tmp)
 		return fmt.Errorf("closing temp file: %w", closeErr)
 	}
 
-	if err := os.Rename(partPath, destPath); err != nil {
-		_ = os.Remove(partPath)
+	if err := os.Rename(tmp, destPath); err != nil {
+		_ = os.Remove(tmp)
 		return fmt.Errorf("finalizing download: %w", err)
 	}
 
 	return nil
+}
+
+// ValidateDownloadURL checks that a URL uses an allowed scheme.
+// HTTPS is always allowed. HTTP is allowed only for localhost/127.0.0.1/[::1].
+// This is scheme hardening — hosts are not restricted because audio may come
+// from S3, CDN, or other legitimate origins.
+func ValidateDownloadURL(rawURL string) error {
+	u, err := url.Parse(rawURL)
+	if err != nil || rawURL == "" {
+		return fmt.Errorf("invalid download URL: %v", err)
+	}
+	switch u.Scheme {
+	case "https":
+		return nil
+	case "http":
+		host := u.Hostname()
+		if host == "localhost" || host == "127.0.0.1" || host == "::1" {
+			return nil
+		}
+		return fmt.Errorf("refusing to download over insecure HTTP from %s (use HTTPS or localhost)", host)
+	default:
+		return fmt.Errorf("unsupported URL scheme %q (only https and local http allowed)", u.Scheme)
+	}
+}
+
+// CopyBounded copies up to maxBytes from src to dst. Returns an error if the
+// source has more data than maxBytes (hard fail, not truncate).
+func CopyBounded(dst io.Writer, src io.Reader, maxBytes int64) (int64, error) {
+	written, err := io.Copy(dst, io.LimitReader(src, maxBytes))
+	if err != nil {
+		return written, err
+	}
+	// Probe for more data beyond the limit
+	probe := make([]byte, 1)
+	if n, _ := src.Read(probe); n > 0 {
+		return written, fmt.Errorf("download exceeds %dMB size limit", maxBytes/1024/1024)
+	}
+	return written, nil
 }
 
 // FetchVoices retrieves the voice catalog from the upstream TTS API.

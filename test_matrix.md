@@ -37,7 +37,7 @@ Check each item after verifying. Run `make test` for unit tests, `make test-live
 - [ ] GET 200 processing
 - [ ] GET 200 completed
 - [ ] GET 200 failed
-- [ ] GET/POST 200 expired (`FILE_EXPIRED`)
+- [ ] GET/POST 200 expired (`FILE_EXPIRED`) — legacy backward-compat only; new jobs don't use file retention
 - [ ] 401 `INVALID_KEY` — bad key
 - [ ] 403 `INACTIVE_SUBSCRIPTION` — inactive sub
 - [ ] 403 `NO_API_ACCESS` — no api_access tier

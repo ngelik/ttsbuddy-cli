@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -223,6 +224,20 @@ func Set(key, value string) error {
 	}
 
 	return Save(cfg)
+}
+
+// WarnInsecureURL returns a warning string if the URL would send credentials
+// over insecure HTTP to a non-localhost host. Returns "" if safe.
+func WarnInsecureURL(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Scheme != "http" {
+		return ""
+	}
+	host := u.Hostname()
+	if host == "localhost" || host == "127.0.0.1" || host == "::1" {
+		return ""
+	}
+	return fmt.Sprintf("API key will be sent over insecure HTTP to %s — use HTTPS in production", host)
 }
 
 // FormatSpeed formats a speed value preserving full precision.
