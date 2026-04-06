@@ -1,7 +1,7 @@
 MODULE          := github.com/ngelik/ttsbuddy-cli
 COBRA_VERSION   := v1.8.1
 GORELEASER_VER  := v2.6.1
-LINT_VERSION    := v1.62.2
+LINT_VERSION    := v1.64.8
 
 VERSION ?= dev
 COMMIT  := $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
