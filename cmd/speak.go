@@ -104,6 +104,12 @@ func runSpeak(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// 3. Markdown preprocessing (before validation so stripped size is checked, not raw)
+	if !speakRaw && inputFile != "" && isMarkdownFile(inputFile) {
+		text = markdown.Strip(text)
+		stderrMsg("Preprocessed markdown from %s\n", filepath.Base(inputFile))
+	}
+
 	if strings.TrimSpace(text) == "" {
 		return &exitError{code: 2, msg: "no text provided"}
 	}
@@ -111,12 +117,6 @@ func runSpeak(cmd *cobra.Command, args []string) error {
 	charCount := utf8.RuneCountInString(text)
 	if charCount > 500_000 {
 		return &exitError{code: 2, msg: fmt.Sprintf("input exceeds 500,000 characters (%d characters). Split into smaller chunks.", charCount)}
-	}
-
-	// 3. Markdown preprocessing
-	if !speakRaw && inputFile != "" && isMarkdownFile(inputFile) {
-		text = markdown.Strip(text)
-		stderrMsg("Preprocessed markdown from %s\n", filepath.Base(inputFile))
 	}
 
 	// 4. Resolve voice and speed
@@ -293,16 +293,14 @@ func handleCompleted(ctx context.Context, client *api.Client, resp *api.TTSRespo
 		return enc.Encode(resp)
 	}
 
-	// --no-download: just show URL
-	if speakNoDownload {
-		if resp.AudioURL != "" {
-			fmt.Fprintln(os.Stderr, resp.AudioURL)
-		}
-		return nil
-	}
-
 	if resp.AudioURL == "" {
 		return &exitError{code: 1, msg: "completed but no audio URL in response"}
+	}
+
+	// --no-download: just show URL
+	if speakNoDownload {
+		fmt.Fprintln(os.Stderr, resp.AudioURL)
+		return nil
 	}
 
 	// Determine voice for filename
@@ -522,8 +520,9 @@ func stderrMsg(format string, a ...interface{}) {
 }
 
 // isPermanentError returns true if the HTTP status indicates a non-retryable error.
+// Covers auth (401), forbidden (403), not found (404), and bad request (400).
 func isPermanentError(err error, httpStatus int) bool {
-	return httpStatus == 401 || httpStatus == 403 || httpStatus == 404
+	return httpStatus == 400 || httpStatus == 401 || httpStatus == 403 || httpStatus == 404
 }
 
 func minDuration(a, b time.Duration) time.Duration {

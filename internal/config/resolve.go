@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"strconv"
 )
@@ -60,7 +61,10 @@ func applyEnv(r *ResolvedConfig) {
 		r.Voice = v
 	}
 	if v := os.Getenv("TTSBUDDY_SPEED"); v != "" {
-		if f, err := strconv.ParseFloat(v, 64); err == nil {
+		f, err := strconv.ParseFloat(v, 64)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: invalid TTSBUDDY_SPEED=%q, using default %.1f\n", v, r.Speed)
+		} else {
 			r.Speed = f
 		}
 	}

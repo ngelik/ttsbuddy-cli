@@ -66,6 +66,14 @@ func TestStripHTML(t *testing.T) {
 	}
 }
 
+func TestStripAngleBracketsPreserved(t *testing.T) {
+	got := Strip("If 1 < 2 and 3 > 1, then math works.")
+	want := "If 1 < 2 and 3 > 1, then math works."
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
 func TestStripStandaloneBullets(t *testing.T) {
 	got := Strip("line1\n•\nline2\n-\nline3")
 	want := "line1\n\nline2\n\nline3"

@@ -6,7 +6,7 @@ import (
 )
 
 var (
-	reHTML           = regexp.MustCompile(`<[^>]+>`)
+	reHTML           = regexp.MustCompile(`</?[a-zA-Z][^>]*>`)
 	reImage          = regexp.MustCompile(`!\[[^\]]*\]\([^)]+\)`)
 	reLink           = regexp.MustCompile(`\[([^\]]+)\]\([^)]+\)`)
 	reBareURL        = regexp.MustCompile(`(?i)\bhttps?://\S+`)
