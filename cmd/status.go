@@ -86,7 +86,7 @@ func statusPoll(client *api.Client, jobID string, resolved *config.ResolvedConfi
 
 	dur, err := time.ParseDuration(timeout)
 	if err != nil {
-		dur = 10 * time.Minute
+		return &exitError{code: 2, msg: fmt.Sprintf("invalid timeout value: %s (use Go duration syntax like 30s, 2m, 10m)", timeout)}
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)

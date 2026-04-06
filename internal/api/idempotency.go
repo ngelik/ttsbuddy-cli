@@ -11,7 +11,9 @@ import (
 // Same text + voice + speed always produces the same key.
 func GenerateFromContent(text, voice string, speed float64) string {
 	h := sha256.New()
-	fmt.Fprintf(h, "%s|%s|%.2f", text, voice, speed)
+	// Use full float precision to avoid collapsing distinct speed values
+	// (e.g., 1.004 and 1.005 must produce different keys).
+	fmt.Fprintf(h, "%s|%s|%v", text, voice, speed)
 	return fmt.Sprintf("%x", h.Sum(nil))
 }
 

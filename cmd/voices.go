@@ -32,7 +32,7 @@ Use --all to fetch the full live catalog from the upstream TTS API.`,
 			stderrMsg("Fetching voice catalog...\n")
 			live, err := client.FetchVoices(context.Background(), ttsBaseURL)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Live voice catalog unavailable, showing curated list\n")
+				stderrMsg("Live voice catalog unavailable, showing curated list\n")
 				voices = api.CuratedVoices()
 			} else {
 				voices = live

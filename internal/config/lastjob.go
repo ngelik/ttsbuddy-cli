@@ -34,10 +34,7 @@ func SaveLastJob(jobID string) error {
 	data = append(data, '\n')
 
 	path := filepath.Join(dir, "last_job.json")
-	if err := os.WriteFile(path, data, 0600); err != nil {
-		return fmt.Errorf("cannot write last job file: %w", err)
-	}
-	return nil
+	return atomicWriteFile(path, data, 0600)
 }
 
 // LoadLastJob reads the most recent job. Returns nil if the file is missing or invalid.

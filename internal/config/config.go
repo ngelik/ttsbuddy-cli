@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -126,8 +127,19 @@ func Save(cfg *Config) error {
 	}
 	data = append(data, '\n')
 
-	if err := os.WriteFile(path, data, 0600); err != nil {
-		return fmt.Errorf("cannot write config file: %w", err)
+	return atomicWriteFile(path, data, 0600)
+}
+
+// atomicWriteFile writes data to a temp file then renames, preventing truncated
+// files from interrupts or crashes.
+func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, perm); err != nil {
+		return fmt.Errorf("cannot write file: %w", err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		os.Remove(tmp)
+		return fmt.Errorf("cannot finalize file: %w", err)
 	}
 	return nil
 }
@@ -179,6 +191,9 @@ func Set(key, value string) error {
 		}
 		cfg.DefaultSpeed = speed
 	case "timeout":
+		if _, parseErr := time.ParseDuration(value); parseErr != nil {
+			return &ValidationError{Msg: fmt.Sprintf("invalid timeout value: %s (use Go duration syntax like 30s, 2m, 10m)", value)}
+		}
 		cfg.PollTimeout = value
 	case "output_dir":
 		cfg.OutputDir = value

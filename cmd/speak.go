@@ -222,10 +222,10 @@ func pollUntilComplete(ctx context.Context, client *api.Client, initial *api.TTS
 	}
 	defer spin.Stop()
 
-	// Parse timeout
+	// Parse timeout — fail fast on invalid values instead of silently defaulting
 	timeout, err := time.ParseDuration(resolved.PollTimeout)
 	if err != nil {
-		timeout = 10 * time.Minute
+		return &exitError{code: 2, msg: fmt.Sprintf("invalid timeout value: %s (use Go duration syntax like 30s, 2m, 10m)", resolved.PollTimeout)}
 	}
 
 	deadline := time.Now().Add(timeout)
