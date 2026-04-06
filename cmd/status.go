@@ -51,7 +51,10 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	if len(args) > 0 {
 		jobID = args[0]
 	} else {
-		lj := config.LoadLastJob()
+		lj, ljErr := config.LoadLastJob()
+		if ljErr != nil {
+			return &exitError{code: 1, msg: fmt.Sprintf("reading last job: %v", ljErr)}
+		}
 		if lj == nil {
 			return &exitError{code: 2, msg: "no job ID provided and no recent job found. Usage: ttsbuddy status <job_id>"}
 		}

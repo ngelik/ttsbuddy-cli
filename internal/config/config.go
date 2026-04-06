@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	DefaultAPIURL        = "https://hndrrtessqblbnkimjdw.supabase.co/functions/v1/agent-tts"
+	DefaultAPIURL        = "https://ttsbuddy.com/v1/agent-tts"
 	DefaultTTSAPIBaseURL = "https://tts.api.prod.ttsbuddy.website"
 	DefaultVoice         = "af_heart"
 	DefaultSpeed         = 1.0
@@ -172,7 +172,7 @@ func Get(cfg *Config, key string) (string, error) {
 		if cfg.DefaultSpeed == 0 {
 			return "", nil
 		}
-		return fmt.Sprintf("%.1f", cfg.DefaultSpeed), nil
+		return FormatSpeed(cfg.DefaultSpeed), nil
 	case "timeout":
 		return cfg.PollTimeout, nil
 	case "output_dir":
@@ -223,6 +223,12 @@ func Set(key, value string) error {
 	}
 
 	return Save(cfg)
+}
+
+// FormatSpeed formats a speed value preserving full precision.
+// 1.0→"1", 1.25→"1.25", 0.8→"0.8"
+func FormatSpeed(speed float64) string {
+	return strconv.FormatFloat(speed, 'f', -1, 64)
 }
 
 // RedactKey returns a redacted version of an API key, showing only the public_id.

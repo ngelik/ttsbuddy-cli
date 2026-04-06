@@ -35,8 +35,9 @@ internal/
 
 Source of truth: `docs/agent-tts-api-v1.md` and `docs/cli-implementation-guide.md` in the tts-study-buddy repo.
 
-- POST `/functions/v1/agent-tts` — submit TTS, returns 200 (sync) or 202 (async)
-- GET `/functions/v1/agent-tts?id=<job_id>` — poll status
+- POST `/v1/agent-tts` — submit TTS, returns 200 (sync) or 202 (async)
+- GET `/v1/agent-tts?id=<job_id>` — poll status
+- Production base URL: `https://ttsbuddy.com/v1/agent-tts`
 - Auth: `Authorization: Bearer ttsb_<public_id>_<secret>`
 - 11 error codes, all documented in `internal/api/types.go`
 

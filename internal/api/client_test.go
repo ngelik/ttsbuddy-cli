@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -64,7 +65,7 @@ func TestSpeak202Processing(t *testing.T) {
 			Success:           true,
 			Status:            "processing",
 			JobID:             "job-456",
-			StatusURL:         "/functions/v1/agent-tts?id=job-456",
+			StatusURL:         "/v1/agent-tts?id=job-456",
 			RetryAfterSeconds: &retryAfter,
 			Meta:              &Meta{RequestID: "req-2", APIVersion: "2026-04"},
 		})
@@ -274,13 +275,13 @@ func TestCompletedMissingAudio(t *testing.T) {
 }
 
 func TestResolveStatusURL(t *testing.T) {
-	client := NewClient("https://project.supabase.co/functions/v1/agent-tts", "key", "test")
+	client := NewClient("https://ttsbuddy.com/v1/agent-tts", "key", "test")
 
 	tests := []struct {
 		input string
 		want  string
 	}{
-		{"/functions/v1/agent-tts?id=abc", "https://project.supabase.co/functions/v1/agent-tts?id=abc"},
+		{"/v1/agent-tts?id=abc", "https://ttsbuddy.com/v1/agent-tts?id=abc"},
 		{"https://other.com/path", "https://other.com/path"},
 	}
 
@@ -364,6 +365,31 @@ func TestFetchVoices(t *testing.T) {
 	}
 	if len(voices) != 1 || voices[0].ID != "af_heart" {
 		t.Errorf("expected af_heart, got %+v", voices)
+	}
+}
+
+func TestParseResponseOversize(t *testing.T) {
+	// Server returns body larger than maxResponseSize (10MB)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// Write 11MB of data
+		chunk := make([]byte, 1024*1024) // 1MB
+		for i := range chunk {
+			chunk[i] = 'a'
+		}
+		for i := 0; i < 11; i++ {
+			_, _ = w.Write(chunk)
+		}
+	}))
+	defer srv.Close()
+
+	client := NewClient(srv.URL, "key", "test")
+	_, _, err := client.Speak(context.Background(), SpeakRequest{Text: "test"}, "key")
+	if err == nil {
+		t.Fatal("expected error for oversize response")
+	}
+	if !strings.Contains(err.Error(), "too large") {
+		t.Errorf("error should mention 'too large', got: %v", err)
 	}
 }
 

@@ -181,7 +181,9 @@ func runSpeak(cmd *cobra.Command, args []string) error {
 
 	// Save last job for any accepted request (both sync and async)
 	if resp.JobID != "" {
-		_ = config.SaveLastJob(resp.JobID)
+		if err := config.SaveLastJob(resp.JobID); err != nil {
+			stderrMsg("Warning: could not save job ID: %v\n", err)
+		}
 	}
 
 	// 9. Handle response
@@ -288,15 +290,17 @@ func pollUntilComplete(ctx context.Context, client *api.Client, initial *api.TTS
 }
 
 func handleCompleted(ctx context.Context, client *api.Client, resp *api.TTSResponse, resolved *config.ResolvedConfig) error {
+	// Validate audio_url BEFORE emitting JSON — ensures --json never returns
+	// exit 0 with an unusable payload. Execute() handles JSON error output.
+	if resp.AudioURL == "" {
+		return &exitError{code: 1, msg: "completed but no audio URL in response"}
+	}
+
 	// --json mode: emit raw API response
 	if flagJSON {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		return enc.Encode(resp)
-	}
-
-	if resp.AudioURL == "" {
-		return &exitError{code: 1, msg: "completed but no audio URL in response"}
 	}
 
 	// --no-download: just show URL

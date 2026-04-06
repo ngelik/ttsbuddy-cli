@@ -59,7 +59,11 @@ func parseVoiceResponse(raw json.RawMessage) ([]Voice, error) {
 
 	// Try array of objects with voice_id / name fields
 	var arr []map[string]interface{}
-	if err := json.Unmarshal(raw, &arr); err == nil && len(arr) > 0 {
+	if err := json.Unmarshal(raw, &arr); err == nil {
+		// Empty array is a valid (if unusual) response
+		if len(arr) == 0 {
+			return []Voice{}, nil
+		}
 		var voices []Voice
 		for _, item := range arr {
 			v := Voice{}
@@ -84,6 +88,8 @@ func parseVoiceResponse(raw json.RawMessage) ([]Voice, error) {
 		if len(voices) > 0 {
 			return voices, nil
 		}
+		// Non-empty array but no valid voice IDs → error
+		return nil, fmt.Errorf("voice response contained %d items but none had a valid ID", len(arr))
 	}
 
 	// Try object with voices array

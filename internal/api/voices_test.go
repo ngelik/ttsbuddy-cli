@@ -72,17 +72,23 @@ func TestParseVoiceResponseWrapper(t *testing.T) {
 	}
 }
 
-func TestParseVoiceResponseEmpty(t *testing.T) {
+func TestParseVoiceResponseEmptyArray(t *testing.T) {
 	raw := json.RawMessage(`[]`)
 	voices, err := parseVoiceResponse(raw)
-	// Empty array: no voices but no error (valid response with no items)
 	if err != nil {
-		// If it errors, that's also acceptable — just lock down the behavior
-		t.Logf("parseVoiceResponse([]) returns error: %v (this is acceptable)", err)
-		return
+		t.Fatalf("empty array should be valid: %v", err)
 	}
 	if len(voices) != 0 {
 		t.Errorf("expected 0 voices from empty array, got %d", len(voices))
+	}
+}
+
+func TestParseVoiceResponseJunkArray(t *testing.T) {
+	// Non-empty array with no valid voice IDs should error
+	raw := json.RawMessage(`[{"x": 1}, {"y": "hello"}]`)
+	_, err := parseVoiceResponse(raw)
+	if err == nil {
+		t.Error("junk non-empty array should return error")
 	}
 }
 

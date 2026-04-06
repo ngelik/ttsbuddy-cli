@@ -37,26 +37,30 @@ func SaveLastJob(jobID string) error {
 	return atomicWriteFile(path, data, 0600)
 }
 
-// LoadLastJob reads the most recent job. Returns nil if the file is missing or invalid.
-// Uses configDir() (no-create) to avoid filesystem side effects on read.
-func LoadLastJob() *LastJob {
+// LoadLastJob reads the most recent job.
+// Returns (nil, nil) if the file doesn't exist (normal).
+// Returns (nil, error) for real failures (permission denied, corruption).
+func LoadLastJob() (*LastJob, error) {
 	dir, err := configDir()
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("config directory: %w", err)
 	}
 
 	path := filepath.Join(dir, "last_job.json")
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil
+		if os.IsNotExist(err) {
+			return nil, nil // normal: no job saved yet
+		}
+		return nil, fmt.Errorf("reading last job: %w", err)
 	}
 
 	var lj LastJob
 	if err := json.Unmarshal(data, &lj); err != nil {
-		return nil
+		return nil, fmt.Errorf("parsing last job: %w", err)
 	}
 	if lj.JobID == "" {
-		return nil
+		return nil, nil
 	}
-	return &lj
+	return &lj, nil
 }

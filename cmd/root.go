@@ -36,15 +36,11 @@ var rootCmd = &cobra.Command{
 	SilenceErrors: true,
 
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-		// Commands that work without config — skip loading to avoid
+		// Commands that work without disk config — skip loading to avoid
 		// failing on broken HOME/permissions.
 		switch cmd.Name() {
-		case "version", "help", "completion":
-			return nil
-		}
-
-		// voices without --all also works offline without config
-		if cmd.Name() == "voices" && !cmd.Flags().Changed("all") {
+		case "version", "help", "completion", "voices":
+			resolvedCfg = nil // clear stale state
 			return nil
 		}
 

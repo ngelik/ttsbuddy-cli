@@ -296,13 +296,11 @@ func TestSpeakMissingAudioURL(t *testing.T) {
 	assertExitCode(t, r, 1)
 	assertContains(t, r.Stderr, "no audio URL", "stderr")
 
-	// --json should also fail
+	// --json should also fail (audio_url check is now before JSON emit)
 	r2 := runCLI(t, envForTest(home, apiSrv, "ttsb_test_key"), "speak", "hello", "--json")
-	// Completed with no audio_url should still succeed in --json mode (returns the response as-is)
-	// But the handleCompleted function checks audio_url before --json... let me check
-	// Actually --json returns before the URL check. This is a regression test:
-	// --json emits the API response regardless; only download paths need the URL.
-	assertExitCode(t, r2, 0) // --json shows the response as-is
+	assertExitCode(t, r2, 1)
+	assertValidJSON(t, r2.Stdout) // Execute() wraps error as CLI_ERROR JSON
+	assertContains(t, r2.Stdout, "CLI_ERROR", "stdout")
 }
 
 func TestSpeakAsync(t *testing.T) {
@@ -316,7 +314,7 @@ func TestSpeakAsync(t *testing.T) {
 				"success":             true,
 				"status":              "processing",
 				"job_id":              "async-job",
-				"status_url":          "/functions/v1/agent-tts?id=async-job",
+				"status_url":          "/v1/agent-tts?id=async-job",
 				"retry_after_seconds": 0,
 				"meta":                map[string]string{"request_id": "r1", "api_version": "2026-04"},
 			})

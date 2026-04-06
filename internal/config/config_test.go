@@ -179,7 +179,10 @@ func TestLastJobRoundTrip(t *testing.T) {
 		t.Fatalf("SaveLastJob: %v", err)
 	}
 
-	lj := LoadLastJob()
+	lj, err := LoadLastJob()
+	if err != nil {
+		t.Fatalf("LoadLastJob error: %v", err)
+	}
 	if lj == nil {
 		t.Fatal("LoadLastJob returned nil")
 	}
@@ -195,9 +198,29 @@ func TestLastJobMissing(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 
-	lj := LoadLastJob()
+	lj, err := LoadLastJob()
+	if err != nil {
+		t.Errorf("missing file should not error: %v", err)
+	}
 	if lj != nil {
 		t.Errorf("expected nil for missing last_job.json, got %+v", lj)
+	}
+}
+
+func TestLastJobCorrupt(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	dir := filepath.Join(tmp, ".ttsbuddy")
+	_ = os.MkdirAll(dir, 0700)
+	_ = os.WriteFile(filepath.Join(dir, "last_job.json"), []byte("{corrupt"), 0600)
+
+	lj, err := LoadLastJob()
+	if err == nil {
+		t.Error("corrupt file should return error")
+	}
+	if lj != nil {
+		t.Error("corrupt file should return nil job")
 	}
 }
 
@@ -340,6 +363,26 @@ func TestLoadDoesNotCreateDir(t *testing.T) {
 	dir := filepath.Join(tmp, ".ttsbuddy")
 	if _, err := os.Stat(dir); !os.IsNotExist(err) {
 		t.Error("Load should not create config directory")
+	}
+}
+
+func TestFormatSpeed(t *testing.T) {
+	cases := []struct {
+		input float64
+		want  string
+	}{
+		{1.0, "1"},
+		{1.25, "1.25"},
+		{0.8, "0.8"},
+		{0.5, "0.5"},
+		{1.5, "1.5"},
+		{1.125, "1.125"},
+	}
+	for _, tc := range cases {
+		got := FormatSpeed(tc.input)
+		if got != tc.want {
+			t.Errorf("FormatSpeed(%v) = %q, want %q", tc.input, got, tc.want)
+		}
 	}
 }
 

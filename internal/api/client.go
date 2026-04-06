@@ -157,8 +157,15 @@ func (c *Client) FetchVoices(ctx context.Context, ttsAPIBaseURL string) ([]Voice
 		return nil, fmt.Errorf("voice API returned status %d", resp.StatusCode)
 	}
 
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize+1))
+	if err != nil {
+		return nil, fmt.Errorf("reading voice response: %w", err)
+	}
+	if len(data) > maxResponseSize {
+		return nil, fmt.Errorf("voice response too large (>%dMB)", maxResponseSize/1024/1024)
+	}
 	var raw json.RawMessage
-	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("decoding voice response: %w", err)
 	}
 
@@ -193,10 +200,16 @@ func RetryAfterHeader(resp *http.Response) int {
 	return seconds
 }
 
+// maxResponseSize caps API response reads to prevent memory exhaustion.
+const maxResponseSize = 10 * 1024 * 1024 // 10MB
+
 func parseResponse(resp *http.Response) (*TTSResponse, int, error) {
-	data, err := io.ReadAll(resp.Body)
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize+1))
 	if err != nil {
 		return nil, resp.StatusCode, fmt.Errorf("reading response body: %w", err)
+	}
+	if len(data) > maxResponseSize {
+		return nil, resp.StatusCode, fmt.Errorf("response too large (>%dMB)", maxResponseSize/1024/1024)
 	}
 
 	var ttsResp TTSResponse

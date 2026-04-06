@@ -40,7 +40,7 @@ Valid keys: key, voice, speed, timeout, output_dir, api_url, tts_api_base_url`,
 
 		fmt.Fprintf(os.Stdout, "%-20s %s\n", "key:", config.RedactKey(resolved.APIKey))
 		fmt.Fprintf(os.Stdout, "%-20s %s\n", "voice:", resolved.Voice)
-		fmt.Fprintf(os.Stdout, "%-20s %.1f\n", "speed:", resolved.Speed)
+		fmt.Fprintf(os.Stdout, "%-20s %s\n", "speed:", config.FormatSpeed(resolved.Speed))
 		fmt.Fprintf(os.Stdout, "%-20s %s\n", "timeout:", resolved.PollTimeout)
 		fmt.Fprintf(os.Stdout, "%-20s %s\n", "output_dir:", resolved.OutputDir)
 		fmt.Fprintf(os.Stdout, "%-20s %s\n", "api_url:", resolved.APIURL)
@@ -108,7 +108,7 @@ func getResolvedValue(r *config.ResolvedConfig, key string) string {
 	case "voice":
 		return r.Voice
 	case "speed":
-		return fmt.Sprintf("%.1f", r.Speed)
+		return config.FormatSpeed(r.Speed)
 	case "timeout":
 		return r.PollTimeout
 	case "output_dir":

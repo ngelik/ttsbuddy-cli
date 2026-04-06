@@ -106,7 +106,8 @@ func TestConfigGetSpeed(t *testing.T) {
 	home := t.TempDir()
 	r := runCLI(t, envForTest(home, "", "ttsb_test_key"), "config", "get", "speed")
 	assertExitCode(t, r, 0)
-	assertContains(t, r.Stdout, "1.0", "stdout")
+	// Default speed 1.0 is formatted as "1" by FormatSpeed
+	assertContains(t, r.Stdout, "1", "stdout")
 }
 
 func TestConfigGetTimeout(t *testing.T) {
@@ -127,7 +128,7 @@ func TestConfigGetApiUrl(t *testing.T) {
 	home := t.TempDir()
 	r := runCLI(t, envForTest(home, "", "ttsb_test_key"), "config", "get", "api_url")
 	assertExitCode(t, r, 0)
-	assertContains(t, r.Stdout, "supabase", "stdout")
+	assertContains(t, r.Stdout, "ttsbuddy.com", "stdout")
 }
 
 func TestConfigGetUnknownKey(t *testing.T) {

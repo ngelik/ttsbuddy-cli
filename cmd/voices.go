@@ -8,6 +8,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/ngelik/ttsbuddy-cli/internal/api"
+	"github.com/ngelik/ttsbuddy-cli/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -25,9 +26,12 @@ Use --all to fetch the full live catalog from the upstream TTS API.`,
 		var voices []api.Voice
 
 		if voicesAll {
-			// Try live catalog
+			// Try live catalog — resolve env directly (no disk config needed)
 			client := api.NewClient("", "", Version)
-			ttsBaseURL := resolvedCfg.TTSAPIBaseURL
+			ttsBaseURL := os.Getenv("TTSBUDDY_TTS_API_BASE_URL")
+			if ttsBaseURL == "" {
+				ttsBaseURL = config.DefaultTTSAPIBaseURL
+			}
 
 			stderrMsg("Fetching voice catalog...\n")
 			live, err := client.FetchVoices(context.Background(), ttsBaseURL)
