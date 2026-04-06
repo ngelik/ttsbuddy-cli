@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"time"
 )
 
 // FlagValues carries values from cobra flags. Pointer fields distinguish "not set" from zero.
@@ -77,7 +78,11 @@ func applyEnv(r *ResolvedConfig) []string {
 		r.OutputDir = v
 	}
 	if v := os.Getenv("TTSBUDDY_TIMEOUT"); v != "" {
-		r.PollTimeout = v
+		if _, err := time.ParseDuration(v); err != nil {
+			warnings = append(warnings, fmt.Sprintf("invalid TTSBUDDY_TIMEOUT=%q, using default %s", v, r.PollTimeout))
+		} else {
+			r.PollTimeout = v
+		}
 	}
 	return warnings
 }

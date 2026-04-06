@@ -434,24 +434,23 @@ func readInput(args []string, filePath string) (text string, inputFile string, f
 		return t, "", true, e
 	}
 
-	// File input — validate type, then bounded read (no TOCTOU gap)
-	info, statErr := os.Stat(filePath)
-	if statErr != nil {
-		if os.IsNotExist(statErr) {
+	// File input — open first, then validate on the fd to close TOCTOU gap
+	f, openErr := os.Open(filePath)
+	if openErr != nil {
+		if os.IsNotExist(openErr) {
 			return "", "", false, &exitError{code: 2, msg: fmt.Sprintf("file not found: %s", filePath)}
 		}
+		return "", "", false, &exitError{code: 1, msg: fmt.Sprintf("reading file: %v", openErr)}
+	}
+	defer f.Close()
+
+	info, statErr := f.Stat()
+	if statErr != nil {
 		return "", "", false, &exitError{code: 1, msg: fmt.Sprintf("reading file: %v", statErr)}
 	}
 	if !info.Mode().IsRegular() {
 		return "", "", false, &exitError{code: 2, msg: fmt.Sprintf("not a regular file: %s", filePath)}
 	}
-
-	// Open and bounded-read instead of stat+ReadFile to close the TOCTOU gap
-	f, openErr := os.Open(filePath)
-	if openErr != nil {
-		return "", "", false, &exitError{code: 1, msg: fmt.Sprintf("reading file: %v", openErr)}
-	}
-	defer f.Close()
 
 	content, readErr := readBounded(f)
 	if readErr != nil {

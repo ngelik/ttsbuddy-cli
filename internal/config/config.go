@@ -130,12 +130,29 @@ func Save(cfg *Config) error {
 	return atomicWriteFile(path, data, 0600)
 }
 
-// atomicWriteFile writes data to a temp file then renames, preventing truncated
-// files from interrupts or crashes.
+// atomicWriteFile writes data to a unique temp file then renames, preventing
+// truncated files from interrupts/crashes and clobbering from concurrent writers.
 func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, perm); err != nil {
+	dir := filepath.Dir(path)
+	f, err := os.CreateTemp(dir, filepath.Base(path)+".tmp.*")
+	if err != nil {
+		return fmt.Errorf("cannot create temp file: %w", err)
+	}
+	tmp := f.Name()
+
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		os.Remove(tmp)
 		return fmt.Errorf("cannot write file: %w", err)
+	}
+	if err := f.Chmod(perm); err != nil {
+		f.Close()
+		os.Remove(tmp)
+		return fmt.Errorf("cannot set file permissions: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(tmp)
+		return fmt.Errorf("cannot close temp file: %w", err)
 	}
 	if err := os.Rename(tmp, path); err != nil {
 		os.Remove(tmp)

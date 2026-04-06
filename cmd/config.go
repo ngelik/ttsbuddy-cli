@@ -23,27 +23,28 @@ Usage:
 Valid keys: key, voice, speed, timeout, output_dir, api_url, tts_api_base_url`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, err := config.Load()
-		if err != nil {
-			return &exitError{code: 1, msg: fmt.Sprintf("loading config: %v", err)}
+		// Show resolved values (file + env + defaults) for consistency
+		// across plain, --json, and config get output.
+		resolved := resolvedCfg
+		if resolved == nil {
+			return &exitError{code: 1, msg: "config not loaded"}
 		}
 
 		if flagJSON {
-			resolved, _ := config.Resolve(cfg, config.FlagValues{})
-			resolved.APIKey = config.RedactKey(resolved.APIKey)
+			out := *resolved
+			out.APIKey = config.RedactKey(out.APIKey)
 			enc := json.NewEncoder(os.Stdout)
 			enc.SetIndent("", "  ")
-			return enc.Encode(resolved)
+			return enc.Encode(out)
 		}
 
-		keys := []string{"key", "voice", "speed", "timeout", "output_dir", "api_url", "tts_api_base_url"}
-		for _, k := range keys {
-			val, _ := config.Get(cfg, k)
-			if val == "" {
-				val = "(not set)"
-			}
-			fmt.Fprintf(os.Stdout, "%-20s %s\n", k+":", val)
-		}
+		fmt.Fprintf(os.Stdout, "%-20s %s\n", "key:", config.RedactKey(resolved.APIKey))
+		fmt.Fprintf(os.Stdout, "%-20s %s\n", "voice:", resolved.Voice)
+		fmt.Fprintf(os.Stdout, "%-20s %.1f\n", "speed:", resolved.Speed)
+		fmt.Fprintf(os.Stdout, "%-20s %s\n", "timeout:", resolved.PollTimeout)
+		fmt.Fprintf(os.Stdout, "%-20s %s\n", "output_dir:", resolved.OutputDir)
+		fmt.Fprintf(os.Stdout, "%-20s %s\n", "api_url:", resolved.APIURL)
+		fmt.Fprintf(os.Stdout, "%-20s %s\n", "tts_api_base_url:", resolved.TTSAPIBaseURL)
 		return nil
 	},
 }
@@ -57,14 +58,11 @@ var configGetCmd = &cobra.Command{
 		if !config.IsValidKey(key) {
 			return &exitError{code: 2, msg: fmt.Sprintf("unknown config key: %s\nValid keys: key, voice, speed, timeout, output_dir, api_url, tts_api_base_url", key)}
 		}
-		cfg, err := config.Load()
-		if err != nil {
-			return &exitError{code: 1, msg: fmt.Sprintf("loading config: %v", err)}
+		resolved := resolvedCfg
+		if resolved == nil {
+			return &exitError{code: 1, msg: "config not loaded"}
 		}
-		val, _ := config.Get(cfg, key)
-		if val == "" {
-			val = "(not set)"
-		}
+		val := getResolvedValue(resolved, key)
 		fmt.Println(val)
 		return nil
 	},
@@ -101,6 +99,27 @@ var configSetCmd = &cobra.Command{
 		}
 		return nil
 	},
+}
+
+func getResolvedValue(r *config.ResolvedConfig, key string) string {
+	switch key {
+	case "key", "api_key":
+		return config.RedactKey(r.APIKey)
+	case "voice":
+		return r.Voice
+	case "speed":
+		return fmt.Sprintf("%.1f", r.Speed)
+	case "timeout":
+		return r.PollTimeout
+	case "output_dir":
+		return r.OutputDir
+	case "api_url":
+		return r.APIURL
+	case "tts_api_base_url":
+		return r.TTSAPIBaseURL
+	default:
+		return ""
+	}
 }
 
 func init() {
