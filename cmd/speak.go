@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/ngelik/ttsbuddy-cli/internal/api"
 	"github.com/ngelik/ttsbuddy-cli/internal/config"
@@ -107,8 +108,9 @@ func runSpeak(cmd *cobra.Command, args []string) error {
 		return &exitError{code: 2, msg: "no text provided"}
 	}
 
-	if len(text) > 500_000 {
-		return &exitError{code: 2, msg: fmt.Sprintf("input exceeds 500,000 characters (%d chars). Split into smaller chunks.", len(text))}
+	charCount := utf8.RuneCountInString(text)
+	if charCount > 500_000 {
+		return &exitError{code: 2, msg: fmt.Sprintf("input exceeds 500,000 characters (%d characters). Split into smaller chunks.", charCount)}
 	}
 
 	// 3. Markdown preprocessing
@@ -250,9 +252,11 @@ func pollUntilComplete(ctx context.Context, client *api.Client, initial *api.TTS
 		}
 
 		// Poll
-		resp, _, err := client.GetStatus(ctx, jobID)
+		resp, pollStatus, err := client.GetStatus(ctx, jobID)
 		if err != nil {
-			// Transient error — keep polling
+			if isPermanentError(err, pollStatus) {
+				return handleAPIError(err, pollStatus)
+			}
 			stderrMsg("Status check error: %v, retrying...\n", err)
 			delay = minDuration(delay*3/2, 15*time.Second)
 			continue
@@ -388,8 +392,9 @@ func downloadToStdout(ctx context.Context, _ *api.Client, audioURL string) error
 
 // --- Input helpers ---
 
-// maxInputBytes is 500k chars + small buffer. We reject before loading more.
-const maxInputBytes = 500_000 + 1024
+// maxInputSize is a byte-level memory safety cap (~2MB to cover 500k multi-byte chars).
+// The actual 500k character limit is enforced via utf8.RuneCountInString after reading.
+const maxInputSize = 2*1024*1024 + 1024
 
 func readInput(args []string, filePath string) (text string, inputFile string, fromStdin bool, err error) {
 	hasArg := len(args) > 0 && args[0] != "-"
@@ -437,7 +442,7 @@ func readInput(args []string, filePath string) (text string, inputFile string, f
 		}
 		return "", "", false, &exitError{code: 1, msg: fmt.Sprintf("reading file: %v", statErr)}
 	}
-	if info.Size() > maxInputBytes {
+	if info.Size() > maxInputSize {
 		return "", "", false, &exitError{code: 2, msg: fmt.Sprintf("file exceeds 500,000 characters (%d bytes). Split into smaller chunks.", info.Size())}
 	}
 
@@ -448,15 +453,15 @@ func readInput(args []string, filePath string) (text string, inputFile string, f
 	return string(data), filePath, false, nil
 }
 
-// readBounded reads from r up to maxInputBytes, returning an error if exceeded.
+// readBounded reads from r up to maxInputSize, returning an error if exceeded.
 func readBounded(r io.Reader) (string, error) {
-	limited := io.LimitReader(r, maxInputBytes+1)
+	limited := io.LimitReader(r, maxInputSize+1)
 	data, err := io.ReadAll(limited)
 	if err != nil {
 		return "", &exitError{code: 1, msg: fmt.Sprintf("reading input: %v", err)}
 	}
-	if len(data) > maxInputBytes {
-		return "", &exitError{code: 2, msg: "input exceeds 500,000 characters. Split into smaller chunks."}
+	if len(data) > maxInputSize {
+		return "", &exitError{code: 2, msg: "input too large. The limit is 500,000 characters — split into smaller chunks."}
 	}
 	return string(data), nil
 }
@@ -500,6 +505,8 @@ func handleAPIError(err error, status int) error {
 			return &exitError{code: 2, msg: "input exceeds 500,000 characters. Split into smaller chunks."}
 		case api.ErrRateLimited:
 			return &exitError{code: 1, msg: "rate limited. Please wait and try again."}
+		case api.ErrForbidden:
+			return &exitError{code: 1, msg: "access denied (HTTP 403). Check your subscription and API access at https://ttsbuddy.com/billing"}
 		default:
 			return &exitError{code: 1, msg: apiErr.Error()}
 		}
@@ -512,6 +519,11 @@ func stderrMsg(format string, a ...interface{}) {
 		return
 	}
 	fmt.Fprintf(os.Stderr, format, a...)
+}
+
+// isPermanentError returns true if the HTTP status indicates a non-retryable error.
+func isPermanentError(err error, httpStatus int) bool {
+	return httpStatus == 401 || httpStatus == 403 || httpStatus == 404
 }
 
 func minDuration(a, b time.Duration) time.Duration {

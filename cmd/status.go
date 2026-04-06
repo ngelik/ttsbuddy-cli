@@ -100,8 +100,11 @@ func statusPoll(client *api.Client, jobID string, resolved *config.ResolvedConfi
 			return &exitError{code: 1, msg: fmt.Sprintf("polling timed out after %s", timeout)}
 		}
 
-		resp, _, err := client.GetStatus(ctx, jobID)
+		resp, pollStatus, err := client.GetStatus(ctx, jobID)
 		if err != nil {
+			if isPermanentError(err, pollStatus) {
+				return handleStatusError(err, jobID)
+			}
 			stderrMsg("Status check error: %v, retrying...\n", err)
 			delay = minDuration(delay*3/2, 15*time.Second)
 			select {

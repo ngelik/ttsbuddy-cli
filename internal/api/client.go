@@ -234,12 +234,17 @@ func parseResponse(resp *http.Response) (*TTSResponse, int, error) {
 	return &ttsResp, resp.StatusCode, nil
 }
 
+// ErrForbidden is used for synthetic (non-JSON) 403 responses where the
+// server didn't provide a specific error code. The real API distinguishes
+// INACTIVE_SUBSCRIPTION, NO_API_ACCESS, and USAGE_LIMIT_EXCEEDED in JSON.
+const ErrForbidden = "FORBIDDEN"
+
 func statusToErrorCode(status int) string {
 	switch {
 	case status == 401:
 		return ErrInvalidKey
 	case status == 403:
-		return ErrInactiveSubscription
+		return ErrForbidden
 	case status == 404:
 		return ErrNotFound
 	case status == 429:

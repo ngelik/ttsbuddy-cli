@@ -46,6 +46,14 @@ func IsValidKey(key string) bool {
 	return validKeys[key]
 }
 
+// ValidationError represents a user input validation failure (exit code 2).
+// Distinguished from runtime/IO errors (exit code 1).
+type ValidationError struct {
+	Msg string
+}
+
+func (e *ValidationError) Error() string { return e.Msg }
+
 // configDir returns the path to ~/.ttsbuddy without creating it.
 func configDir() (string, error) {
 	home, err := os.UserHomeDir()
@@ -164,10 +172,10 @@ func Set(key, value string) error {
 	case "speed":
 		speed, parseErr := strconv.ParseFloat(value, 64)
 		if parseErr != nil {
-			return fmt.Errorf("invalid speed value: %s", value)
+			return &ValidationError{Msg: fmt.Sprintf("invalid speed value: %s", value)}
 		}
 		if speed < 0.5 || speed > 1.5 {
-			return fmt.Errorf("speed must be between 0.5 and 1.5")
+			return &ValidationError{Msg: "speed must be between 0.5 and 1.5"}
 		}
 		cfg.DefaultSpeed = speed
 	case "timeout":
@@ -179,7 +187,7 @@ func Set(key, value string) error {
 	case "tts_api_base_url":
 		cfg.TTSAPIBaseURL = value
 	default:
-		return fmt.Errorf("unknown config key: %s", key)
+		return &ValidationError{Msg: fmt.Sprintf("unknown config key: %s", key)}
 	}
 
 	return Save(cfg)

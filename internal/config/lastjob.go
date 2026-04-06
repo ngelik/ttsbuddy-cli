@@ -41,8 +41,9 @@ func SaveLastJob(jobID string) error {
 }
 
 // LoadLastJob reads the most recent job. Returns nil if the file is missing or invalid.
+// Uses configDir() (no-create) to avoid filesystem side effects on read.
 func LoadLastJob() *LastJob {
-	dir, err := ConfigDir()
+	dir, err := configDir()
 	if err != nil {
 		return nil
 	}

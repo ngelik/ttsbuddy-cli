@@ -86,7 +86,11 @@ var configSetCmd = &cobra.Command{
 		}
 
 		if err := config.Set(key, value); err != nil {
-			return &exitError{code: 2, msg: fmt.Sprintf("setting config: %v", err)}
+			code := 1 // runtime/IO error
+			if _, ok := err.(*config.ValidationError); ok {
+				code = 2 // user input error
+			}
+			return &exitError{code: code, msg: fmt.Sprintf("setting config: %v", err)}
 		}
 
 		switch key {
