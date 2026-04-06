@@ -57,7 +57,7 @@ func (c *Client) Speak(ctx context.Context, req SpeakRequest, idempotencyKey str
 	if err != nil {
 		return nil, 0, fmt.Errorf("sending request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	return parseResponse(resp)
 }
@@ -80,7 +80,7 @@ func (c *Client) GetStatus(ctx context.Context, jobID string) (*TTSResponse, int
 	if err != nil {
 		return nil, 0, fmt.Errorf("sending request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	return parseResponse(resp)
 }
@@ -101,7 +101,7 @@ func (c *Client) DownloadAudio(ctx context.Context, audioURL, destPath string) e
 	if err != nil {
 		return fmt.Errorf("downloading audio: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("download failed with status %d", resp.StatusCode)
@@ -118,16 +118,16 @@ func (c *Client) DownloadAudio(ctx context.Context, audioURL, destPath string) e
 	closeErr := f.Close()
 
 	if copyErr != nil {
-		os.Remove(partPath)
+		_ = os.Remove(partPath)
 		return fmt.Errorf("writing audio data: %w", copyErr)
 	}
 	if closeErr != nil {
-		os.Remove(partPath)
+		_ = os.Remove(partPath)
 		return fmt.Errorf("closing temp file: %w", closeErr)
 	}
 
 	if err := os.Rename(partPath, destPath); err != nil {
-		os.Remove(partPath)
+		_ = os.Remove(partPath)
 		return fmt.Errorf("finalizing download: %w", err)
 	}
 
@@ -151,7 +151,7 @@ func (c *Client) FetchVoices(ctx context.Context, ttsAPIBaseURL string) ([]Voice
 	if err != nil {
 		return nil, fmt.Errorf("fetching voices: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("voice API returned status %d", resp.StatusCode)

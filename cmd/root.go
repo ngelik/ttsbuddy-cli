@@ -86,7 +86,7 @@ func Execute() error {
 		if flagJSON {
 			cliErr := api.NewCLIError("CLI_ERROR", err.Error())
 			data, _ := json.MarshalIndent(cliErr, "", "  ")
-			fmt.Fprintln(os.Stdout, string(data))
+			_, _ = fmt.Fprintln(os.Stdout, string(data))
 		} else {
 			fmt.Fprintln(os.Stderr, "Error:", err)
 		}

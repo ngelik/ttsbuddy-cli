@@ -38,13 +38,13 @@ Valid keys: key, voice, speed, timeout, output_dir, api_url, tts_api_base_url`,
 			return enc.Encode(out)
 		}
 
-		fmt.Fprintf(os.Stdout, "%-20s %s\n", "key:", config.RedactKey(resolved.APIKey))
-		fmt.Fprintf(os.Stdout, "%-20s %s\n", "voice:", resolved.Voice)
-		fmt.Fprintf(os.Stdout, "%-20s %s\n", "speed:", config.FormatSpeed(resolved.Speed))
-		fmt.Fprintf(os.Stdout, "%-20s %s\n", "timeout:", resolved.PollTimeout)
-		fmt.Fprintf(os.Stdout, "%-20s %s\n", "output_dir:", resolved.OutputDir)
-		fmt.Fprintf(os.Stdout, "%-20s %s\n", "api_url:", resolved.APIURL)
-		fmt.Fprintf(os.Stdout, "%-20s %s\n", "tts_api_base_url:", resolved.TTSAPIBaseURL)
+		_, _ = fmt.Fprintf(os.Stdout, "%-20s %s\n", "key:", config.RedactKey(resolved.APIKey))
+		_, _ = fmt.Fprintf(os.Stdout, "%-20s %s\n", "voice:", resolved.Voice)
+		_, _ = fmt.Fprintf(os.Stdout, "%-20s %s\n", "speed:", config.FormatSpeed(resolved.Speed))
+		_, _ = fmt.Fprintf(os.Stdout, "%-20s %s\n", "timeout:", resolved.PollTimeout)
+		_, _ = fmt.Fprintf(os.Stdout, "%-20s %s\n", "output_dir:", resolved.OutputDir)
+		_, _ = fmt.Fprintf(os.Stdout, "%-20s %s\n", "api_url:", resolved.APIURL)
+		_, _ = fmt.Fprintf(os.Stdout, "%-20s %s\n", "tts_api_base_url:", resolved.TTSAPIBaseURL)
 		return nil
 	},
 }

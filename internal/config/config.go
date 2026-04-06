@@ -141,21 +141,21 @@ func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
 	tmp := f.Name()
 
 	if _, err := f.Write(data); err != nil {
-		f.Close()
-		os.Remove(tmp)
+		_ = f.Close()
+		_ = os.Remove(tmp)
 		return fmt.Errorf("cannot write file: %w", err)
 	}
 	if err := f.Chmod(perm); err != nil {
-		f.Close()
-		os.Remove(tmp)
+		_ = f.Close()
+		_ = os.Remove(tmp)
 		return fmt.Errorf("cannot set file permissions: %w", err)
 	}
 	if err := f.Close(); err != nil {
-		os.Remove(tmp)
+		_ = os.Remove(tmp)
 		return fmt.Errorf("cannot close temp file: %w", err)
 	}
 	if err := os.Rename(tmp, path); err != nil {
-		os.Remove(tmp)
+		_ = os.Remove(tmp)
 		return fmt.Errorf("cannot finalize file: %w", err)
 	}
 	return nil

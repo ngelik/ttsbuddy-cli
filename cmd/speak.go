@@ -381,7 +381,7 @@ func downloadToStdout(ctx context.Context, _ *api.Client, audioURL string) error
 		}
 		return &exitError{code: 1, msg: fmt.Sprintf("downloading audio: %v", err)}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != 200 {
 		return &exitError{code: 1, msg: fmt.Sprintf("download returned status %d", resp.StatusCode)}
@@ -447,7 +447,7 @@ func readInput(args []string, filePath string) (text string, inputFile string, f
 		}
 		return "", "", false, &exitError{code: 1, msg: fmt.Sprintf("reading file: %v", openErr)}
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	info, statErr := f.Stat()
 	if statErr != nil {

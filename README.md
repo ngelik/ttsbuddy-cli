@@ -20,6 +20,30 @@ go install github.com/ngelik/ttsbuddy-cli@latest
 
 Download from [GitHub Releases](https://github.com/ngelik/ttsbuddy-cli/releases) and place in your `$PATH`.
 
+## Update
+
+### Homebrew
+
+```bash
+brew upgrade ngelik/tap/ttsbuddy
+```
+
+### Go
+
+```bash
+go install github.com/ngelik/ttsbuddy-cli@latest
+```
+
+### Binary
+
+Download the latest release from [GitHub Releases](https://github.com/ngelik/ttsbuddy-cli/releases/latest) and replace the existing binary in your `$PATH`.
+
+### Check version
+
+```bash
+ttsbuddy version
+```
+
 ## Quick Start
 
 ```bash
