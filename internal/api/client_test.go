@@ -349,29 +349,60 @@ func TestDownloadAudioCleanupOnError(t *testing.T) {
 // --- Security tests ---
 
 func TestValidateDownloadURL(t *testing.T) {
+	apiHost := "api.ttsbuddy.com"
 	cases := []struct {
 		url     string
 		wantErr bool
 	}{
+		// Allowed: S3 (*.amazonaws.com)
 		{"https://s3.amazonaws.com/audio.mp3", false},
-		{"https://cdn.example.com/file.mp3", false},
+		{"https://tts-bucket.s3.us-east-1.amazonaws.com/file.mp3", false},
+		// Allowed: API host
+		{"https://api.ttsbuddy.com/audio.mp3", false},
+		// Allowed: localhost (HTTP)
 		{"http://localhost:8080/audio.mp3", false},
 		{"http://127.0.0.1:9000/audio.mp3", false},
 		{"http://[::1]:8080/audio.mp3", false},
+		// Rejected: random HTTPS host (not in allowlist)
+		{"https://cdn.example.com/file.mp3", true},
+		{"https://evil.com/steal", true},
+		// Rejected: HTTP to non-localhost
 		{"http://evil.com/steal", true},
 		{"http://internal.corp/secret", true},
+		// Rejected: other schemes
 		{"ftp://server/file", true},
 		{"file:///etc/passwd", true},
 		{"", true},
-		{"not-a-url", true},
 	}
 	for _, tc := range cases {
-		err := ValidateDownloadURL(tc.url)
+		err := ValidateDownloadURL(tc.url, apiHost)
 		if tc.wantErr && err == nil {
-			t.Errorf("ValidateDownloadURL(%q) should error", tc.url)
+			t.Errorf("ValidateDownloadURL(%q, %q) should error", tc.url, apiHost)
 		}
 		if !tc.wantErr && err != nil {
-			t.Errorf("ValidateDownloadURL(%q) unexpected error: %v", tc.url, err)
+			t.Errorf("ValidateDownloadURL(%q, %q) unexpected error: %v", tc.url, apiHost, err)
+		}
+	}
+}
+
+func TestAllowedDownloadHost(t *testing.T) {
+	cases := []struct {
+		host, apiHost string
+		want          bool
+	}{
+		{"api.ttsbuddy.com", "api.ttsbuddy.com", true},   // same as API
+		{"s3.amazonaws.com", "api.ttsbuddy.com", true},    // S3
+		{"bucket.s3.us-east-1.amazonaws.com", "", true},   // S3 subdomain
+		{"localhost", "", true},                            // local
+		{"127.0.0.1", "", true},                           // local
+		{"evil.com", "api.ttsbuddy.com", false},           // random host
+		{"internal.corp", "api.ttsbuddy.com", false},      // internal host
+		{"amazonaws.com.evil.com", "", false},              // suffix trick
+	}
+	for _, tc := range cases {
+		got := allowedDownloadHost(tc.host, tc.apiHost)
+		if got != tc.want {
+			t.Errorf("allowedDownloadHost(%q, %q) = %v, want %v", tc.host, tc.apiHost, got, tc.want)
 		}
 	}
 }

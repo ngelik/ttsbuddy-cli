@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	httpPkg "net/http"
+	urlPkg "net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -317,7 +318,7 @@ func handleCompleted(ctx context.Context, client *api.Client, resp *api.TTSRespo
 
 	// -o - : raw MP3 to stdout
 	if speakOutput == "-" {
-		return downloadToStdout(ctx, client, resp.AudioURL)
+		return downloadToStdout(ctx, resp.AudioURL, resolved.APIURL)
 	}
 
 	// Determine output path
@@ -364,8 +365,9 @@ func handleCompleted(ctx context.Context, client *api.Client, resp *api.TTSRespo
 	return nil
 }
 
-func downloadToStdout(ctx context.Context, _ *api.Client, audioURL string) error {
-	if err := api.ValidateDownloadURL(audioURL); err != nil {
+func downloadToStdout(ctx context.Context, audioURL, apiURL string) error {
+	apiHost := apiHostFromURL(apiURL)
+	if err := api.ValidateDownloadURL(audioURL, apiHost); err != nil {
 		return &exitError{code: 1, msg: err.Error()}
 	}
 
@@ -377,7 +379,8 @@ func downloadToStdout(ctx context.Context, _ *api.Client, audioURL string) error
 		return &exitError{code: 1, msg: fmt.Sprintf("creating download request: %v", err)}
 	}
 
-	resp, err := httpPkg.DefaultClient.Do(httpReq)
+	dlClient := api.NewDownloadClient(apiHost)
+	resp, err := dlClient.Do(httpReq)
 	if err != nil {
 		if ctx.Err() != nil {
 			fmt.Fprintln(os.Stderr, "\nInterrupted.")
@@ -397,6 +400,14 @@ func downloadToStdout(ctx context.Context, _ *api.Client, audioURL string) error
 		os.Exit(130)
 	}
 	return err
+}
+
+func apiHostFromURL(rawURL string) string {
+	u, _ := urlPkg.Parse(rawURL)
+	if u == nil {
+		return ""
+	}
+	return u.Hostname()
 }
 
 // --- Input helpers ---

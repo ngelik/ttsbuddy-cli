@@ -25,7 +25,7 @@ type SpeakRequest struct {
 }
 
 // TTSResponse is the unified response shape from agent-tts.
-// Pointer fields handle absent optional data on fallback paths.
+// Pointer fields handle optional data (e.g. ExpiresAt is nil for new non-persisted jobs).
 type TTSResponse struct {
 	Success           bool       `json:"success"`
 	Status            string     `json:"status,omitempty"`

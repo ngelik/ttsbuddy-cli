@@ -366,10 +366,10 @@ func TestLoadDoesNotCreateDir(t *testing.T) {
 	}
 }
 
-func TestWarnInsecureURL(t *testing.T) {
+func TestCheckInsecureURL(t *testing.T) {
 	cases := []struct {
 		url     string
-		wantMsg bool
+		wantErr bool
 	}{
 		{"https://api.example.com", false},
 		{"http://localhost:54321/api", false},
@@ -381,12 +381,12 @@ func TestWarnInsecureURL(t *testing.T) {
 		{"not-a-url", false},
 	}
 	for _, tc := range cases {
-		w := WarnInsecureURL(tc.url)
-		if tc.wantMsg && w == "" {
-			t.Errorf("WarnInsecureURL(%q) should warn", tc.url)
+		err := CheckInsecureURL(tc.url)
+		if tc.wantErr && err == nil {
+			t.Errorf("CheckInsecureURL(%q) should error", tc.url)
 		}
-		if !tc.wantMsg && w != "" {
-			t.Errorf("WarnInsecureURL(%q) should not warn, got: %q", tc.url, w)
+		if !tc.wantErr && err != nil {
+			t.Errorf("CheckInsecureURL(%q) should not error, got: %v", tc.url, err)
 		}
 	}
 }

@@ -86,25 +86,27 @@ func (c *Client) GetStatus(ctx context.Context, jobID string) (*TTSResponse, int
 	return parseResponse(resp)
 }
 
-// DownloadAudio downloads an audio file atomically.
 // maxAudioSize caps audio downloads to prevent disk/memory exhaustion.
 const maxAudioSize = 500 * 1024 * 1024 // 500MB
 
-// downloadClient follows redirects with scheme validation on each hop.
-var downloadClient = &http.Client{
-	CheckRedirect: func(req *http.Request, via []*http.Request) error {
-		if len(via) >= 10 {
-			return fmt.Errorf("too many redirects")
-		}
-		return ValidateDownloadURL(req.URL.String())
-	},
+// NewDownloadClient creates an HTTP client with redirect validation.
+// Each redirect hop is validated against the same scheme + host policy.
+func NewDownloadClient(apiHost string) *http.Client {
+	return &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 10 {
+				return fmt.Errorf("too many redirects")
+			}
+			return ValidateDownloadURL(req.URL.String(), apiHost)
+		},
+	}
 }
 
 // DownloadAudio downloads an audio file atomically.
-// Uses a unique temp file (os.CreateTemp) to avoid symlink races,
-// validates the URL scheme, and caps download size at 500MB.
+// Validates URL scheme + host, uses unique temp file, caps size at 500MB.
 func (c *Client) DownloadAudio(ctx context.Context, audioURL, destPath string) error {
-	if err := ValidateDownloadURL(audioURL); err != nil {
+	apiHost := apiHostFromURL(c.apiURL)
+	if err := ValidateDownloadURL(audioURL, apiHost); err != nil {
 		return err
 	}
 
@@ -116,7 +118,8 @@ func (c *Client) DownloadAudio(ctx context.Context, audioURL, destPath string) e
 		return fmt.Errorf("creating download request: %w", err)
 	}
 
-	resp, err := downloadClient.Do(httpReq)
+	dlClient := NewDownloadClient(apiHost)
+	resp, err := dlClient.Do(httpReq)
 	if err != nil {
 		return fmt.Errorf("downloading audio: %w", err)
 	}
@@ -126,7 +129,6 @@ func (c *Client) DownloadAudio(ctx context.Context, audioURL, destPath string) e
 		return fmt.Errorf("download failed with status %d", resp.StatusCode)
 	}
 
-	// Create unique temp file in destination directory (no fixed .part path)
 	dir := filepath.Dir(destPath)
 	f, err := os.CreateTemp(dir, filepath.Base(destPath)+".part.*")
 	if err != nil {
@@ -154,27 +156,52 @@ func (c *Client) DownloadAudio(ctx context.Context, audioURL, destPath string) e
 	return nil
 }
 
-// ValidateDownloadURL checks that a URL uses an allowed scheme.
-// HTTPS is always allowed. HTTP is allowed only for localhost/127.0.0.1/[::1].
-// This is scheme hardening — hosts are not restricted because audio may come
-// from S3, CDN, or other legitimate origins.
-func ValidateDownloadURL(rawURL string) error {
+// ValidateDownloadURL checks that a download URL uses an allowed scheme and host.
+// Allowed: HTTPS to API host or *.amazonaws.com; HTTP only for localhost.
+func ValidateDownloadURL(rawURL, apiHost string) error {
 	u, err := url.Parse(rawURL)
 	if err != nil || rawURL == "" {
 		return fmt.Errorf("invalid download URL: %v", err)
 	}
+	host := u.Hostname()
+
 	switch u.Scheme {
 	case "https":
-		return nil
+		if allowedDownloadHost(host, apiHost) {
+			return nil
+		}
+		return fmt.Errorf("download host %q not in allowed list (API host, *.amazonaws.com, or localhost)", host)
 	case "http":
-		host := u.Hostname()
 		if host == "localhost" || host == "127.0.0.1" || host == "::1" {
 			return nil
 		}
-		return fmt.Errorf("refusing to download over insecure HTTP from %s (use HTTPS or localhost)", host)
+		return fmt.Errorf("refusing to download over insecure HTTP from %s", host)
 	default:
-		return fmt.Errorf("unsupported URL scheme %q (only https and local http allowed)", u.Scheme)
+		return fmt.Errorf("unsupported URL scheme %q", u.Scheme)
 	}
+}
+
+// allowedDownloadHost checks if the host is trusted for audio downloads.
+func allowedDownloadHost(host, apiHost string) bool {
+	if host == apiHost {
+		return true
+	}
+	if strings.HasSuffix(host, ".amazonaws.com") {
+		return true
+	}
+	if host == "localhost" || host == "127.0.0.1" || host == "::1" {
+		return true
+	}
+	return false
+}
+
+// apiHostFromURL extracts the hostname from a URL string.
+func apiHostFromURL(apiURL string) string {
+	u, err := url.Parse(apiURL)
+	if err != nil {
+		return ""
+	}
+	return u.Hostname()
 }
 
 // CopyBounded copies up to maxBytes from src to dst. Returns an error if the

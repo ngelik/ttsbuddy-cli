@@ -226,18 +226,18 @@ func Set(key, value string) error {
 	return Save(cfg)
 }
 
-// WarnInsecureURL returns a warning string if the URL would send credentials
-// over insecure HTTP to a non-localhost host. Returns "" if safe.
-func WarnInsecureURL(rawURL string) string {
+// CheckInsecureURL returns an error if the URL would send credentials over
+// insecure HTTP to a non-localhost host. Returns nil if safe.
+func CheckInsecureURL(rawURL string) error {
 	u, err := url.Parse(rawURL)
 	if err != nil || u.Scheme != "http" {
-		return ""
+		return nil // HTTPS or parse error (caught elsewhere)
 	}
 	host := u.Hostname()
 	if host == "localhost" || host == "127.0.0.1" || host == "::1" {
-		return ""
+		return nil // local dev is fine
 	}
-	return fmt.Sprintf("API key will be sent over insecure HTTP to %s — use HTTPS in production", host)
+	return fmt.Errorf("refusing to send API key over insecure HTTP to %s — use HTTPS or localhost", host)
 }
 
 // FormatSpeed formats a speed value preserving full precision.
