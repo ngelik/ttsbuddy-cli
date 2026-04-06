@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/ngelik/ttsbuddy-cli/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -21,6 +22,9 @@ var (
 	flagQuiet  bool
 )
 
+// Resolved config available to all commands after PersistentPreRunE.
+var resolvedCfg *config.ResolvedConfig
+
 var rootCmd = &cobra.Command{
 	Use:   "ttsbuddy",
 	Short: "TTSBuddy CLI — convert text to speech",
@@ -28,6 +32,21 @@ var rootCmd = &cobra.Command{
 
 	SilenceUsage:  true,
 	SilenceErrors: true,
+
+	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		cfg, err := config.Load()
+		if err != nil {
+			return fmt.Errorf("loading config: %w", err)
+		}
+
+		flags := config.FlagValues{}
+		if cmd.Flags().Changed("key") {
+			flags.APIKey = &flagAPIKey
+		}
+
+		resolvedCfg = config.Resolve(cfg, flags)
+		return nil
+	},
 }
 
 func init() {
