@@ -22,15 +22,19 @@ builds:
 
 archives:
   - id: default
+    formats:
+      - tar.gz
     format_overrides:
       - goos: darwin
-        format: zip
+        formats:
+          - zip
 
 brews:
   - name: ttsbuddy
     repository:
       owner: ngelik
       name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     directory: Formula
     homepage: https://ttsbuddy.com
     description: "TTSBuddy CLI — convert text to speech from the command line"
