@@ -60,25 +60,23 @@ func init() {
 	rootCmd.Version = Version
 }
 
-// Execute runs the root command.
+// Execute runs the root command and exits with the correct code.
 func Execute() error {
 	if err := rootCmd.Execute(); err != nil {
+		exitCode := 1
+		if e, ok := err.(*exitError); ok {
+			exitCode = e.code
+		}
+
 		if flagJSON {
-			// Emit CLI JSON error for --json mode
-			exitCode := 1
-			if e, ok := err.(*exitError); ok {
-				exitCode = e.code
-			}
 			cliErr := api.NewCLIError("CLI_ERROR", err.Error())
 			data, _ := json.MarshalIndent(cliErr, "", "  ")
 			fmt.Fprintln(os.Stdout, string(data))
-			if exitCode == 2 {
-				os.Exit(2)
-			}
 		} else {
 			fmt.Fprintln(os.Stderr, "Error:", err)
 		}
-		return err
+
+		os.Exit(exitCode)
 	}
 	return nil
 }
