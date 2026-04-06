@@ -102,6 +102,40 @@ func TestConfigSetUnknownKey(t *testing.T) {
 	assertExitCode(t, r, 2)
 }
 
+func TestConfigGetSpeed(t *testing.T) {
+	home := t.TempDir()
+	r := runCLI(t, envForTest(home, "", "ttsb_test_key"), "config", "get", "speed")
+	assertExitCode(t, r, 0)
+	assertContains(t, r.Stdout, "1.0", "stdout")
+}
+
+func TestConfigGetTimeout(t *testing.T) {
+	home := t.TempDir()
+	r := runCLI(t, envForTest(home, "", "ttsb_test_key"), "config", "get", "timeout")
+	assertExitCode(t, r, 0)
+	assertContains(t, r.Stdout, "10m", "stdout")
+}
+
+func TestConfigGetOutputDir(t *testing.T) {
+	home := t.TempDir()
+	r := runCLI(t, envForTest(home, "", "ttsb_test_key"), "config", "get", "output_dir")
+	assertExitCode(t, r, 0)
+	assertContains(t, r.Stdout, ".", "stdout")
+}
+
+func TestConfigGetApiUrl(t *testing.T) {
+	home := t.TempDir()
+	r := runCLI(t, envForTest(home, "", "ttsb_test_key"), "config", "get", "api_url")
+	assertExitCode(t, r, 0)
+	assertContains(t, r.Stdout, "supabase", "stdout")
+}
+
+func TestConfigGetUnknownKey(t *testing.T) {
+	home := t.TempDir()
+	r := runCLI(t, envForTest(home, "", "ttsb_test_key"), "config", "get", "nonexistent")
+	assertExitCode(t, r, 2)
+}
+
 func TestConfigGetWithEnvOverride(t *testing.T) {
 	home := t.TempDir()
 	r := runCLI(t, append(

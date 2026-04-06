@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ngelik/ttsbuddy-cli/internal/api"
 	"github.com/ngelik/ttsbuddy-cli/internal/config"
@@ -420,6 +421,146 @@ func TestSpeakUnknownPollStatus(t *testing.T) {
 	r := runCLI(t, envForTest(home, apiSrv, "ttsb_test_key"), "speak", "hello", "--timeout", "5s")
 	assertExitCode(t, r, 1)
 	assertContains(t, r.Stderr, "unexpected", "stderr")
+}
+
+// --- Stdout download tests (subprocess) ---
+
+func TestSpeakDashOStdout(t *testing.T) {
+	audioSrv := startMockAPI(t, mockAudioHandler())
+	apiSrv := startMockAPI(t, mockCompletedHandler(audioSrv))
+	home := t.TempDir()
+
+	r := runCLI(t, envForTest(home, apiSrv, "ttsb_test_key"), "speak", "hello", "-o", "-")
+	assertExitCode(t, r, 0)
+	// stdout should contain the audio bytes
+	if !strings.Contains(r.Stdout, "fake-mp3-data") {
+		t.Errorf("stdout should contain audio data, got %d bytes", len(r.Stdout))
+	}
+}
+
+// --- Additional in-process helper tests ---
+
+func TestMinDuration(t *testing.T) {
+	if minDuration(3*time.Second, 5*time.Second) != 3*time.Second {
+		t.Error("should return smaller")
+	}
+	if minDuration(10*time.Second, 5*time.Second) != 5*time.Second {
+		t.Error("should return smaller")
+	}
+}
+
+func TestGetResolvedValueAllKeys(t *testing.T) {
+	r := &config.ResolvedConfig{
+		APIKey:        "ttsb_abc_secret",
+		Voice:         "bf_emma",
+		Speed:         0.8,
+		PollTimeout:   "5m",
+		OutputDir:     "/tmp",
+		APIURL:        "https://api.example.com",
+		TTSAPIBaseURL: "https://tts.example.com",
+	}
+	cases := []struct {
+		key  string
+		want string
+	}{
+		{"key", "ttsb_abc_..."},
+		{"api_key", "ttsb_abc_..."},
+		{"voice", "bf_emma"},
+		{"speed", "0.8"},
+		{"timeout", "5m"},
+		{"output_dir", "/tmp"},
+		{"api_url", "https://api.example.com"},
+		{"tts_api_base_url", "https://tts.example.com"},
+		{"nonexistent", ""},
+	}
+	for _, tc := range cases {
+		got := getResolvedValue(r, tc.key)
+		if got != tc.want {
+			t.Errorf("getResolvedValue(%q) = %q, want %q", tc.key, got, tc.want)
+		}
+	}
+}
+
+// --- More polling/error coverage ---
+
+func TestSpeakAsyncTimeout(t *testing.T) {
+	apiSrv := startMockAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" {
+			w.WriteHeader(202)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": true, "status": "processing", "job_id": "slow-job",
+				"retry_after_seconds": 0,
+				"meta":                map[string]string{"request_id": "r1", "api_version": "2026-04"},
+			})
+			return
+		}
+		// Always return processing
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true, "status": "processing", "job_id": "slow-job",
+			"retry_after_seconds": 0,
+			"meta":                map[string]string{"request_id": "r2", "api_version": "2026-04"},
+		})
+	}))
+	home := t.TempDir()
+
+	r := runCLI(t, envForTest(home, apiSrv, "ttsb_test_key"), "speak", "hello", "--timeout", "2s")
+	assertExitCode(t, r, 1)
+	assertContains(t, r.Stderr, "timed out", "stderr")
+}
+
+func TestSpeakPollPermanentError(t *testing.T) {
+	apiSrv := startMockAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" {
+			w.WriteHeader(202)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": true, "status": "processing", "job_id": "perm-job",
+				"retry_after_seconds": 0,
+				"meta":                map[string]string{"request_id": "r1", "api_version": "2026-04"},
+			})
+			return
+		}
+		// GET returns 401 (permanent)
+		w.WriteHeader(401)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   map[string]string{"code": "INVALID_KEY", "message": "bad key"},
+			"meta":    map[string]string{"request_id": "r2", "api_version": "2026-04"},
+		})
+	}))
+	home := t.TempDir()
+
+	r := runCLI(t, envForTest(home, apiSrv, "ttsb_test_key"), "speak", "hello", "--timeout", "30s")
+	assertExitCode(t, r, 1)
+	// Should fail fast, not spin for 30s
+	assertContains(t, r.Stderr, "API key", "stderr")
+}
+
+func TestSpeakQuietMode(t *testing.T) {
+	audioSrv := startMockAPI(t, mockAudioHandler())
+	apiSrv := startMockAPI(t, mockCompletedHandler(audioSrv))
+	home := t.TempDir()
+	out := filepath.Join(home, "quiet.mp3")
+
+	r := runCLI(t, envForTest(home, apiSrv, "ttsb_test_key"), "speak", "hello", "-o", out, "--quiet")
+	assertExitCode(t, r, 0)
+	if r.Stderr != "" {
+		t.Errorf("--quiet should suppress stderr, got: %q", r.Stderr)
+	}
+}
+
+func TestStatusPollPermanentError(t *testing.T) {
+	apiSrv := startMockAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(404)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   map[string]string{"code": "NOT_FOUND", "message": "gone"},
+			"meta":    map[string]string{"request_id": "r1", "api_version": "2026-04"},
+		})
+	}))
+	home := t.TempDir()
+
+	r := runCLI(t, envForTest(home, apiSrv, "ttsb_test_key"), "status", "gone-job", "--watch", "--timeout", "30s")
+	assertExitCode(t, r, 1)
 }
 
 // Ensure speak uses the config module correctly

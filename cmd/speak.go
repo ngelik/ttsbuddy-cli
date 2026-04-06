@@ -349,7 +349,8 @@ func handleCompleted(ctx context.Context, client *api.Client, resp *api.TTSRespo
 		return &exitError{code: 1, msg: "download failed"}
 	}
 
-	dlSpin.StopWithMessage(fmt.Sprintf("Saved to %s", destPath))
+	dlSpin.Stop()
+	stderrMsg("Saved to %s\n", destPath)
 
 	// Show duration/size if available
 	if resp.Audio != nil && resp.Audio.DurationSeconds != nil {
