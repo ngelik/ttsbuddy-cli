@@ -434,7 +434,7 @@ func readInput(args []string, filePath string) (text string, inputFile string, f
 		return t, "", true, e
 	}
 
-	// File input — validate type and size before reading
+	// File input — validate type, then bounded read (no TOCTOU gap)
 	info, statErr := os.Stat(filePath)
 	if statErr != nil {
 		if os.IsNotExist(statErr) {
@@ -445,15 +445,19 @@ func readInput(args []string, filePath string) (text string, inputFile string, f
 	if !info.Mode().IsRegular() {
 		return "", "", false, &exitError{code: 2, msg: fmt.Sprintf("not a regular file: %s", filePath)}
 	}
-	if info.Size() > maxInputSize {
-		return "", "", false, &exitError{code: 2, msg: fmt.Sprintf("file exceeds 500,000 characters (%d bytes). Split into smaller chunks.", info.Size())}
-	}
 
-	data, readErr := os.ReadFile(filePath)
-	if readErr != nil {
-		return "", "", false, &exitError{code: 1, msg: fmt.Sprintf("reading file: %v", readErr)}
+	// Open and bounded-read instead of stat+ReadFile to close the TOCTOU gap
+	f, openErr := os.Open(filePath)
+	if openErr != nil {
+		return "", "", false, &exitError{code: 1, msg: fmt.Sprintf("reading file: %v", openErr)}
 	}
-	return string(data), filePath, false, nil
+	defer f.Close()
+
+	content, readErr := readBounded(f)
+	if readErr != nil {
+		return "", "", false, readErr
+	}
+	return content, filePath, false, nil
 }
 
 // readBounded reads from r up to maxInputSize, returning an error if exceeded.

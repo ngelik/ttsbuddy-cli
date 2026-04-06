@@ -36,6 +36,18 @@ var rootCmd = &cobra.Command{
 	SilenceErrors: true,
 
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		// Commands that work without config — skip loading to avoid
+		// failing on broken HOME/permissions.
+		switch cmd.Name() {
+		case "version", "help", "completion":
+			return nil
+		}
+
+		// voices without --all also works offline without config
+		if cmd.Name() == "voices" && !cmd.Flags().Changed("all") {
+			return nil
+		}
+
 		cfg, err := config.Load()
 		if err != nil {
 			return fmt.Errorf("loading config: %w", err)
@@ -49,7 +61,6 @@ var rootCmd = &cobra.Command{
 		var warnings []string
 		resolvedCfg, warnings = config.Resolve(cfg, flags)
 
-		// Print warnings only in non-JSON mode
 		if !flagJSON {
 			for _, w := range warnings {
 				fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
