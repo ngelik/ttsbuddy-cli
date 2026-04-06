@@ -29,7 +29,7 @@ Valid keys: key, voice, speed, timeout, output_dir, api_url, tts_api_base_url`,
 		}
 
 		if flagJSON {
-			resolved := config.Resolve(cfg, config.FlagValues{})
+			resolved, _ := config.Resolve(cfg, config.FlagValues{})
 			resolved.APIKey = config.RedactKey(resolved.APIKey)
 			enc := json.NewEncoder(os.Stdout)
 			enc.SetIndent("", "  ")

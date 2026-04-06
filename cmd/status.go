@@ -127,6 +127,8 @@ func statusPoll(client *api.Client, jobID string, resolved *config.ResolvedConfi
 			} else {
 				delay = minDuration(delay*3/2, 15*time.Second)
 			}
+		default:
+			return &exitError{code: 1, msg: fmt.Sprintf("unexpected job status %q from API. Job ID: %s", resp.Status, jobID)}
 		}
 
 		select {

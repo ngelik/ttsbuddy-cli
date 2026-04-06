@@ -46,7 +46,15 @@ var rootCmd = &cobra.Command{
 			flags.APIKey = &flagAPIKey
 		}
 
-		resolvedCfg = config.Resolve(cfg, flags)
+		var warnings []string
+		resolvedCfg, warnings = config.Resolve(cfg, flags)
+
+		// Print warnings only in non-JSON mode
+		if !flagJSON {
+			for _, w := range warnings {
+				fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+			}
+		}
 		return nil
 	},
 }

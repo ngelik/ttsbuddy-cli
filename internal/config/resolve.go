@@ -27,7 +27,11 @@ type ResolvedConfig struct {
 }
 
 // Resolve applies precedence: flags > env vars > config file > defaults.
-func Resolve(cfg *Config, flags FlagValues) *ResolvedConfig {
+// Resolve applies precedence: flags > env vars > config file > defaults.
+// Returns the resolved config and any warnings (e.g., invalid env var values).
+// Callers should decide whether to print warnings based on output mode.
+func Resolve(cfg *Config, flags FlagValues) (*ResolvedConfig, []string) {
+	var warnings []string
 	r := &ResolvedConfig{
 		APIKey:        cfg.APIKey,
 		APIURL:        or(cfg.APIURL, DefaultAPIURL),
@@ -39,15 +43,16 @@ func Resolve(cfg *Config, flags FlagValues) *ResolvedConfig {
 	}
 
 	// Layer 2: environment variables override config file.
-	applyEnv(r)
+	warnings = applyEnv(r)
 
 	// Layer 3: flags override everything.
 	applyFlags(r, flags)
 
-	return r
+	return r, warnings
 }
 
-func applyEnv(r *ResolvedConfig) {
+func applyEnv(r *ResolvedConfig) []string {
+	var warnings []string
 	if v := os.Getenv("TTSBUDDY_API_KEY"); v != "" {
 		r.APIKey = v
 	}
@@ -63,7 +68,7 @@ func applyEnv(r *ResolvedConfig) {
 	if v := os.Getenv("TTSBUDDY_SPEED"); v != "" {
 		f, err := strconv.ParseFloat(v, 64)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: invalid TTSBUDDY_SPEED=%q, using default %.1f\n", v, r.Speed)
+			warnings = append(warnings, fmt.Sprintf("invalid TTSBUDDY_SPEED=%q, using default %.1f", v, r.Speed))
 		} else {
 			r.Speed = f
 		}
@@ -74,6 +79,7 @@ func applyEnv(r *ResolvedConfig) {
 	if v := os.Getenv("TTSBUDDY_TIMEOUT"); v != "" {
 		r.PollTimeout = v
 	}
+	return warnings
 }
 
 func applyFlags(r *ResolvedConfig, f FlagValues) {

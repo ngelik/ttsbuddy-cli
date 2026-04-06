@@ -49,19 +49,15 @@ Use --all to fetch the full live catalog from the upstream TTS API.`,
 
 		// Table output
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "ID\tGENDER\tLANGUAGE")
-		fmt.Fprintln(w, "──\t──────\t────────")
+		fmt.Fprintln(w, "ID\tNAME\tGENDER\tLANGUAGE")
+		fmt.Fprintln(w, "──\t────\t──────\t────────")
 
-		currentLang := ""
 		for _, v := range voices {
-			if v.Language != currentLang && v.Language != "" {
-				currentLang = v.Language
+			name := v.Name
+			if name == "" {
+				name = "-"
 			}
-			name := v.ID
-			if v.Name != "" {
-				name = v.ID
-			}
-			fmt.Fprintf(w, "%s\t%s\t%s\n", name, v.Gender, v.Language)
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", v.ID, name, v.Gender, v.Language)
 		}
 		return w.Flush()
 	},

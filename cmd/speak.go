@@ -281,6 +281,8 @@ func pollUntilComplete(ctx context.Context, client *api.Client, initial *api.TTS
 			}
 			elapsed := time.Since(deadline.Add(-timeout))
 			spin.Update(fmt.Sprintf("Processing... (%s)", elapsed.Round(time.Second)))
+		default:
+			return &exitError{code: 1, msg: fmt.Sprintf("unexpected job status %q from API. Job ID: %s", resp.Status, jobID)}
 		}
 	}
 }
@@ -432,13 +434,16 @@ func readInput(args []string, filePath string) (text string, inputFile string, f
 		return t, "", true, e
 	}
 
-	// File input — check size before reading
+	// File input — validate type and size before reading
 	info, statErr := os.Stat(filePath)
 	if statErr != nil {
 		if os.IsNotExist(statErr) {
 			return "", "", false, &exitError{code: 2, msg: fmt.Sprintf("file not found: %s", filePath)}
 		}
 		return "", "", false, &exitError{code: 1, msg: fmt.Sprintf("reading file: %v", statErr)}
+	}
+	if !info.Mode().IsRegular() {
+		return "", "", false, &exitError{code: 2, msg: fmt.Sprintf("not a regular file: %s", filePath)}
 	}
 	if info.Size() > maxInputSize {
 		return "", "", false, &exitError{code: 2, msg: fmt.Sprintf("file exceeds 500,000 characters (%d bytes). Split into smaller chunks.", info.Size())}

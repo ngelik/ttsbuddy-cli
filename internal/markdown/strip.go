@@ -14,9 +14,11 @@ var (
 	reBold3Star  = regexp.MustCompile(`\*{3}(.+?)\*{3}`)
 	reBold2Star  = regexp.MustCompile(`\*{2}(.+?)\*{2}`)
 	reItalicStar = regexp.MustCompile(`\*(.+?)\*`)
-	reBold3Under = regexp.MustCompile(`_{3}(.+?)_{3}`)
-	reBold2Under = regexp.MustCompile(`_{2}(.+?)_{2}`)
-	reItalicUnder = regexp.MustCompile(`_(.+?)_`)
+	// Underscore emphasis requires word boundaries to avoid mangling
+	// identifiers like snake_case or file_name_here.
+	reBold3Under  = regexp.MustCompile(`(?:^|\s)_{3}(.+?)_{3}(?:\s|$)`)
+	reBold2Under  = regexp.MustCompile(`(?:^|\s)_{2}(.+?)_{2}(?:\s|$)`)
+	reItalicUnder = regexp.MustCompile(`(?:^|\s)_([^_]+?)_(?:\s|$)`)
 	reInlineCode     = regexp.MustCompile("`([^`]+)`")
 	reCodeFence      = regexp.MustCompile("(?s)```[\\s\\S]*?```")
 	reStandaloneBullet = regexp.MustCompile(`(?m)^[•\-\*]\s*$`)
@@ -39,9 +41,9 @@ func Strip(input string) string {
 	s = reBold3Star.ReplaceAllString(s, "$1")       // ***bold italic***
 	s = reBold2Star.ReplaceAllString(s, "$1")       // **bold**
 	s = reItalicStar.ReplaceAllString(s, "$1")      // *italic*
-	s = reBold3Under.ReplaceAllString(s, "$1")      // ___bold italic___
-	s = reBold2Under.ReplaceAllString(s, "$1")       // __bold__
-	s = reItalicUnder.ReplaceAllString(s, "$1")      // _italic_
+	s = reBold3Under.ReplaceAllString(s, " $1 ")     // ___bold italic___
+	s = reBold2Under.ReplaceAllString(s, " $1 ")     // __bold__
+	s = reItalicUnder.ReplaceAllString(s, " $1 ")    // _italic_
 	s = reInlineCode.ReplaceAllString(s, "$1")     // Inline code backticks
 	s = reStandaloneBullet.ReplaceAllString(s, "") // Standalone bullet markers
 	s = reTripleNewline.ReplaceAllString(s, "\n\n") // Collapse excessive newlines

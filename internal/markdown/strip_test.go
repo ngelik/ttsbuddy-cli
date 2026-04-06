@@ -26,6 +26,16 @@ func TestStripLinksKeepText(t *testing.T) {
 	}
 }
 
+func TestStripSnakeCasePreserved(t *testing.T) {
+	got := Strip("Use the snake_case_variable in my_function_name.")
+	if !containsStr(got, "snake_case_variable") {
+		t.Errorf("snake_case should be preserved: got %q", got)
+	}
+	if !containsStr(got, "my_function_name") {
+		t.Errorf("my_function_name should be preserved: got %q", got)
+	}
+}
+
 func TestStripImages(t *testing.T) {
 	got := Strip("![alt text](https://example.com/img.png)")
 	if got != "" {

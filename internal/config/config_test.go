@@ -139,14 +139,14 @@ func TestResolvePrecedence(t *testing.T) {
 	// Env var overrides config
 	t.Setenv("TTSBUDDY_VOICE", "bf_emma")
 
-	resolved := Resolve(cfg, FlagValues{})
+	resolved, _ := Resolve(cfg, FlagValues{})
 	if resolved.Voice != "bf_emma" {
 		t.Errorf("env should override config: got %q", resolved.Voice)
 	}
 
 	// Flag overrides env
 	flagVoice := "am_adam"
-	resolved = Resolve(cfg, FlagValues{Voice: &flagVoice})
+	resolved, _ = Resolve(cfg, FlagValues{Voice: &flagVoice})
 	if resolved.Voice != "am_adam" {
 		t.Errorf("flag should override env: got %q", resolved.Voice)
 	}
@@ -154,7 +154,7 @@ func TestResolvePrecedence(t *testing.T) {
 
 func TestResolveDefaults(t *testing.T) {
 	cfg := &Config{}
-	resolved := Resolve(cfg, FlagValues{})
+	resolved, _ := Resolve(cfg, FlagValues{})
 
 	if resolved.APIURL != DefaultAPIURL {
 		t.Errorf("APIURL: got %q, want %q", resolved.APIURL, DefaultAPIURL)
