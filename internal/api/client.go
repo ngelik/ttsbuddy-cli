@@ -209,7 +209,19 @@ func parseResponse(resp *http.Response) (*TTSResponse, int, error) {
 		return nil, resp.StatusCode, fmt.Errorf("reading response body: %w", err)
 	}
 	if len(data) > maxResponseSize {
-		return nil, resp.StatusCode, fmt.Errorf("response too large (>%dMB)", maxResponseSize/1024/1024)
+		// Wrap as APIResponseError so retry logic treats it correctly based on
+		// HTTP status (e.g., oversized 401 fails immediately, not retried).
+		synthetic := TTSResponse{
+			Success: false,
+			Error: &APIError{
+				Code:    statusToErrorCode(resp.StatusCode),
+				Message: fmt.Sprintf("response too large (>%dMB, HTTP %d)", maxResponseSize/1024/1024, resp.StatusCode),
+			},
+		}
+		return &synthetic, resp.StatusCode, &APIResponseError{
+			StatusCode: resp.StatusCode,
+			Response:   synthetic,
+		}
 	}
 
 	var ttsResp TTSResponse

@@ -1,7 +1,7 @@
 MODULE          := github.com/ngelik/ttsbuddy-cli
 COBRA_VERSION   := v1.8.1
 GORELEASER_VER  := v2.6.1
-LINT_VERSION    := v1.64.8
+LINT_VERSION    := v2.11.4
 
 VERSION ?= dev
 COMMIT  := $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
@@ -26,7 +26,7 @@ lint:
 	golangci-lint run
 
 tools:
-	go install github.com/golangci/golangci-lint/cmd/golangci-lint@$(LINT_VERSION)
+	go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(LINT_VERSION)
 	go install github.com/goreleaser/goreleaser/v2@$(GORELEASER_VER)
 
 release-snapshot:

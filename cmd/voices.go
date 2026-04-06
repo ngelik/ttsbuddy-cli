@@ -26,11 +26,16 @@ Use --all to fetch the full live catalog from the upstream TTS API.`,
 		var voices []api.Voice
 
 		if voicesAll {
-			// Try live catalog — resolve env directly (no disk config needed)
+			// Resolve TTS API base URL: env > config file > default.
+			// Config loading is best-effort — broken HOME won't block voices.
 			client := api.NewClient("", "", Version)
 			ttsBaseURL := os.Getenv("TTSBUDDY_TTS_API_BASE_URL")
 			if ttsBaseURL == "" {
-				ttsBaseURL = config.DefaultTTSAPIBaseURL
+				if cfg, err := config.Load(); err == nil && cfg.TTSAPIBaseURL != "" {
+					ttsBaseURL = cfg.TTSAPIBaseURL
+				} else {
+					ttsBaseURL = config.DefaultTTSAPIBaseURL
+				}
 			}
 
 			stderrMsg("Fetching voice catalog...\n")
