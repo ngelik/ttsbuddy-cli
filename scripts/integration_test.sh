@@ -84,7 +84,7 @@ run_test "config set voice" "$BINARY config set voice bf_emma"
 run_test "config get voice" "test \"\$($BINARY config get voice)\" = bf_emma"
 run_test_expect_fail "config set bad key" 2 "$BINARY config set key badformat"
 run_test_expect_fail "config set unknown key" 2 "$BINARY config set bogus value"
-run_test_expect_fail "config set speed out of range" 1 "$BINARY config set speed 3.0"
+run_test_expect_fail "config set speed out of range" 2 "$BINARY config set speed 3.0"
 # Reset voice
 $BINARY config set voice af_heart >/dev/null 2>&1
 
