@@ -62,7 +62,7 @@ Input can be provided as:
 
 func init() {
 	speakCmd.Flags().StringVarP(&speakFile, "file", "f", "", "read text from file")
-	speakCmd.Flags().StringVarP(&speakVoice, "voice", "v", "", "voice ID (default: af_heart)")
+	speakCmd.Flags().StringVarP(&speakVoice, "voice", "v", "", "voice ID (default: st_m1)")
 	speakCmd.Flags().Float64VarP(&speakSpeed, "speed", "s", 0, "speed 0.5-1.5 (default: 1.0)")
 	speakCmd.Flags().StringVarP(&speakOutput, "output", "o", "", "output file (- for stdout)")
 	speakCmd.Flags().StringVar(&speakOutputDir, "output-dir", "", "directory for auto-named files")

@@ -192,7 +192,7 @@ post_test() {
 
 echo "📋 Setup"
 tb config set key "$TTSBUDDY_API_KEY" >/dev/null 2>&1
-tb config set voice af_heart >/dev/null 2>&1
+tb config set voice st_m1 >/dev/null 2>&1
 tb config set speed 1.25 >/dev/null 2>&1
 tb config set timeout 30s >/dev/null 2>&1
 tb config set output_dir "$TB_OUT" >/dev/null 2>&1
@@ -243,7 +243,7 @@ echo "📋 B. Config and Precedence"
 run_test_stdout "B.1 config" 0 "1.25" tb config
 run_test_json   "B.2 config --json" tb config --json
 run_test_stdout "B.3 config get key" 0 "_..." tb config get key
-run_test_stdout "B.4 config get voice" 0 "af_heart" tb config get voice
+run_test_stdout "B.4 config get voice" 0 "st_m1" tb config get voice
 run_test_stdout "B.5 config get speed" 0 "1.25" tb config get speed
 run_test_stdout "B.6 config get timeout" 0 "30s" tb config get timeout
 
@@ -253,7 +253,7 @@ set +e
 val=$(tb config get voice 2>/dev/null)
 set -e
 if [ "$val" = "bf_emma" ]; then pass "B.7 set/get voice"; else fail "B.7 set/get voice" "got '$val'"; fi
-tb config set voice af_heart >/dev/null 2>&1
+tb config set voice st_m1 >/dev/null 2>&1
 
 # B.8: set speed, verify, reset
 tb config set speed 0.9 >/dev/null 2>&1

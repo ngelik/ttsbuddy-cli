@@ -14,7 +14,7 @@ import (
 const (
 	DefaultAPIURL        = "https://ttsbuddy.com/v1/agent-tts"
 	DefaultTTSAPIBaseURL = "https://ttsbuddy.com"
-	DefaultVoice         = "af_heart"
+	DefaultVoice         = "st_m1"
 	DefaultSpeed         = 1.0
 	DefaultOutputDir     = "."
 	DefaultPollTimeout   = "10m"
