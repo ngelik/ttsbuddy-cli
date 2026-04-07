@@ -14,41 +14,41 @@ type Voice struct {
 }
 
 // CuratedVoices returns the offline-friendly curated voice list.
+// Voice codes verified against the live API at /api/v1/voices.
 func CuratedVoices() []Voice {
 	return []Voice{
 		// American English
-		{ID: "af_heart", Name: "Heart", Gender: "Female", Language: "American English"},
-		{ID: "af_bella", Name: "Bella", Gender: "Female", Language: "American English"},
-		{ID: "af_nicole", Name: "Nicole", Gender: "Female", Language: "American English"},
-		{ID: "af_sarah", Name: "Sarah", Gender: "Female", Language: "American English"},
-		{ID: "af_alloy", Name: "Alloy", Gender: "Female", Language: "American English"},
+		{ID: "af_heart", Name: "Madison", Gender: "Female", Language: "American English"},
+		{ID: "af_bella", Name: "Sophia", Gender: "Female", Language: "American English"},
+		{ID: "af_nicole", Name: "Zoe", Gender: "Female", Language: "American English"},
+		{ID: "af_sarah", Name: "Harper", Gender: "Female", Language: "American English"},
+		{ID: "af_alloy", Name: "Allie", Gender: "Female", Language: "American English"},
 		{ID: "am_michael", Name: "Michael", Gender: "Male", Language: "American English"},
-		{ID: "am_adam", Name: "Adam", Gender: "Male", Language: "American English"},
-		{ID: "am_echo", Name: "Echo", Gender: "Male", Language: "American English"},
+		{ID: "am_adam", Name: "Jackson", Gender: "Male", Language: "American English"},
+		{ID: "am_echo", Name: "Nathan", Gender: "Male", Language: "American English"},
 		// British English
 		{ID: "bf_emma", Name: "Emma", Gender: "Female", Language: "British English"},
 		{ID: "bm_george", Name: "George", Gender: "Male", Language: "British English"},
 		// Spanish
-		{ID: "ef_sofia", Name: "Sofia", Gender: "Female", Language: "Spanish"},
-		{ID: "em_diego", Name: "Diego", Gender: "Male", Language: "Spanish"},
+		{ID: "ef_dora", Name: "Valentina", Gender: "Female", Language: "Spanish"},
+		{ID: "em_alex", Name: "Alejandro", Gender: "Male", Language: "Spanish"},
 		// French
-		{ID: "ff_claire", Name: "Claire", Gender: "Female", Language: "French"},
-		{ID: "fm_antoine", Name: "Antoine", Gender: "Male", Language: "French"},
+		{ID: "ff_siwis", Name: "Camille", Gender: "Female", Language: "French"},
 		// Hindi
-		{ID: "hf_priya", Name: "Priya", Gender: "Female", Language: "Hindi"},
-		{ID: "hm_raj", Name: "Raj", Gender: "Male", Language: "Hindi"},
+		{ID: "hf_alpha", Name: "Priya", Gender: "Female", Language: "Hindi"},
+		{ID: "hm_omega", Name: "Arjun", Gender: "Male", Language: "Hindi"},
 		// Italian
-		{ID: "if_lucia", Name: "Lucia", Gender: "Female", Language: "Italian"},
-		{ID: "im_marco", Name: "Marco", Gender: "Male", Language: "Italian"},
+		{ID: "if_sara", Name: "Giulia", Gender: "Female", Language: "Italian"},
+		{ID: "im_nicola", Name: "Marco", Gender: "Male", Language: "Italian"},
 		// Japanese
-		{ID: "jf_yuki", Name: "Yuki", Gender: "Female", Language: "Japanese"},
-		{ID: "jm_takeshi", Name: "Takeshi", Gender: "Male", Language: "Japanese"},
+		{ID: "jf_alpha", Name: "Yuki", Gender: "Female", Language: "Japanese"},
+		{ID: "jm_kumo", Name: "Hiroshi", Gender: "Male", Language: "Japanese"},
 		// Portuguese
-		{ID: "pf_ana", Name: "Ana", Gender: "Female", Language: "Portuguese"},
-		{ID: "pm_carlos", Name: "Carlos", Gender: "Male", Language: "Portuguese"},
+		{ID: "pf_dora", Name: "Isabela", Gender: "Female", Language: "Portuguese"},
+		{ID: "pm_alex", Name: "Rafael", Gender: "Male", Language: "Portuguese"},
 		// Chinese
-		{ID: "zf_mei", Name: "Mei", Gender: "Female", Language: "Chinese"},
-		{ID: "zm_chen", Name: "Chen", Gender: "Male", Language: "Chinese"},
+		{ID: "zf_xiaobei", Name: "Mei", Gender: "Female", Language: "Chinese"},
+		{ID: "zm_yunjian", Name: "Wei", Gender: "Male", Language: "Chinese"},
 	}
 }
 
@@ -67,7 +67,9 @@ func parseVoiceResponse(raw json.RawMessage) ([]Voice, error) {
 		var voices []Voice
 		for _, item := range arr {
 			v := Voice{}
-			if id, ok := item["voice_id"].(string); ok {
+			if code, ok := item["code"].(string); ok {
+				v.ID = code
+			} else if id, ok := item["voice_id"].(string); ok {
 				v.ID = id
 			} else if id, ok := item["id"].(string); ok {
 				v.ID = id

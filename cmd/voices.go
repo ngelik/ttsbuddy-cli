@@ -19,7 +19,7 @@ var voicesCmd = &cobra.Command{
 	Short: "List available TTS voices",
 	Long: `List available TTS voices.
 
-By default, shows a curated offline-friendly list of 24 voices.
+By default, shows a curated offline-friendly list of voices.
 Use --all to fetch the full live catalog from the upstream TTS API.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {

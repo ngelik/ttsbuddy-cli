@@ -7,8 +7,8 @@ import (
 
 func TestCuratedVoices(t *testing.T) {
 	voices := CuratedVoices()
-	if len(voices) != 24 {
-		t.Errorf("expected 24 curated voices, got %d", len(voices))
+	if len(voices) != 23 {
+		t.Errorf("expected 23 curated voices, got %d", len(voices))
 	}
 	for i, v := range voices {
 		if v.ID == "" {
@@ -47,6 +47,18 @@ func TestParseVoiceResponseArray(t *testing.T) {
 	}
 	if voices[1].Name != "Emma" {
 		t.Errorf("second voice Name: got %q", voices[1].Name)
+	}
+}
+
+func TestParseVoiceResponseCodeKey(t *testing.T) {
+	// The live API uses "code" as the voice ID key
+	raw := json.RawMessage(`[{"code": "af_heart", "name": "Madison", "gender": "female", "language": "American English"}]`)
+	voices, err := parseVoiceResponse(raw)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(voices) != 1 || voices[0].ID != "af_heart" {
+		t.Errorf("expected af_heart via code key, got %+v", voices)
 	}
 }
 
