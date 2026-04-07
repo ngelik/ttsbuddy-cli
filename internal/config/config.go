@@ -13,7 +13,7 @@ import (
 
 const (
 	DefaultAPIURL        = "https://ttsbuddy.com/v1/agent-tts"
-	DefaultTTSAPIBaseURL = "https://tts.api.prod.ttsbuddy.website"
+	DefaultTTSAPIBaseURL = "https://ttsbuddy.com"
 	DefaultVoice         = "af_heart"
 	DefaultSpeed         = 1.0
 	DefaultOutputDir     = "."

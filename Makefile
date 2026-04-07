@@ -11,7 +11,7 @@ LDFLAGS := -s -w \
   -X $(MODULE)/cmd.Commit=$(COMMIT) \
   -X $(MODULE)/cmd.Date=$(DATE)
 
-.PHONY: build test test-live lint tools release-snapshot clean
+.PHONY: build test test-live test-acceptance lint tools release-snapshot clean
 
 build:
 	go build -ldflags "$(LDFLAGS)" -o bin/ttsbuddy .
@@ -21,6 +21,10 @@ test:
 
 test-live:
 	TTSBUDDY_TEST_LIVE=1 go test -race -count=1 -run TestLive ./...
+
+test-acceptance:
+	@echo "Running acceptance tests (requires TTSBUDDY_API_KEY)..."
+	BINARY=bin/ttsbuddy ./tests/acceptance_test.sh
 
 lint:
 	golangci-lint run
