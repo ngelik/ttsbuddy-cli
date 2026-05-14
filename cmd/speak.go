@@ -65,7 +65,7 @@ func init() {
 	speakCmd.Flags().StringVarP(&speakFile, "file", "f", "", "read text from file")
 	speakCmd.Flags().StringVarP(&speakVoice, "voice", "v", "", "voice ID (default: st_m1)")
 	speakCmd.Flags().StringVarP(&speakLanguage, "language", "l", "", "language code for Supertonic voices (e.g. en, fr, de, ja, ko)")
-	speakCmd.Flags().Float64VarP(&speakSpeed, "speed", "s", 0, "speed 0.5-1.5 (default: 1.0)")
+	speakCmd.Flags().Float64VarP(&speakSpeed, "speed", "s", 0, "speed 0.5-1.5 (default: 1.2)")
 	speakCmd.Flags().StringVarP(&speakOutput, "output", "o", "", "output file (- for stdout)")
 	speakCmd.Flags().StringVar(&speakOutputDir, "output-dir", "", "directory for auto-named files")
 	speakCmd.Flags().StringVar(&speakTimeout, "timeout", "", "poll timeout (e.g. 30s, 2m, 10m)")
@@ -140,11 +140,6 @@ func runSpeak(cmd *cobra.Command, args []string) error {
 		return &exitError{code: 2, msg: fmt.Sprintf("invalid language code: %s", language)}
 	}
 
-	// Auto-cap for fast voices
-	if strings.HasPrefix(voice, "st_") && speed > 1.0 {
-		stderrMsg("Speed auto-capped to 1.0 for fast voice %s\n", voice)
-		speed = 1.0
-	}
 	if strings.HasPrefix(voice, "st_") {
 		if language == "" {
 			language = config.DefaultLanguage

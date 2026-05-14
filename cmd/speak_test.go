@@ -395,6 +395,9 @@ func TestSpeakSupertonicLanguageFlag(t *testing.T) {
 	if received["language"] != "fr" {
 		t.Fatalf("language: got %v", received["language"])
 	}
+	if received["speed"] != 1.2 {
+		t.Fatalf("speed: got %v", received["speed"])
+	}
 }
 
 func TestSpeakConfiguredSupertonicLanguage(t *testing.T) {

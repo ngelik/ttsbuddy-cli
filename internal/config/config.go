@@ -16,7 +16,7 @@ const (
 	DefaultTTSAPIBaseURL = "https://tts.api.prod.ttsbuddy.website"
 	DefaultVoice         = "st_m1"
 	DefaultLanguage      = "en"
-	DefaultSpeed         = 1.0
+	DefaultSpeed         = 1.2
 	DefaultOutputDir     = "."
 	DefaultPollTimeout   = "10m"
 )

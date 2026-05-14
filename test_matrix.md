@@ -21,11 +21,11 @@ Check each item after verifying. Run `make test` for unit tests, `make test-live
 - [ ] `--json -o -`: exit 2 (mutually exclusive)
 
 ## Request Parameters
-- [ ] Default voice (`af_heart`) and speed (`1.0`)
+- [ ] Default voice (`st_m1`) and speed (`1.2`)
 - [ ] Custom voice: `-v bf_emma`
 - [ ] Custom speed: `-s 0.8`
 - [ ] Speed out of range: `-s 2.0` → exit 2
-- [ ] `st_*` voice speed auto-cap: `-v st_m1 -s 1.3` → caps to 1.0 with warning
+- [ ] `st_*` voice speed: `-v st_m1 -s 1.3` → requests 1.3 without capping
 - [ ] `--timeout 30s`: custom poll timeout
 - [ ] `--idempotency-key custom-key`: override auto-generated key
 - [ ] Text > 500k chars → exit 2

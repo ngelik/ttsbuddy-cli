@@ -106,7 +106,7 @@ ttsbuddy speak "Hello" -o - | afplay -
 | `-f, --file <path>` | Read text from file |
 | `-v, --voice <id>` | Voice ID (default: `st_m1`) |
 | `-l, --language <code>` | Supertonic language code (default: `en`; examples: `fr`, `de`, `ja`, `ko`, `ar`) |
-| `-s, --speed <n>` | Speed 0.5–1.5 (default: 1.0) |
+| `-s, --speed <n>` | Speed 0.5–1.5 (default: 1.2) |
 | `-o, --output <path>` | Output file (`-` for stdout) |
 | `--output-dir <dir>` | Directory for auto-named files (default: `.`) |
 | `--timeout <duration>` | Poll timeout (default: `10m`) |
@@ -116,7 +116,7 @@ ttsbuddy speak "Hello" -o - | afplay -
 
 **Notes:**
 - `.md` and `.markdown` files are automatically preprocessed: headings, links, images, and code blocks are stripped for cleaner narration. Use `--raw` to send verbatim.
-- Fast voices (`st_*`) support 30+ language modes through `--language`, use native display names in `ttsbuddy voices`, and auto-cap speed at 1.0.
+- Fast voices (`st_*`) support 30+ language modes through `--language`, use native display names in `ttsbuddy voices`, and support the full 0.5–1.5 speed range.
 - Auto-named files use the pattern `ttsbuddy-YYYYMMDD-HHMMSS-<voice>.mp3`.
 
 **Fast voice language codes:** `en`, `ar`, `bg`, `hr`, `cs`, `da`, `nl`, `et`, `fi`, `fr`, `de`, `el`, `hi`, `hu`, `id`, `it`, `ja`, `ko`, `lv`, `lt`, `pl`, `pt`, `ro`, `ru`, `sk`, `sl`, `es`, `sv`, `tr`, `uk`, `vi`.
@@ -195,7 +195,7 @@ ttsbuddy version --json
   "api_key": "ttsb_...",
   "default_voice": "st_m1",
   "default_language": "en",
-  "default_speed": 1.0,
+  "default_speed": 1.2,
   "output_dir": ".",
   "poll_timeout": "10m"
 }

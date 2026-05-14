@@ -106,8 +106,7 @@ func TestConfigGetSpeed(t *testing.T) {
 	home := t.TempDir()
 	r := runCLI(t, envForTest(home, "", "ttsb_test_key"), "config", "get", "speed")
 	assertExitCode(t, r, 0)
-	// Default speed 1.0 is formatted as "1" by FormatSpeed
-	assertContains(t, r.Stdout, "1", "stdout")
+	assertContains(t, r.Stdout, "1.2", "stdout")
 }
 
 func TestConfigGetTimeout(t *testing.T) {
