@@ -26,6 +26,14 @@ func TestGenerateFromContentDiffersOnSpeed(t *testing.T) {
 	}
 }
 
+func TestGenerateFromContentDiffersOnLanguage(t *testing.T) {
+	k1 := GenerateFromContent("hello", "st_m1", 1.0, "fr")
+	k2 := GenerateFromContent("hello", "st_m1", 1.0, "de")
+	if k1 == k2 {
+		t.Error("different language should produce different keys")
+	}
+}
+
 func TestGenerateFromStdinUnique(t *testing.T) {
 	k1 := GenerateFromStdin()
 	k2 := GenerateFromStdin()

@@ -85,8 +85,9 @@ ttsbuddy speak -f article.md -v bf_emma -o article.mp3
 # From stdin
 cat notes.txt | ttsbuddy speak -
 
-# Custom voice and speed
-ttsbuddy speak "Bonjour" -v ff_claire -s 0.8
+# Custom voice, language, and speed
+ttsbuddy speak "Bonjour" -v st_m1 --language fr -s 0.9
+ttsbuddy speak "こんにちは" -v st_f2 --language ja
 
 # JSON output (for scripting)
 ttsbuddy speak "Hello" --json
@@ -103,7 +104,8 @@ ttsbuddy speak "Hello" -o - | afplay -
 | Flag | Description |
 |------|-------------|
 | `-f, --file <path>` | Read text from file |
-| `-v, --voice <id>` | Voice ID (default: `af_heart`) |
+| `-v, --voice <id>` | Voice ID (default: `st_m1`) |
+| `-l, --language <code>` | Supertonic language code (default: `en`; examples: `fr`, `de`, `ja`, `ko`, `ar`) |
 | `-s, --speed <n>` | Speed 0.5–1.5 (default: 1.0) |
 | `-o, --output <path>` | Output file (`-` for stdout) |
 | `--output-dir <dir>` | Directory for auto-named files (default: `.`) |
@@ -114,7 +116,7 @@ ttsbuddy speak "Hello" -o - | afplay -
 
 **Notes:**
 - `.md` and `.markdown` files are automatically preprocessed: headings, links, images, and code blocks are stripped for cleaner narration. Use `--raw` to send verbatim.
-- Fast voices (`st_*`) auto-cap speed at 1.0.
+- Fast voices (`st_*`) support 30+ language modes through `--language` and auto-cap speed at 1.0.
 - Auto-named files use the pattern `ttsbuddy-YYYYMMDD-HHMMSS-<voice>.mp3`.
 
 ### voices
@@ -122,7 +124,7 @@ ttsbuddy speak "Hello" -o - | afplay -
 List available TTS voices.
 
 ```bash
-# Curated list (always works offline)
+# Curated list with Kokoro voices plus Supertonic language modes (always works offline)
 ttsbuddy voices
 
 # Full live catalog from API
@@ -132,7 +134,7 @@ ttsbuddy voices --all
 ttsbuddy voices --json
 ```
 
-If `--all` can't reach the live catalog, it falls back to the curated list with a warning.
+Voice output includes `ID`, `LANGUAGE`, language `CODE`, and `TYPE`. Supertonic Fast voices (`st_m1`-`st_m5`, `st_f1`-`st_f5`) appear once per supported language mode, for example `st_m1` under French with code `fr` and German with code `de`. If `--all` can't reach the live catalog, it falls back to the curated list with a warning.
 
 ### status
 
@@ -165,12 +167,13 @@ ttsbuddy config get voice
 
 # Set values
 ttsbuddy config set key ttsb_...
-ttsbuddy config set voice bf_emma
+ttsbuddy config set voice st_m1
+ttsbuddy config set language fr
 ttsbuddy config set speed 0.9
 ttsbuddy config set timeout 5m
 ```
 
-Valid keys: `key`, `voice`, `speed`, `timeout`, `output_dir`, `api_url`, `tts_api_base_url`
+Valid keys: `key`, `voice`, `language`, `speed`, `timeout`, `output_dir`, `api_url`, `tts_api_base_url`
 
 ### version
 
@@ -186,7 +189,8 @@ ttsbuddy version --json
 ```json
 {
   "api_key": "ttsb_...",
-  "default_voice": "af_heart",
+  "default_voice": "st_m1",
+  "default_language": "en",
   "default_speed": 1.0,
   "output_dir": ".",
   "poll_timeout": "10m"
@@ -198,11 +202,13 @@ ttsbuddy version --json
 | Setting | Env Variable | Flag | Default |
 |---------|-------------|------|---------|
 | API key | `TTSBUDDY_API_KEY` | `-k` | — |
-| Voice | `TTSBUDDY_VOICE` | `-v` | `af_heart` |
+| Voice | `TTSBUDDY_VOICE` | `-v` | `st_m1` |
+| Language | `TTSBUDDY_LANGUAGE` | `-l, --language` | `en` |
 | Speed | `TTSBUDDY_SPEED` | `-s` | `1.0` |
 | Output dir | `TTSBUDDY_OUTPUT_DIR` | `--output-dir` | `.` |
 | Poll timeout | `TTSBUDDY_TIMEOUT` | `--timeout` | `10m` |
 | API URL | `TTSBUDDY_API_URL` | — | (production) |
+| Voice catalog API URL | `TTSBUDDY_TTS_API_BASE_URL` | — | `https://tts.api.prod.ttsbuddy.website` |
 
 ## Global Flags
 

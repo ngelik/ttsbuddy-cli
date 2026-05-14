@@ -25,6 +25,7 @@ import (
 var (
 	speakFile           string
 	speakVoice          string
+	speakLanguage       string
 	speakSpeed          float64
 	speakOutput         string
 	speakOutputDir      string
@@ -63,6 +64,7 @@ Input can be provided as:
 func init() {
 	speakCmd.Flags().StringVarP(&speakFile, "file", "f", "", "read text from file")
 	speakCmd.Flags().StringVarP(&speakVoice, "voice", "v", "", "voice ID (default: st_m1)")
+	speakCmd.Flags().StringVarP(&speakLanguage, "language", "l", "", "language code for Supertonic voices (e.g. en, fr, de, ja, ko)")
 	speakCmd.Flags().Float64VarP(&speakSpeed, "speed", "s", 0, "speed 0.5-1.5 (default: 1.0)")
 	speakCmd.Flags().StringVarP(&speakOutput, "output", "o", "", "output file (- for stdout)")
 	speakCmd.Flags().StringVar(&speakOutputDir, "output-dir", "", "directory for auto-named files")
@@ -84,6 +86,10 @@ func runSpeak(cmd *cobra.Command, args []string) error {
 	// Apply speak-specific flag overrides
 	if cmd.Flags().Changed("voice") {
 		resolved.Voice = speakVoice
+	}
+	languageExplicit := cmd.Flags().Changed("language")
+	if languageExplicit {
+		resolved.Language = speakLanguage
 	}
 	if cmd.Flags().Changed("speed") {
 		resolved.Speed = speakSpeed
@@ -123,16 +129,30 @@ func runSpeak(cmd *cobra.Command, args []string) error {
 	// 4. Resolve voice and speed
 	voice := resolved.Voice
 	speed := resolved.Speed
+	language := strings.ToLower(strings.TrimSpace(resolved.Language))
 
 	// Speed validation
 	if speed < 0.5 || speed > 1.5 {
 		return &exitError{code: 2, msg: fmt.Sprintf("speed must be between 0.5 and 1.5 (got %.2f)", speed)}
 	}
 
+	if language != "" && !config.IsValidLanguageCode(language) {
+		return &exitError{code: 2, msg: fmt.Sprintf("invalid language code: %s", language)}
+	}
+
 	// Auto-cap for fast voices
 	if strings.HasPrefix(voice, "st_") && speed > 1.0 {
 		stderrMsg("Speed auto-capped to 1.0 for fast voice %s\n", voice)
 		speed = 1.0
+	}
+	if strings.HasPrefix(voice, "st_") {
+		if language == "" {
+			language = config.DefaultLanguage
+		}
+	} else if languageExplicit {
+		return &exitError{code: 2, msg: "--language is only supported with Supertonic st_* voices; choose a Kokoro voice for its native language"}
+	} else {
+		language = ""
 	}
 
 	// 5. Generate idempotency key
@@ -143,7 +163,7 @@ func runSpeak(cmd *cobra.Command, args []string) error {
 		if fromStdin {
 			idemKey = api.GenerateFromStdin()
 		} else {
-			idemKey = api.GenerateFromContent(text, voice, speed)
+			idemKey = api.GenerateFromContent(text, voice, speed, language)
 		}
 	}
 
@@ -156,9 +176,10 @@ func runSpeak(cmd *cobra.Command, args []string) error {
 
 	// 8. Submit with retry
 	req := api.SpeakRequest{
-		Text:  text,
-		Voice: voice,
-		Speed: speed,
+		Text:     text,
+		Voice:    voice,
+		Speed:    speed,
+		Language: language,
 	}
 
 	spin := display.New()
@@ -559,4 +580,3 @@ func minDuration(a, b time.Duration) time.Duration {
 	}
 	return b
 }
-

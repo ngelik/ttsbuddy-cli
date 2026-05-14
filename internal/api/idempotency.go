@@ -8,12 +8,16 @@ import (
 )
 
 // GenerateFromContent produces a deterministic idempotency key from input parameters.
-// Same text + voice + speed always produces the same key.
-func GenerateFromContent(text, voice string, speed float64) string {
+// Same text + voice + speed + language always produces the same key.
+func GenerateFromContent(text, voice string, speed float64, language ...string) string {
 	h := sha256.New()
 	// Use full float precision to avoid collapsing distinct speed values
 	// (e.g., 1.004 and 1.005 must produce different keys).
-	_, _ = fmt.Fprintf(h, "%s|%s|%v", text, voice, speed)
+	lang := ""
+	if len(language) > 0 {
+		lang = language[0]
+	}
+	_, _ = fmt.Fprintf(h, "%s|%s|%v|%s", text, voice, speed, lang)
 	return fmt.Sprintf("%x", h.Sum(nil))
 }
 

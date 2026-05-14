@@ -7,8 +7,8 @@ import (
 
 func TestCuratedVoices(t *testing.T) {
 	voices := CuratedVoices()
-	if len(voices) != 23 {
-		t.Errorf("expected 23 curated voices, got %d", len(voices))
+	if len(voices) < 300 {
+		t.Errorf("expected curated voices to include Supertonic language modes, got %d", len(voices))
 	}
 	for i, v := range voices {
 		if v.ID == "" {
@@ -27,6 +27,17 @@ func TestCuratedVoices(t *testing.T) {
 	// First voice should be af_heart (default)
 	if voices[0].ID != "af_heart" {
 		t.Errorf("first voice should be af_heart, got %s", voices[0].ID)
+	}
+
+	foundFrenchM1 := false
+	for _, v := range voices {
+		if v.ID == "st_m1" && v.Language == "French" && v.LanguageCode == "fr" && v.Quality == "Fast" {
+			foundFrenchM1 = true
+			break
+		}
+	}
+	if !foundFrenchM1 {
+		t.Error("curated voices should include st_m1 French Fast mode")
 	}
 }
 
@@ -112,6 +123,54 @@ func TestParseVoiceResponseExtraFields(t *testing.T) {
 	}
 	if len(voices) != 1 || voices[0].ID != "af_heart" {
 		t.Errorf("expected af_heart, got %+v", voices)
+	}
+}
+
+func TestParseVoiceResponseExpandsSupertonicLanguageModes(t *testing.T) {
+	raw := json.RawMessage(`{
+		"voices": [
+			{
+				"code": "ff_siwis",
+				"name": "Camille",
+				"gender": "female",
+				"language": "French",
+				"language_code": "f"
+			},
+			{
+				"code": "st_m1",
+				"name": "M1",
+				"gender": "male",
+				"language": "Multilingual",
+				"language_code": "en",
+				"engine": "supertonic",
+				"supported_language_codes": ["en", "fr", "de", "na"]
+			}
+		]
+	}`)
+	voices, err := parseVoiceResponse(raw)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	assertVoiceMode := func(id, language, languageCode string) {
+		t.Helper()
+		for _, voice := range voices {
+			if voice.ID == id && voice.Language == language && voice.LanguageCode == languageCode {
+				return
+			}
+		}
+		t.Fatalf("missing voice mode id=%s language=%s languageCode=%s in %+v", id, language, languageCode, voices)
+	}
+
+	assertVoiceMode("ff_siwis", "French", "f")
+	assertVoiceMode("st_m1", "American English", "en")
+	assertVoiceMode("st_m1", "French", "fr")
+	assertVoiceMode("st_m1", "German", "de")
+
+	for _, voice := range voices {
+		if voice.LanguageCode == "na" || voice.Language == "Multilingual" {
+			t.Fatalf("voice response should not expose %q/%q", voice.Language, voice.LanguageCode)
+		}
 	}
 }
 

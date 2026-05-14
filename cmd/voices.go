@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"text/tabwriter"
 
 	"github.com/ngelik/ttsbuddy-cli/internal/api"
@@ -50,6 +51,16 @@ Use --all to fetch the full live catalog from the upstream TTS API.`,
 			voices = api.CuratedVoices()
 		}
 
+		sort.SliceStable(voices, func(i, j int) bool {
+			if voices[i].Language != voices[j].Language {
+				return voices[i].Language < voices[j].Language
+			}
+			if voices[i].ID != voices[j].ID {
+				return voices[i].ID < voices[j].ID
+			}
+			return voices[i].LanguageCode < voices[j].LanguageCode
+		})
+
 		if flagJSON {
 			enc := json.NewEncoder(os.Stdout)
 			enc.SetIndent("", "  ")
@@ -58,15 +69,19 @@ Use --all to fetch the full live catalog from the upstream TTS API.`,
 
 		// Table output
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		_, _ = fmt.Fprintln(w, "ID\tNAME\tGENDER\tLANGUAGE")
-		_, _ = fmt.Fprintln(w, "──\t────\t──────\t────────")
+		_, _ = fmt.Fprintln(w, "ID\tNAME\tGENDER\tLANGUAGE\tCODE\tTYPE")
+		_, _ = fmt.Fprintln(w, "──\t────\t──────\t────────\t────\t────")
 
 		for _, v := range voices {
 			name := v.Name
 			if name == "" {
 				name = "-"
 			}
-			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", v.ID, name, v.Gender, v.Language)
+			quality := v.Quality
+			if quality == "" {
+				quality = "-"
+			}
+			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", v.ID, name, v.Gender, v.Language, v.LanguageCode, quality)
 		}
 		return w.Flush()
 	},

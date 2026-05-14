@@ -19,9 +19,10 @@ const (
 
 // SpeakRequest is the POST body for agent-tts.
 type SpeakRequest struct {
-	Text  string  `json:"text"`
-	Voice string  `json:"voice,omitempty"`
-	Speed float64 `json:"speed,omitempty"`
+	Text     string  `json:"text"`
+	Voice    string  `json:"voice,omitempty"`
+	Speed    float64 `json:"speed,omitempty"`
+	Language string  `json:"language,omitempty"`
 }
 
 // TTSResponse is the unified response shape from agent-tts.
@@ -95,7 +96,7 @@ func (e *APIResponseError) ErrorCode() string {
 
 // CLIError represents a local CLI failure for --json output.
 type CLIError struct {
-	Success bool   `json:"success"`
+	Success bool `json:"success"`
 	Error   struct {
 		Code    string `json:"code"`
 		Message string `json:"message"`

@@ -13,8 +13,9 @@ import (
 
 const (
 	DefaultAPIURL        = "https://ttsbuddy.com/v1/agent-tts"
-	DefaultTTSAPIBaseURL = "https://ttsbuddy.com"
+	DefaultTTSAPIBaseURL = "https://tts.api.prod.ttsbuddy.website"
 	DefaultVoice         = "st_m1"
+	DefaultLanguage      = "en"
 	DefaultSpeed         = 1.0
 	DefaultOutputDir     = "."
 	DefaultPollTimeout   = "10m"
@@ -22,13 +23,14 @@ const (
 
 // Config represents the persisted configuration file.
 type Config struct {
-	APIKey        string  `json:"api_key,omitempty"`
-	APIURL        string  `json:"api_url,omitempty"`
-	TTSAPIBaseURL string  `json:"tts_api_base_url,omitempty"`
-	DefaultVoice  string  `json:"default_voice,omitempty"`
-	DefaultSpeed  float64 `json:"default_speed,omitempty"`
-	OutputDir     string  `json:"output_dir,omitempty"`
-	PollTimeout   string  `json:"poll_timeout,omitempty"`
+	APIKey          string  `json:"api_key,omitempty"`
+	APIURL          string  `json:"api_url,omitempty"`
+	TTSAPIBaseURL   string  `json:"tts_api_base_url,omitempty"`
+	DefaultVoice    string  `json:"default_voice,omitempty"`
+	DefaultLanguage string  `json:"default_language,omitempty"`
+	DefaultSpeed    float64 `json:"default_speed,omitempty"`
+	OutputDir       string  `json:"output_dir,omitempty"`
+	PollTimeout     string  `json:"poll_timeout,omitempty"`
 }
 
 // validKeys maps user-facing key names to Config field setters.
@@ -36,6 +38,8 @@ var validKeys = map[string]bool{
 	"key":              true,
 	"api_key":          true,
 	"voice":            true,
+	"language":         true,
+	"default_language": true,
 	"speed":            true,
 	"timeout":          true,
 	"output_dir":       true,
@@ -46,6 +50,22 @@ var validKeys = map[string]bool{
 // IsValidKey returns true if the key name is recognized.
 func IsValidKey(key string) bool {
 	return validKeys[key]
+}
+
+func IsValidLanguageCode(value string) bool {
+	value = strings.TrimSpace(value)
+	if len(value) < 2 || len(value) > 8 {
+		return false
+	}
+	for i, r := range value {
+		if r == '-' && i > 0 && i < len(value)-1 {
+			continue
+		}
+		if r < 'A' || (r > 'Z' && r < 'a') || r > 'z' {
+			return false
+		}
+	}
+	return true
 }
 
 // ValidationError represents a user input validation failure (exit code 2).
@@ -169,6 +189,8 @@ func Get(cfg *Config, key string) (string, error) {
 		return RedactKey(cfg.APIKey), nil
 	case "voice":
 		return cfg.DefaultVoice, nil
+	case "language", "default_language":
+		return cfg.DefaultLanguage, nil
 	case "speed":
 		if cfg.DefaultSpeed == 0 {
 			return "", nil
@@ -199,6 +221,11 @@ func Set(key, value string) error {
 		cfg.APIKey = value
 	case "voice":
 		cfg.DefaultVoice = value
+	case "language", "default_language":
+		if !IsValidLanguageCode(value) {
+			return &ValidationError{Msg: fmt.Sprintf("invalid language code: %s", value)}
+		}
+		cfg.DefaultLanguage = strings.ToLower(value)
 	case "speed":
 		speed, parseErr := strconv.ParseFloat(value, 64)
 		if parseErr != nil {

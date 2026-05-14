@@ -11,6 +11,7 @@ import (
 type FlagValues struct {
 	APIKey    *string
 	Voice     *string
+	Language  *string
 	Speed     *float64
 	OutputDir *string
 	Timeout   *string
@@ -22,6 +23,7 @@ type ResolvedConfig struct {
 	APIURL        string
 	TTSAPIBaseURL string
 	Voice         string
+	Language      string
 	Speed         float64
 	OutputDir     string
 	PollTimeout   string
@@ -38,6 +40,7 @@ func Resolve(cfg *Config, flags FlagValues) (*ResolvedConfig, []string) {
 		APIURL:        or(cfg.APIURL, DefaultAPIURL),
 		TTSAPIBaseURL: or(cfg.TTSAPIBaseURL, DefaultTTSAPIBaseURL),
 		Voice:         or(cfg.DefaultVoice, DefaultVoice),
+		Language:      or(cfg.DefaultLanguage, DefaultLanguage),
 		Speed:         orFloat(cfg.DefaultSpeed, DefaultSpeed),
 		OutputDir:     or(cfg.OutputDir, DefaultOutputDir),
 		PollTimeout:   or(cfg.PollTimeout, DefaultPollTimeout),
@@ -66,6 +69,13 @@ func applyEnv(r *ResolvedConfig) []string {
 	if v := os.Getenv("TTSBUDDY_VOICE"); v != "" {
 		r.Voice = v
 	}
+	if v := os.Getenv("TTSBUDDY_LANGUAGE"); v != "" {
+		if IsValidLanguageCode(v) {
+			r.Language = v
+		} else {
+			warnings = append(warnings, fmt.Sprintf("invalid TTSBUDDY_LANGUAGE=%q, using default %s", v, r.Language))
+		}
+	}
 	if v := os.Getenv("TTSBUDDY_SPEED"); v != "" {
 		f, err := strconv.ParseFloat(v, 64)
 		if err != nil {
@@ -93,6 +103,9 @@ func applyFlags(r *ResolvedConfig, f FlagValues) {
 	}
 	if f.Voice != nil {
 		r.Voice = *f.Voice
+	}
+	if f.Language != nil {
+		r.Language = *f.Language
 	}
 	if f.Speed != nil {
 		r.Speed = *f.Speed

@@ -368,6 +368,68 @@ func TestSpeakMarkdownStrip(t *testing.T) {
 	}
 }
 
+func TestSpeakSupertonicLanguageFlag(t *testing.T) {
+	var received map[string]interface{}
+	apiSrv := startMockAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" {
+			if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+				t.Fatalf("decoding request body: %v", err)
+			}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":   true,
+			"status":    "completed",
+			"job_id":    "lang-job",
+			"audio_url": "https://example.com/audio.mp3",
+			"meta":      map[string]string{"request_id": "r1", "api_version": "2026-04"},
+		})
+	}))
+	home := t.TempDir()
+
+	r := runCLI(t, envForTest(home, apiSrv, "ttsb_test_key"), "speak", "-v", "st_m1", "--language", "fr", "bonjour", "--no-download")
+	assertExitCode(t, r, 0)
+
+	if received["voice"] != "st_m1" {
+		t.Fatalf("voice: got %v", received["voice"])
+	}
+	if received["language"] != "fr" {
+		t.Fatalf("language: got %v", received["language"])
+	}
+}
+
+func TestSpeakConfiguredSupertonicLanguage(t *testing.T) {
+	var received map[string]interface{}
+	apiSrv := startMockAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" {
+			if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+				t.Fatalf("decoding request body: %v", err)
+			}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":   true,
+			"status":    "completed",
+			"job_id":    "lang-job",
+			"audio_url": "https://example.com/audio.mp3",
+			"meta":      map[string]string{"request_id": "r1", "api_version": "2026-04"},
+		})
+	}))
+	home := t.TempDir()
+
+	r := runCLI(t, append(envForTest(home, apiSrv, "ttsb_test_key"), "TTSBUDDY_LANGUAGE=de"), "speak", "-v", "st_m1", "hallo", "--no-download")
+	assertExitCode(t, r, 0)
+
+	if received["language"] != "de" {
+		t.Fatalf("language: got %v", received["language"])
+	}
+}
+
+func TestSpeakRejectsLanguageForKokoroVoice(t *testing.T) {
+	home := t.TempDir()
+	r := runCLI(t, envForTest(home, "https://example.com/v1/agent-tts", "ttsb_test_key"), "speak", "-v", "ff_siwis", "--language", "fr", "bonjour")
+	assertExitCode(t, r, 2)
+	assertContains(t, r.Stderr, "Supertonic", "stderr")
+}
+
 // --- Regression tests ---
 
 func TestSpeakNoDownloadMissingURL(t *testing.T) {

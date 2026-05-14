@@ -20,7 +20,7 @@ Usage:
   ttsbuddy config get <key>          Show a single value
   ttsbuddy config set <key> <value>  Set a value
 
-Valid keys: key, voice, speed, timeout, output_dir, api_url, tts_api_base_url`,
+Valid keys: key, voice, language, speed, timeout, output_dir, api_url, tts_api_base_url`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Show resolved values (file + env + defaults) for consistency
@@ -40,6 +40,7 @@ Valid keys: key, voice, speed, timeout, output_dir, api_url, tts_api_base_url`,
 
 		_, _ = fmt.Fprintf(os.Stdout, "%-20s %s\n", "key:", config.RedactKey(resolved.APIKey))
 		_, _ = fmt.Fprintf(os.Stdout, "%-20s %s\n", "voice:", resolved.Voice)
+		_, _ = fmt.Fprintf(os.Stdout, "%-20s %s\n", "language:", resolved.Language)
 		_, _ = fmt.Fprintf(os.Stdout, "%-20s %s\n", "speed:", config.FormatSpeed(resolved.Speed))
 		_, _ = fmt.Fprintf(os.Stdout, "%-20s %s\n", "timeout:", resolved.PollTimeout)
 		_, _ = fmt.Fprintf(os.Stdout, "%-20s %s\n", "output_dir:", resolved.OutputDir)
@@ -56,7 +57,7 @@ var configGetCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		key := args[0]
 		if !config.IsValidKey(key) {
-			return &exitError{code: 2, msg: fmt.Sprintf("unknown config key: %s\nValid keys: key, voice, speed, timeout, output_dir, api_url, tts_api_base_url", key)}
+			return &exitError{code: 2, msg: fmt.Sprintf("unknown config key: %s\nValid keys: key, voice, language, speed, timeout, output_dir, api_url, tts_api_base_url", key)}
 		}
 		resolved := resolvedCfg
 		if resolved == nil {
@@ -76,7 +77,7 @@ var configSetCmd = &cobra.Command{
 		key, value := args[0], args[1]
 
 		if !config.IsValidKey(key) {
-			return &exitError{code: 2, msg: fmt.Sprintf("unknown config key: %s\nValid keys: key, voice, speed, timeout, output_dir, api_url, tts_api_base_url", key)}
+			return &exitError{code: 2, msg: fmt.Sprintf("unknown config key: %s\nValid keys: key, voice, language, speed, timeout, output_dir, api_url, tts_api_base_url", key)}
 		}
 
 		if (key == "key" || key == "api_key") && !strings.HasPrefix(value, "ttsb_") {
@@ -107,6 +108,8 @@ func getResolvedValue(r *config.ResolvedConfig, key string) string {
 		return config.RedactKey(r.APIKey)
 	case "voice":
 		return r.Voice
+	case "language", "default_language":
+		return r.Language
 	case "speed":
 		return config.FormatSpeed(r.Speed)
 	case "timeout":
