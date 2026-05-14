@@ -12,6 +12,18 @@ func TestVoicesCurated(t *testing.T) {
 	assertContains(t, r.Stdout, "bf_emma", "stdout")
 }
 
+func TestVoicesCuratedShowsSupertonicNativeNames(t *testing.T) {
+	r := runCLI(t, nil, "voices")
+	assertExitCode(t, r, 0)
+	assertContains(t, r.Stdout, "st_f1", "stdout")
+	assertContains(t, r.Stdout, "Ava", "stdout")
+	assertContains(t, r.Stdout, "Liam", "stdout")
+	assertContains(t, r.Stdout, "Louis", "stdout")
+	assertContains(t, r.Stdout, "민준", "stdout")
+	assertNotContains(t, r.Stdout, "\tF1\t", "stdout")
+	assertNotContains(t, r.Stdout, "\tM1\t", "stdout")
+}
+
 func TestVoicesJSON(t *testing.T) {
 	r := runCLI(t, nil, "voices", "--json")
 	assertExitCode(t, r, 0)
@@ -73,6 +85,45 @@ func TestVoicesAllEnvOverride(t *testing.T) {
 	}, "voices", "--all")
 	assertExitCode(t, r, 0)
 	assertContains(t, r.Stdout, "custom_voice", "stdout should show live voice")
+}
+
+func TestVoicesAllCanonicalizesSupertonicAliases(t *testing.T) {
+	srv := startMockAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{
+			"voices": [
+				{
+					"voice_id": "st_f1",
+					"code": "F1",
+					"name": "F1",
+					"gender": "female",
+					"language": "Multilingual",
+					"language_code": "en",
+					"engine": "supertonic",
+					"supported_language_codes": ["en", "fr"]
+				},
+				{
+					"voice_id": "st_m1",
+					"code": "M1",
+					"name": "M1",
+					"gender": "male",
+					"language": "Multilingual",
+					"language_code": "en",
+					"engine": "supertonic",
+					"supported_language_codes": ["en", "fr"]
+				}
+			]
+		}`))
+	}))
+	r := runCLI(t, []string{
+		"TTSBUDDY_TTS_API_BASE_URL=" + srv,
+	}, "voices", "--all")
+	assertExitCode(t, r, 0)
+	assertContains(t, r.Stdout, "st_f1", "stdout")
+	assertContains(t, r.Stdout, "Ava", "stdout")
+	assertContains(t, r.Stdout, "Liam", "stdout")
+	assertContains(t, r.Stdout, "Louis", "stdout")
+	assertNotContains(t, r.Stdout, "\tF1\t", "stdout")
+	assertNotContains(t, r.Stdout, "\tM1\t", "stdout")
 }
 
 func notFoundHandler() *notFoundH { return &notFoundH{} }

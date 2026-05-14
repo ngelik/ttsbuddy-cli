@@ -301,10 +301,14 @@ voices_exit=$?
 set -e
 if [ "$voices_exit" -eq 0 ]; then
     count=$(tail -n +3 "$TB_OUT/_stdout" | wc -l | tr -d ' ')
-    if [ "$count" -eq 23 ]; then
-        pass "C.1 voices (23 curated)"
+    if [ "$count" -ge 300 ] \
+        && grep -q "st_f1" "$TB_OUT/_stdout" \
+        && grep -q "Ava" "$TB_OUT/_stdout" \
+        && grep -q "Louis" "$TB_OUT/_stdout" \
+        && ! grep -Eq '(^|[[:space:]])(F1|M1)([[:space:]]|$)' "$TB_OUT/_stdout"; then
+        pass "C.1 voices (native Fast names)"
     else
-        fail "C.1 voices" "expected 23 rows, got $count"
+        fail "C.1 voices" "expected 300+ rows with native Fast names and no raw F1/M1 labels, got $count"
     fi
 else
     fail "C.1 voices" "exit $voices_exit"
@@ -313,10 +317,15 @@ fi
 set +e
 tb voices --json >"$TB_OUT/_stdout" 2>"$TB_OUT/_stderr"
 set -e
-if jq -e '. | length == 23' "$TB_OUT/_stdout" >/dev/null 2>&1; then
-    pass "C.2 voices --json (23 items)"
+if jq -e '
+    length >= 300
+    and any(.[]; .id == "st_f1" and .name == "Ava" and .language_code == "en")
+    and any(.[]; .id == "st_m1" and .name == "Louis" and .language_code == "fr")
+    and all(.[]; .name != "F1" and .name != "M1")
+' "$TB_OUT/_stdout" >/dev/null 2>&1; then
+    pass "C.2 voices --json (native Fast names)"
 else
-    fail "C.2 voices --json" "not 23 items or invalid JSON"
+    fail "C.2 voices --json" "invalid JSON or missing native Fast names"
 fi
 
 # C.3/C.4: live catalog — may fail if API is down
@@ -326,10 +335,14 @@ c3_exit=$?
 set -e
 if [ "$c3_exit" -eq 0 ]; then
     count=$(tail -n +3 "$TB_OUT/_stdout" | wc -l | tr -d ' ')
-    if [ "$count" -ge 23 ]; then
-        pass "C.3 voices --all (>= 23)"
+    if [ "$count" -ge 300 ] \
+        && grep -q "st_f1" "$TB_OUT/_stdout" \
+        && grep -q "Ava" "$TB_OUT/_stdout" \
+        && grep -q "Louis" "$TB_OUT/_stdout" \
+        && ! grep -Eq '(^|[[:space:]])(F1|M1)([[:space:]]|$)' "$TB_OUT/_stdout"; then
+        pass "C.3 voices --all (native Fast names)"
     else
-        fail "C.3 voices --all" "got $count voices"
+        fail "C.3 voices --all" "expected 300+ rows with native Fast names and no raw F1/M1 labels, got $count voices"
     fi
 else
     fail "C.3 voices --all" "exit non-zero"
@@ -338,7 +351,12 @@ fi
 set +e
 tb voices --all --json >"$TB_OUT/_stdout" 2>"$TB_OUT/_stderr"
 set -e
-if jq -e '. | length >= 23' "$TB_OUT/_stdout" >/dev/null 2>&1; then
+if jq -e '
+    length >= 300
+    and any(.[]; .id == "st_f1" and .name == "Ava" and .language_code == "en")
+    and any(.[]; .id == "st_m1" and .name == "Louis" and .language_code == "fr")
+    and all(.[]; .name != "F1" and .name != "M1")
+' "$TB_OUT/_stdout" >/dev/null 2>&1; then
     stderr_content=$(cat "$TB_OUT/_stderr")
     if [ -z "$stderr_content" ]; then
         pass "C.4 voices --all --json (no stderr)"
@@ -346,7 +364,7 @@ if jq -e '. | length >= 23' "$TB_OUT/_stdout" >/dev/null 2>&1; then
         fail "C.4 voices --all --json" "stderr not empty: $stderr_content"
     fi
 else
-    fail "C.4 voices --all --json" "invalid JSON or < 23"
+    fail "C.4 voices --all --json" "invalid JSON or missing native Fast names"
 fi
 echo ""
 

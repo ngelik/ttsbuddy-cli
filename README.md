@@ -116,8 +116,10 @@ ttsbuddy speak "Hello" -o - | afplay -
 
 **Notes:**
 - `.md` and `.markdown` files are automatically preprocessed: headings, links, images, and code blocks are stripped for cleaner narration. Use `--raw` to send verbatim.
-- Fast voices (`st_*`) support 30+ language modes through `--language` and auto-cap speed at 1.0.
+- Fast voices (`st_*`) support 30+ language modes through `--language`, use native display names in `ttsbuddy voices`, and auto-cap speed at 1.0.
 - Auto-named files use the pattern `ttsbuddy-YYYYMMDD-HHMMSS-<voice>.mp3`.
+
+**Fast voice language codes:** `en`, `ar`, `bg`, `hr`, `cs`, `da`, `nl`, `et`, `fi`, `fr`, `de`, `el`, `hi`, `hu`, `id`, `it`, `ja`, `ko`, `lv`, `lt`, `pl`, `pt`, `ro`, `ru`, `sk`, `sl`, `es`, `sv`, `tr`, `uk`, `vi`.
 
 ### voices
 
@@ -134,7 +136,9 @@ ttsbuddy voices --all
 ttsbuddy voices --json
 ```
 
-Voice output includes `ID`, `LANGUAGE`, language `CODE`, and `TYPE`. Supertonic Fast voices (`st_m1`-`st_m5`, `st_f1`-`st_f5`) appear once per supported language mode, for example `st_m1` under French with code `fr` and German with code `de`. If `--all` can't reach the live catalog, it falls back to the curated list with a warning.
+Voice output includes `ID`, native display `NAME`, `LANGUAGE`, language `CODE`, and `TYPE`. Supertonic Fast voices (`st_m1`-`st_m5`, `st_f1`-`st_f5`) appear once per supported language mode, for example `st_m1` appears as `Louis` under French with code `fr` and `Noah` under German with code `de`. If `--all` can't reach the live catalog, it falls back to the curated list with a warning.
+
+Kokoro voices use compact provider codes such as `a` for American English, `b` for British English, `f` for French, and `z` for Chinese. Fast voices use standard language codes from the list above.
 
 ### status
 

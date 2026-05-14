@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	DefaultAPIURL        = "https://ttsbuddy.com/v1/agent-tts"
+	DefaultAPIURL        = "https://www.ttsbuddy.com/v1/agent-tts"
 	DefaultTTSAPIBaseURL = "https://tts.api.prod.ttsbuddy.website"
 	DefaultVoice         = "st_m1"
 	DefaultLanguage      = "en"

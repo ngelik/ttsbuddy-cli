@@ -60,6 +60,40 @@ var supertonicLanguageCodes = []string{
 	"el", "fi", "hu", "ro", "sk", "bg", "hr", "lt", "lv", "sl", "et",
 }
 
+var supertonicNativeNames = map[string]map[string][]string{
+	"ar": {"Female": {"ليان", "مريم", "نور", "سارة", "ياسمين"}, "Male": {"عمر", "علي", "يوسف", "كريم", "سامي"}},
+	"bg": {"Female": {"София", "Мария", "Елена", "Ива", "Анна"}, "Male": {"Георги", "Иван", "Никола", "Димитър", "Мартин"}},
+	"cs": {"Female": {"Eliška", "Anna", "Tereza", "Adéla", "Sofie"}, "Male": {"Jakub", "Jan", "Tomáš", "Matěj", "Adam"}},
+	"da": {"Female": {"Emma", "Freja", "Clara", "Ida", "Sofie"}, "Male": {"William", "Noah", "Oscar", "Emil", "Oliver"}},
+	"de": {"Female": {"Emilia", "Hannah", "Mia", "Lina", "Clara"}, "Male": {"Noah", "Leon", "Finn", "Paul", "Elias"}},
+	"el": {"Female": {"Μαρία", "Ελένη", "Σοφία", "Άννα", "Κατερίνα"}, "Male": {"Γιώργος", "Νίκος", "Γιάννης", "Δημήτρης", "Αλέξανδρος"}},
+	"en": {"Female": {"Ava", "Emma", "Mia", "Grace", "Lily"}, "Male": {"Liam", "Noah", "Ethan", "James", "Lucas"}},
+	"es": {"Female": {"Lucía", "Sofía", "Valentina", "Camila", "Isabella"}, "Male": {"Mateo", "Santiago", "Diego", "Alejandro", "Nicolás"}},
+	"et": {"Female": {"Mia", "Sofia", "Emma", "Liisa", "Laura"}, "Male": {"Rasmus", "Karl", "Markus", "Robin", "Oliver"}},
+	"fi": {"Female": {"Aino", "Eevi", "Sofia", "Helmi", "Aada"}, "Male": {"Eino", "Leo", "Onni", "Väinö", "Oliver"}},
+	"fr": {"Female": {"Camille", "Léa", "Chloé", "Manon", "Inès"}, "Male": {"Louis", "Hugo", "Jules", "Lucas", "Gabriel"}},
+	"hi": {"Female": {"अनन्या", "प्रिया", "काव्या", "नंदिनी", "ईशा"}, "Male": {"आरव", "अर्जुन", "विवान", "रोहन", "कबीर"}},
+	"hr": {"Female": {"Mia", "Ema", "Lucija", "Petra", "Lana"}, "Male": {"Luka", "Ivan", "Marko", "Petar", "Matej"}},
+	"hu": {"Female": {"Anna", "Luca", "Lili", "Emma", "Zsófia"}, "Male": {"Bence", "Máté", "Levente", "Ádám", "Dániel"}},
+	"id": {"Female": {"Ayu", "Sari", "Dewi", "Putri", "Rina"}, "Male": {"Bima", "Rizky", "Andi", "Dimas", "Arif"}},
+	"it": {"Female": {"Sofia", "Giulia", "Aurora", "Alice", "Ginevra"}, "Male": {"Leonardo", "Francesco", "Alessandro", "Lorenzo", "Matteo"}},
+	"ja": {"Female": {"結衣", "咲良", "美咲", "陽葵", "葵"}, "Male": {"蓮", "陽翔", "湊", "大和", "悠真"}},
+	"ko": {"Female": {"서연", "지민", "하은", "수아", "나윤"}, "Male": {"민준", "서준", "도윤", "지호", "하준"}},
+	"lt": {"Female": {"Emilija", "Gabija", "Austėja", "Kamilė", "Ieva"}, "Male": {"Matas", "Lukas", "Dominykas", "Nojus", "Jokūbas"}},
+	"lv": {"Female": {"Sofija", "Emīlija", "Alise", "Anna", "Marta"}, "Male": {"Roberts", "Olivers", "Markuss", "Emīls", "Rūdolfs"}},
+	"nl": {"Female": {"Emma", "Sophie", "Julia", "Mila", "Tess"}, "Male": {"Daan", "Noah", "Lucas", "Sem", "Levi"}},
+	"pl": {"Female": {"Zofia", "Zuzanna", "Hanna", "Maja", "Julia"}, "Male": {"Antoni", "Jan", "Aleksander", "Franciszek", "Jakub"}},
+	"pt": {"Female": {"Sofia", "Alice", "Laura", "Valentina", "Helena"}, "Male": {"Miguel", "Davi", "Gabriel", "Rafael", "Lucas"}},
+	"ro": {"Female": {"Maria", "Ioana", "Sofia", "Elena", "Ana"}, "Male": {"Andrei", "Alexandru", "Matei", "Luca", "David"}},
+	"ru": {"Female": {"София", "Мария", "Анна", "Алиса", "Полина"}, "Male": {"Александр", "Михаил", "Артём", "Дмитрий", "Иван"}},
+	"sk": {"Female": {"Sofia", "Ema", "Nina", "Viktória", "Natália"}, "Male": {"Jakub", "Adam", "Samuel", "Tomáš", "Matej"}},
+	"sl": {"Female": {"Ema", "Zala", "Mia", "Lana", "Nika"}, "Male": {"Luka", "Nik", "Jakob", "Filip", "Žan"}},
+	"sv": {"Female": {"Alice", "Maja", "Elsa", "Astrid", "Alma"}, "Male": {"William", "Liam", "Noah", "Elias", "Oscar"}},
+	"tr": {"Female": {"Zeynep", "Elif", "Defne", "Asya", "Ece"}, "Male": {"Yusuf", "Emir", "Ömer", "Kerem", "Mert"}},
+	"uk": {"Female": {"Софія", "Марія", "Анна", "Анастасія", "Олена"}, "Male": {"Артем", "Максим", "Олександр", "Дмитро", "Богдан"}},
+	"vi": {"Female": {"Linh", "Mai", "An", "Hương", "Thảo"}, "Male": {"Minh", "Nam", "Dũng", "Huy", "Quân"}},
+}
+
 var kokoroLanguageNames = map[string]string{
 	"a": "American English",
 	"b": "British English",
@@ -145,10 +179,10 @@ func parseVoiceResponse(raw json.RawMessage) ([]Voice, error) {
 		var voices []Voice
 		for _, item := range arr {
 			v := Voice{}
-			if code, ok := item["code"].(string); ok {
-				v.ID = code
-			} else if id, ok := item["voice_id"].(string); ok {
+			if id, ok := item["voice_id"].(string); ok {
 				v.ID = id
+			} else if code, ok := item["code"].(string); ok {
+				v.ID = code
 			} else if id, ok := item["id"].(string); ok {
 				v.ID = id
 			}
@@ -197,6 +231,9 @@ func parseVoiceResponse(raw json.RawMessage) ([]Voice, error) {
 
 func expandVoiceModes(voice Voice, supportedLanguageCodes []string) []Voice {
 	if isSupertonicVoice(voice) {
+		if id := canonicalSupertonicVoiceID(voice.ID); id != "" {
+			voice.ID = id
+		}
 		codes := supportedLanguageCodes
 		if len(codes) == 0 {
 			codes = []string{orString(voice.LanguageCode, "en")}
@@ -215,6 +252,7 @@ func expandVoiceModes(voice Voice, supportedLanguageCodes []string) []Voice {
 			mode.Engine = supertonicEngine
 			mode.LanguageCode = code
 			mode.Language = languageName(code, true)
+			mode.Name = supertonicDisplayName(mode.ID, code, mode.Gender, mode.Name)
 			mode.Quality = "Fast"
 			expanded = append(expanded, mode)
 		}
@@ -234,7 +272,24 @@ func expandVoiceModes(voice Voice, supportedLanguageCodes []string) []Voice {
 }
 
 func isSupertonicVoice(voice Voice) bool {
-	return strings.EqualFold(voice.Engine, supertonicEngine) || strings.HasPrefix(voice.ID, "st_")
+	return strings.EqualFold(voice.Engine, supertonicEngine) || canonicalSupertonicVoiceID(voice.ID) != ""
+}
+
+func canonicalSupertonicVoiceID(voiceID string) string {
+	normalized := strings.ToLower(strings.TrimSpace(voiceID))
+	if len(normalized) == 5 && strings.HasPrefix(normalized, "st_") {
+		voiceNumber := normalized[4]
+		if (normalized[3] == 'f' || normalized[3] == 'm') && voiceNumber >= '1' && voiceNumber <= '5' {
+			return normalized
+		}
+	}
+	if len(normalized) == 2 {
+		voiceNumber := normalized[1]
+		if (normalized[0] == 'f' || normalized[0] == 'm') && voiceNumber >= '1' && voiceNumber <= '5' {
+			return "st_" + normalized
+		}
+	}
+	return ""
 }
 
 func languageName(code string, supertonic bool) string {
@@ -248,6 +303,32 @@ func languageName(code string, supertonic bool) string {
 		return name
 	}
 	return strings.ToUpper(code)
+}
+
+func supertonicDisplayName(voiceID, languageCode, gender, fallback string) string {
+	parts := strings.Split(strings.TrimPrefix(voiceID, "st_"), "")
+	if len(parts) != 2 {
+		return fallback
+	}
+
+	index := int(parts[1][0] - '1')
+	if index < 0 || index > 4 {
+		return fallback
+	}
+
+	namesByGender := supertonicNativeNames[languageCode]
+	genderKey := ""
+	switch {
+	case strings.EqualFold(gender, "female"):
+		genderKey = "Female"
+	case strings.EqualFold(gender, "male"):
+		genderKey = "Male"
+	}
+	names := namesByGender[genderKey]
+	if len(names) <= index {
+		return fallback
+	}
+	return names[index]
 }
 
 func detectKokoroLanguageCode(voiceID string) string {

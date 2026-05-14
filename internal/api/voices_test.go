@@ -30,14 +30,20 @@ func TestCuratedVoices(t *testing.T) {
 	}
 
 	foundFrenchM1 := false
+	foundKoreanF1 := false
 	for _, v := range voices {
-		if v.ID == "st_m1" && v.Language == "French" && v.LanguageCode == "fr" && v.Quality == "Fast" {
+		if v.ID == "st_m1" && v.Name == "Louis" && v.Language == "French" && v.LanguageCode == "fr" && v.Quality == "Fast" {
 			foundFrenchM1 = true
-			break
+		}
+		if v.ID == "st_f1" && v.Name == "서연" && v.Language == "Korean" && v.LanguageCode == "ko" && v.Quality == "Fast" {
+			foundKoreanF1 = true
 		}
 	}
 	if !foundFrenchM1 {
-		t.Error("curated voices should include st_m1 French Fast mode")
+		t.Error("curated voices should include st_m1 French Fast mode named Louis")
+	}
+	if !foundKoreanF1 {
+		t.Error("curated voices should include st_f1 Korean Fast mode named 서연")
 	}
 }
 
@@ -152,24 +158,75 @@ func TestParseVoiceResponseExpandsSupertonicLanguageModes(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	assertVoiceMode := func(id, language, languageCode string) {
+	assertVoiceMode := func(id, name, language, languageCode string) {
 		t.Helper()
 		for _, voice := range voices {
-			if voice.ID == id && voice.Language == language && voice.LanguageCode == languageCode {
+			if voice.ID == id && voice.Name == name && voice.Language == language && voice.LanguageCode == languageCode {
 				return
 			}
 		}
-		t.Fatalf("missing voice mode id=%s language=%s languageCode=%s in %+v", id, language, languageCode, voices)
+		t.Fatalf("missing voice mode id=%s name=%s language=%s languageCode=%s in %+v", id, name, language, languageCode, voices)
 	}
 
-	assertVoiceMode("ff_siwis", "French", "f")
-	assertVoiceMode("st_m1", "American English", "en")
-	assertVoiceMode("st_m1", "French", "fr")
-	assertVoiceMode("st_m1", "German", "de")
+	assertVoiceMode("ff_siwis", "Camille", "French", "f")
+	assertVoiceMode("st_m1", "Liam", "American English", "en")
+	assertVoiceMode("st_m1", "Louis", "French", "fr")
+	assertVoiceMode("st_m1", "Noah", "German", "de")
 
 	for _, voice := range voices {
 		if voice.LanguageCode == "na" || voice.Language == "Multilingual" {
 			t.Fatalf("voice response should not expose %q/%q", voice.Language, voice.LanguageCode)
+		}
+	}
+}
+
+func TestParseVoiceResponseCanonicalizesSupertonicAliases(t *testing.T) {
+	raw := json.RawMessage(`{
+		"voices": [
+			{
+				"voice_id": "st_f1",
+				"code": "F1",
+				"name": "F1",
+				"gender": "female",
+				"language": "Multilingual",
+				"language_code": "en",
+				"engine": "supertonic",
+				"supported_language_codes": ["en", "fr"]
+			},
+			{
+				"voice_id": "st_m1",
+				"code": "M1",
+				"name": "M1",
+				"gender": "male",
+				"language": "Multilingual",
+				"language_code": "en",
+				"engine": "supertonic",
+				"supported_language_codes": ["en", "fr"]
+			}
+		]
+	}`)
+	voices, err := parseVoiceResponse(raw)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	assertVoiceMode := func(id, name, language, languageCode string) {
+		t.Helper()
+		for _, voice := range voices {
+			if voice.ID == id && voice.Name == name && voice.Language == language && voice.LanguageCode == languageCode {
+				return
+			}
+		}
+		t.Fatalf("missing voice mode id=%s name=%s language=%s languageCode=%s in %+v", id, name, language, languageCode, voices)
+	}
+
+	assertVoiceMode("st_f1", "Ava", "American English", "en")
+	assertVoiceMode("st_m1", "Liam", "American English", "en")
+	assertVoiceMode("st_m1", "Louis", "French", "fr")
+
+	for _, voice := range voices {
+		if voice.ID == "F1" || voice.ID == "M1" || voice.Name == "F1" || voice.Name == "M1" {
+			t.Fatalf("Supertonic aliases should be canonicalized before display: %+v", voice)
 		}
 	}
 }

@@ -275,13 +275,13 @@ func TestCompletedMissingAudio(t *testing.T) {
 }
 
 func TestResolveStatusURL(t *testing.T) {
-	client := NewClient("https://ttsbuddy.com/v1/agent-tts", "key", "test")
+	client := NewClient("https://www.ttsbuddy.com/v1/agent-tts", "key", "test")
 
 	tests := []struct {
 		input string
 		want  string
 	}{
-		{"/v1/agent-tts?id=abc", "https://ttsbuddy.com/v1/agent-tts?id=abc"},
+		{"/v1/agent-tts?id=abc", "https://www.ttsbuddy.com/v1/agent-tts?id=abc"},
 		{"https://other.com/path", "https://other.com/path"},
 	}
 

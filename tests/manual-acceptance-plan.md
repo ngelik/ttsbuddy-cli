@@ -87,9 +87,9 @@ sh -c "$cmd" >case.stdout 2>case.stderr; echo $? >case.exit
 
 | # | Command | Expected | Exit |
 |---|---------|----------|------|
-| C.1 | `tb voices` | Curated table with 23 rows; includes `af_heart` | 0 |
-| C.2 | `tb voices --json` | Valid JSON array with 23 items | 0 |
-| C.3 | `tb voices --all` | Live catalog or curated fallback. If live fetch succeeds, valid table with >= 23 voices. Do not assert a fixed live count. | 0 |
+| C.1 | `tb voices` | Curated table includes `af_heart` plus Supertonic Fast language modes with native names, for example English `st_f1` as `Ava` and French `st_m1` as `Louis`; no raw `F1`/`M1` labels | 0 |
+| C.2 | `tb voices --json` | Valid JSON array includes Supertonic Fast language modes with native names and stable `st_*` IDs | 0 |
+| C.3 | `tb voices --all` | Live catalog or curated fallback. If live fetch succeeds, valid table with native Supertonic names even when the backend returns `F1`/`M1` aliases. Do not assert a fixed live count. | 0 |
 | C.4 | `tb voices --all --json` | Valid JSON; no stderr noise in JSON mode | 0 |
 
 ### D. Non-POST Input Validation

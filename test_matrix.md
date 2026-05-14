@@ -68,8 +68,8 @@ Check each item after verifying. Run `make test` for unit tests, `make test-live
 - [ ] Same for voice, speed, timeout
 
 ## Commands
-- [ ] `ttsbuddy voices` — offline curated list (24 voices)
-- [ ] `ttsbuddy voices --all` — live catalog fetch
+- [ ] `ttsbuddy voices` — offline curated list with Kokoro voices plus Supertonic Fast language modes, native names, and no raw `F1`/`M1` labels
+- [ ] `ttsbuddy voices --all` — live catalog fetch; Supertonic alias rows such as `code=F1` and `voice_id=st_f1` still display native names
 - [ ] `ttsbuddy voices --all` (upstream down) — fallback to curated + warning
 - [ ] `ttsbuddy voices --json` — JSON array output
 - [ ] `ttsbuddy status <id>` — single GET, read-only
