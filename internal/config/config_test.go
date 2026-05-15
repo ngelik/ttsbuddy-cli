@@ -185,6 +185,7 @@ func TestLastJobRoundTrip(t *testing.T) {
 	}
 	if lj == nil {
 		t.Fatal("LoadLastJob returned nil")
+		return
 	}
 	if lj.JobID != jobID {
 		t.Errorf("JobID: got %q, want %q", lj.JobID, jobID)
@@ -241,12 +242,12 @@ func TestGetAllKeys(t *testing.T) {
 	t.Setenv("HOME", tmp)
 
 	cfg := &Config{
-		APIKey:       "ttsb_abc_secret",
-		DefaultVoice: "bf_emma",
-		DefaultSpeed: 0.8,
-		PollTimeout:  "5m",
-		OutputDir:    "/tmp",
-		APIURL:       "https://example.com",
+		APIKey:        "ttsb_abc_secret",
+		DefaultVoice:  "bf_emma",
+		DefaultSpeed:  0.8,
+		PollTimeout:   "5m",
+		OutputDir:     "/tmp",
+		APIURL:        "https://example.com",
 		TTSAPIBaseURL: "https://tts.example.com",
 	}
 	if err := Save(cfg); err != nil {
