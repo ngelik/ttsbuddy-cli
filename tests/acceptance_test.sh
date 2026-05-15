@@ -217,6 +217,7 @@ run_test_json   "A.2 version --json" tb version --json
 run_test_stdout "A.3 --version" 0 "ttsbuddy-cli" tb --version
 run_test_stdout "A.4 --help" 0 "completion" tb --help
 run_test_stdout "A.5 speak --help" 0 "idempotency-key" tb speak --help
+run_test_stdout "A.5b web --help" 0 "webpage" tb web --help
 run_test "A.6a status --help" 0 tb status --help
 run_test "A.6b voices --help" 0 tb voices --help
 run_test "A.6c config --help" 0 tb config --help
@@ -458,6 +459,55 @@ if [ "$p5_exit" -eq 0 ] && [ -s "$TB_OUT/t5.mp3" ]; then
     pass "P.5 stdout + voice + speed"
 else
     fail "P.5 stdout + voice + speed" "exit $p5_exit"
+fi
+echo ""
+
+# ============================================================
+# W. Webpage Tests (live page, translation path)
+# ============================================================
+
+echo "📋 W. Webpage Tests"
+
+RUSSIAN_VOICES=(st_m1 st_m2 st_m3 st_m4 st_m5 st_f1 st_f2 st_f3 st_f4 st_f5)
+RANDOM_SUPERTONIC_VOICE="${RUSSIAN_VOICES[$((RANDOM % ${#RUSSIAN_VOICES[@]}))]}"
+echo "    🎲 Russian target voice: $RANDOM_SUPERTONIC_VOICE"
+
+echo "    ⏳ waiting ${POST_DELAY}s..."
+sleep "$POST_DELAY"
+set +e
+tb web "https://www.ttsbuddy.com/docs/" --language ru --voice "$RANDOM_SUPERTONIC_VOICE" --json --no-download >"$TB_OUT/web-ru.json" 2>"$TB_OUT/_stderr"
+w1_exit=$?
+set -e
+if [ "$w1_exit" -ne 0 ] && grep -q "rate limited" "$TB_OUT/_stderr" 2>/dev/null; then
+    echo "    🔄 rate limited, retrying after ${POST_DELAY}s..."
+    RATE_LIMITED_COUNT=$((RATE_LIMITED_COUNT + 1))
+    sleep "$POST_DELAY"
+    set +e
+    tb web "https://www.ttsbuddy.com/docs/" --language ru --voice "$RANDOM_SUPERTONIC_VOICE" --json --no-download >"$TB_OUT/web-ru.json" 2>"$TB_OUT/_stderr"
+    w1_exit=$?
+    set -e
+fi
+
+if [ "$w1_exit" -eq 0 ] && jq -e '.audio_url or .status_url' "$TB_OUT/web-ru.json" >/dev/null 2>&1; then
+    pass "W.1 docs webpage to Russian"
+else
+    fail "W.1 docs webpage to Russian" "exit $w1_exit or missing audio/status URL"
+fi
+
+if jq -e '.meta.target_language == "ru"' "$TB_OUT/web-ru.json" >/dev/null 2>&1; then
+    pass "W.2 target language metadata"
+elif jq -e '.meta.target_language == null' "$TB_OUT/web-ru.json" >/dev/null 2>&1; then
+    skip "W.2 target language metadata" "backend did not include optional webpage metadata"
+else
+    fail "W.2 target language metadata" "target language was not ru"
+fi
+
+if jq -e '.meta.translated == true' "$TB_OUT/web-ru.json" >/dev/null 2>&1; then
+    pass "W.3 translation metadata"
+elif jq -e '.meta.translated == null' "$TB_OUT/web-ru.json" >/dev/null 2>&1; then
+    skip "W.3 translation metadata" "backend did not include optional translation metadata"
+else
+    fail "W.3 translation metadata" "translated was not true"
 fi
 echo ""
 

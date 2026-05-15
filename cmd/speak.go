@@ -222,6 +222,7 @@ func runSpeak(cmd *cobra.Command, args []string) error {
 		return &exitError{code: 1, msg: msg}
 
 	case status == 202 || resp.Status == "processing":
+		renderTranslationMeta(resp)
 		return pollUntilComplete(ctx, client, resp, resolved)
 
 	default:
@@ -237,7 +238,7 @@ func pollUntilComplete(ctx context.Context, client *api.Client, initial *api.TTS
 		if len(shortID) > 8 {
 			shortID = shortID[:8]
 		}
-		spin.Start(fmt.Sprintf("Job %s accepted, polling...", shortID))
+		spin.Start(fmt.Sprintf("Queued job %s...", shortID))
 	}
 	defer spin.Stop()
 
@@ -299,7 +300,7 @@ func pollUntilComplete(ctx context.Context, client *api.Client, initial *api.TTS
 				delay = minDuration(delay*3/2, 15*time.Second)
 			}
 			elapsed := time.Since(deadline.Add(-timeout))
-			spin.Update(fmt.Sprintf("Processing... (%s)", elapsed.Round(time.Second)))
+			spin.Update(renderProgress(resp, elapsed))
 		default:
 			return &exitError{code: 1, msg: fmt.Sprintf("unexpected job status %q from API. Job ID: %s", resp.Status, jobID)}
 		}
@@ -323,6 +324,8 @@ func handleCompleted(ctx context.Context, client *api.Client, resp *api.TTSRespo
 	// --no-download: just show URL
 	if speakNoDownload {
 		fmt.Fprintln(os.Stderr, resp.AudioURL)
+		renderTranslationMeta(resp)
+		renderCompletionSummary(resp, 0)
 		return nil
 	}
 
@@ -363,7 +366,8 @@ func handleCompleted(ctx context.Context, client *api.Client, resp *api.TTSRespo
 		dlSpin.Start("Downloading audio...")
 	}
 
-	if err := client.DownloadAudio(ctx, resp.AudioURL, destPath); err != nil {
+	downloadedBytes, err := client.DownloadAudioWithSize(ctx, resp.AudioURL, destPath)
+	if err != nil {
 		dlSpin.Stop()
 		// On download failure, show the URL so user can retry manually
 		fmt.Fprintf(os.Stderr, "Download failed: %v\nAudio URL: %s\n", err, resp.AudioURL)
@@ -372,11 +376,8 @@ func handleCompleted(ctx context.Context, client *api.Client, resp *api.TTSRespo
 
 	dlSpin.Stop()
 	stderrMsg("Saved to %s\n", destPath)
-
-	// Show duration/size if available
-	if resp.Audio != nil && resp.Audio.DurationSeconds != nil {
-		stderrMsg("Duration: %.1fs\n", *resp.Audio.DurationSeconds)
-	}
+	renderTranslationMeta(resp)
+	renderCompletionSummary(resp, downloadedBytes)
 
 	return nil
 }

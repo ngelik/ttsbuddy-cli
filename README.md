@@ -121,6 +121,30 @@ ttsbuddy speak "Hello" -o - | afplay -
 
 **Fast voice language codes:** `en`, `ar`, `bg`, `hr`, `cs`, `da`, `nl`, `et`, `fi`, `fr`, `de`, `el`, `hi`, `hu`, `id`, `it`, `ja`, `ko`, `lv`, `lt`, `pl`, `pt`, `ro`, `ru`, `sk`, `sl`, `es`, `sv`, `tr`, `uk`, `vi`.
 
+### web
+
+Convert a readable webpage to speech.
+
+```bash
+# Use backend account preferences for voice, language, and speed
+ttsbuddy web https://www.ttsbuddy.com/docs/
+
+# Translate the article to Russian with a Fast voice
+ttsbuddy web https://www.ttsbuddy.com/docs/ --language ru --voice st_m1
+
+# Print URL without downloading
+ttsbuddy web https://www.ttsbuddy.com/docs/ --no-download
+```
+
+`web` fetches only `http` and `https` pages, extracts the readable article text locally, and sends the extracted text plus source URL to the API. If `--voice`, `--language`, or `--speed` are omitted, the backend applies your TTSBuddy account preferences. When the extracted article language differs from the target language, the backend translates the article before speech generation.
+
+`web` supports the same output and polling flags as `speak`: `--voice`, `--language`, `--speed`, `--output`, `--output-dir`, `--timeout`, `--no-download`, and `--idempotency-key`.
+
+During longer jobs, `web` shows the local extraction step, backend submission,
+queued/processing status, and real provider percentages when the API has them.
+When conversion completes, human output includes the job ID plus speech length,
+MP3 size, and generation speed when available.
+
 ### voices
 
 List available TTS voices.
@@ -228,13 +252,33 @@ These work on any command:
 
 | Mode | stdout | stderr |
 |------|--------|--------|
-| Default `speak` | nothing (file saved to disk) | spinner, status, "Saved to ..." |
+| Default `speak` | nothing (file saved to disk) | spinner, status, "Saved to ...", final stats |
 | `--json` | JSON response | nothing |
 | `-o -` | raw MP3 bytes | spinner (if TTY) |
 | `--quiet` | nothing | nothing |
-| `--no-download` | nothing | audio URL |
+| `--no-download` | nothing | audio URL and final stats |
 
 `--json` and `-o -` are mutually exclusive (both write to stdout) — combining them exits with code 2.
+
+Human progress output shows honest stages such as fetching, submitting, queued,
+processing, finalizing, and downloading. Percentages appear only when the
+backend receives real provider progress. Completed jobs show speech length, MP3
+size when known, generation speed, and job ID.
+
+Example human output for a webpage conversion:
+
+```text
+Fetching webpage...
+Extracted "Top announcements of AWS re:Invent 2025" (10793 chars)
+Submitting webpage TTS request...
+Queued job fe57968d...
+Processing 42%... (1m47s)
+https://tts-buddy-history-prod.s3.amazonaws.com/pro/example.mp3?...
+Job ID: fe57968d-0958-4ccd-a3e1-d87a7972f01e
+Speech length: 14m23s
+MP3 size: 14.4 MB
+Generation speed: 39 chars/sec
+```
 
 ## Exit Codes
 

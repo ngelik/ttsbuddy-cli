@@ -236,6 +236,37 @@ func TestSpeakJSON(t *testing.T) {
 	}
 }
 
+func TestSpeakJSONPreservesProgressAndStats(t *testing.T) {
+	apiSrv := startMockAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":   true,
+			"status":    "completed",
+			"job_id":    "json-stats-job",
+			"audio_url": "https://example.com/audio.mp3",
+			"progress": map[string]interface{}{
+				"phase": "finalizing",
+			},
+			"stats": map[string]interface{}{
+				"characters_count":            200,
+				"speech_length_seconds":       10,
+				"file_size_bytes":             1024,
+				"generation_chars_per_second": 20,
+			},
+			"meta": map[string]string{"request_id": "r1", "api_version": "2026-04"},
+		})
+	}))
+	home := t.TempDir()
+
+	r := runCLI(t, envForTest(home, apiSrv, "ttsb_test_key"), "speak", "hello", "--json")
+	assertExitCode(t, r, 0)
+	assertValidJSON(t, r.Stdout)
+	assertContains(t, r.Stdout, "\"progress\"", "stdout")
+	assertContains(t, r.Stdout, "\"stats\"", "stdout")
+	if r.Stderr != "" {
+		t.Errorf("--json should not write to stderr, got: %q", r.Stderr)
+	}
+}
+
 func TestSpeakNoDownload(t *testing.T) {
 	audioSrv := startMockAPI(t, mockAudioHandler())
 	apiSrv := startMockAPI(t, mockCompletedHandler(audioSrv))
@@ -244,6 +275,41 @@ func TestSpeakNoDownload(t *testing.T) {
 	r := runCLI(t, envForTest(home, apiSrv, "ttsb_test_key"), "speak", "hello", "--no-download")
 	assertExitCode(t, r, 0)
 	assertContains(t, r.Stderr, audioSrv, "stderr should contain audio URL")
+}
+
+func TestSpeakNoDownloadShowsFriendlyStats(t *testing.T) {
+	audioSrv := startMockAPI(t, mockAudioHandler())
+	apiSrv := startMockAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":   true,
+			"status":    "completed",
+			"job_id":    "stats-job",
+			"audio_url": audioSrv + "/audio.mp3",
+			"audio": map[string]interface{}{
+				"format":           "mp3",
+				"voice":            "st_m1",
+				"speed":            1.2,
+				"duration_seconds": 65,
+				"file_size_bytes":  int64(2048),
+			},
+			"stats": map[string]interface{}{
+				"characters_count":            1200,
+				"speech_length_seconds":       65,
+				"file_size_bytes":             2048,
+				"generation_seconds":          4,
+				"generation_chars_per_second": 300,
+			},
+			"meta": map[string]string{"request_id": "r1", "api_version": "2026-04"},
+		})
+	}))
+	home := t.TempDir()
+
+	r := runCLI(t, envForTest(home, apiSrv, "ttsb_test_key"), "speak", "hello", "--no-download")
+	assertExitCode(t, r, 0)
+	assertContains(t, r.Stderr, "Speech length: 1m5s", "stderr")
+	assertContains(t, r.Stderr, "MP3 size: 2.0 KB", "stderr")
+	assertContains(t, r.Stderr, "Generation speed: 300 chars/sec", "stderr")
+	assertContains(t, r.Stderr, "Job ID: stats-job", "stderr")
 }
 
 func TestSpeakAuthError(t *testing.T) {
@@ -326,7 +392,12 @@ func TestSpeakAsync(t *testing.T) {
 			"status":    "completed",
 			"job_id":    "async-job",
 			"audio_url": audioSrv + "/audio.mp3",
-			"meta":      map[string]string{"request_id": "r2", "api_version": "2026-04"},
+			"stats": map[string]interface{}{
+				"speech_length_seconds":       5,
+				"file_size_bytes":             25,
+				"generation_chars_per_second": 10,
+			},
+			"meta": map[string]string{"request_id": "r2", "api_version": "2026-04"},
 		})
 	}))
 	home := t.TempDir()
@@ -337,6 +408,8 @@ func TestSpeakAsync(t *testing.T) {
 	if _, err := os.Stat(out); os.IsNotExist(err) {
 		t.Error("output file should exist after async completion")
 	}
+	assertContains(t, r.Stderr, "Queued", "stderr")
+	assertContains(t, r.Stderr, "Speech length", "stderr")
 }
 
 func TestSpeakMarkdownStrip(t *testing.T) {
