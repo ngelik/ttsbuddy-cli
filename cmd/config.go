@@ -21,7 +21,7 @@ Usage:
   ttsbuddy config set <key> <value>  Set a value
 
 Valid keys: key, voice, language, speed, timeout, output_dir, api_url, tts_api_base_url`,
-	Args: cobra.NoArgs,
+	Args: noArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Show resolved values (file + env + defaults) for consistency
 		// across plain, --json, and config get output.
@@ -53,7 +53,7 @@ Valid keys: key, voice, language, speed, timeout, output_dir, api_url, tts_api_b
 var configGetCmd = &cobra.Command{
 	Use:   "get <key>",
 	Short: "Show a config value",
-	Args:  cobra.ExactArgs(1),
+	Args:  exactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		key := args[0]
 		if !config.IsValidKey(key) {
@@ -72,7 +72,7 @@ var configGetCmd = &cobra.Command{
 var configSetCmd = &cobra.Command{
 	Use:   "set <key> <value>",
 	Short: "Set a config value",
-	Args:  cobra.ExactArgs(2),
+	Args:  exactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		key, value := args[0], args[1]
 

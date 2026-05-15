@@ -38,8 +38,8 @@ var rootCmd = &cobra.Command{
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		// Commands that work without disk config — skip loading to avoid
 		// failing on broken HOME/permissions.
-		switch cmd.Name() {
-		case "version", "help", "completion", "voices":
+		switch {
+		case cmd.Name() == "version", cmd.Name() == "help", cmd.Name() == "voices", isCompletionCommand(cmd):
 			resolvedCfg = nil // clear stale state
 			return nil
 		}
@@ -74,6 +74,8 @@ var rootCmd = &cobra.Command{
 }
 
 func init() {
+	rootCmd.CompletionOptions.DisableDefaultCmd = true
+	rootCmd.SetFlagErrorFunc(helpOnFlagError)
 	rootCmd.PersistentFlags().StringVarP(&flagAPIKey, "key", "k", "", "API key (overrides config/env)")
 	rootCmd.PersistentFlags().BoolVar(&flagJSON, "json", false, "JSON output to stdout only")
 	rootCmd.PersistentFlags().BoolVar(&flagQuiet, "quiet", false, "suppress progress output")
@@ -86,7 +88,12 @@ func init() {
 func Execute() error {
 	if err := rootCmd.Execute(); err != nil {
 		exitCode := 1
-		if e, ok := err.(*exitError); ok {
+		helpShown := false
+		switch e := err.(type) {
+		case *helpShownError:
+			exitCode = e.code
+			helpShown = true
+		case *exitError:
 			exitCode = e.code
 		}
 
@@ -94,7 +101,7 @@ func Execute() error {
 			cliErr := api.NewCLIError("CLI_ERROR", err.Error())
 			data, _ := json.MarshalIndent(cliErr, "", "  ")
 			_, _ = fmt.Fprintln(os.Stdout, string(data))
-		} else {
+		} else if !helpShown {
 			fmt.Fprintln(os.Stderr, "Error:", err)
 		}
 

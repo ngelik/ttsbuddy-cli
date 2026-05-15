@@ -25,7 +25,7 @@ var statusCmd = &cobra.Command{
 
 If no job_id is provided, checks the most recent job.
 Use --watch to poll until the job reaches a terminal state.`,
-	Args: cobra.MaximumNArgs(1),
+	Args: maxArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runStatus(cmd, args)
 	},

@@ -45,7 +45,7 @@ Input can be provided as:
   ttsbuddy speak -f article.md     Read from file (.md files auto-preprocessed)
   ttsbuddy speak -                 Read from stdin`,
 
-	Args:         cobra.MaximumNArgs(1),
+	Args:         maxArgs(1),
 	SilenceUsage: true,
 
 	PreRunE: func(cmd *cobra.Command, args []string) error {

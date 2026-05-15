@@ -16,7 +16,7 @@ func versionString() string {
 var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Print version information",
-	Args:  cobra.NoArgs,
+	Args:  noArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if flagJSON {
 			info := map[string]string{

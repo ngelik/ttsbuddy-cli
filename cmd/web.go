@@ -23,7 +23,7 @@ var webCmd = &cobra.Command{
 
 When --voice, --language, or --speed are omitted, the backend applies your
 TTSBuddy account preferences before generating audio.`,
-	Args:         cobra.ExactArgs(1),
+	Args:         exactArgs(1),
 	SilenceUsage: true,
 	PreRunE: func(cmd *cobra.Command, args []string) error {
 		if flagJSON && speakOutput == "-" {

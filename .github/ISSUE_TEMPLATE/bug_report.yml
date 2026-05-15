@@ -1,0 +1,49 @@
+name: Bug Report
+description: Report a bug in TTSBuddy CLI
+labels: ["bug"]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: TTSBuddy CLI version
+      description: "Output of `ttsbuddy version`"
+      placeholder: "v0.1.0"
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS and architecture
+      placeholder: "macOS 15.2 arm64 / Ubuntu 24.04 amd64"
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe the bug clearly.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps to trigger the bug.
+      placeholder: |
+        1. Run `ttsbuddy speak "hello"`
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What you expected to happen.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or error output
+      description: Paste any relevant terminal output (redact your API key).
+      render: shell
