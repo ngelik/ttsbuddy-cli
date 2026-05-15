@@ -124,7 +124,7 @@ func statusPoll(client *api.Client, jobID string, resolved *config.ResolvedConfi
 			return renderStatus(resp, jobID)
 		case "processing":
 			elapsed := time.Since(deadline.Add(-dur))
-			stderrMsg("Processing... (%s elapsed)\n", elapsed.Round(time.Second))
+			stderrMsg("%s elapsed\n", renderProgress(resp, elapsed))
 			if resp.RetryAfterSeconds != nil {
 				delay = time.Duration(*resp.RetryAfterSeconds) * time.Second
 			} else {
@@ -164,6 +164,7 @@ func renderStatus(resp *api.TTSResponse, jobID string) error {
 				fmt.Fprintf(os.Stderr, "Expires: %s\n", resp.Audio.ExpiresAt)
 			}
 		}
+		renderCompletionSummary(resp, 0)
 		if resp.Billing != nil && resp.Billing.MonthlyMinutesUsed != nil {
 			fmt.Fprintf(os.Stderr, "Usage: %.1f min used", *resp.Billing.MonthlyMinutesUsed)
 			if resp.Billing.MonthlyMinutesLimit != nil {

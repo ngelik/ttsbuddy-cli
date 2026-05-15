@@ -154,7 +154,12 @@ func TestStatusWatchCompletes(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"success": true, "status": "processing", "job_id": "watch-job",
 				"retry_after_seconds": 0,
-				"meta":                map[string]string{"request_id": "r1", "api_version": "2026-04"},
+				"progress": map[string]interface{}{
+					"phase":   "processing",
+					"percent": 42,
+					"message": "Processing audio",
+				},
+				"meta": map[string]string{"request_id": "r1", "api_version": "2026-04"},
 			})
 			return
 		}
@@ -163,11 +168,19 @@ func TestStatusWatchCompletes(t *testing.T) {
 			"status":    "completed",
 			"job_id":    "watch-job",
 			"audio_url": "https://example.com/a.mp3",
-			"meta":      map[string]string{"request_id": "r3", "api_version": "2026-04"},
+			"stats": map[string]interface{}{
+				"speech_length_seconds":       90,
+				"file_size_bytes":             4096,
+				"generation_chars_per_second": 250,
+			},
+			"meta": map[string]string{"request_id": "r3", "api_version": "2026-04"},
 		})
 	}))
 	home := t.TempDir()
 
 	r := runCLI(t, envForTest(home, apiSrv, "ttsb_test_key"), "status", "watch-job", "--watch", "--timeout", "30s")
 	assertExitCode(t, r, 0)
+	assertContains(t, r.Stderr, "Processing 42%", "stderr")
+	assertContains(t, r.Stderr, "Speech length: 1m30s", "stderr")
+	assertContains(t, r.Stderr, "MP3 size: 4.0 KB", "stderr")
 }

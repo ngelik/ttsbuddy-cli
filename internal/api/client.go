@@ -105,9 +105,15 @@ func NewDownloadClient(apiHost string) *http.Client {
 // DownloadAudio downloads an audio file atomically.
 // Validates URL scheme + host, uses unique temp file, caps size at 500MB.
 func (c *Client) DownloadAudio(ctx context.Context, audioURL, destPath string) error {
+	_, err := c.DownloadAudioWithSize(ctx, audioURL, destPath)
+	return err
+}
+
+// DownloadAudioWithSize downloads an audio file atomically and returns bytes written.
+func (c *Client) DownloadAudioWithSize(ctx context.Context, audioURL, destPath string) (int64, error) {
 	apiHost := apiHostFromURL(c.apiURL)
 	if err := ValidateDownloadURL(audioURL, apiHost); err != nil {
-		return err
+		return 0, err
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
@@ -115,45 +121,45 @@ func (c *Client) DownloadAudio(ctx context.Context, audioURL, destPath string) e
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, audioURL, nil)
 	if err != nil {
-		return fmt.Errorf("creating download request: %w", err)
+		return 0, fmt.Errorf("creating download request: %w", err)
 	}
 
 	dlClient := NewDownloadClient(apiHost)
 	resp, err := dlClient.Do(httpReq)
 	if err != nil {
-		return fmt.Errorf("downloading audio: %w", err)
+		return 0, fmt.Errorf("downloading audio: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("download failed with status %d", resp.StatusCode)
+		return 0, fmt.Errorf("download failed with status %d", resp.StatusCode)
 	}
 
 	dir := filepath.Dir(destPath)
 	f, err := os.CreateTemp(dir, filepath.Base(destPath)+".part.*")
 	if err != nil {
-		return fmt.Errorf("creating temp file: %w", err)
+		return 0, fmt.Errorf("creating temp file: %w", err)
 	}
 	tmp := f.Name()
 
-	_, copyErr := CopyBounded(f, resp.Body, maxAudioSize)
+	written, copyErr := CopyBounded(f, resp.Body, maxAudioSize)
 	closeErr := f.Close()
 
 	if copyErr != nil {
 		_ = os.Remove(tmp)
-		return fmt.Errorf("writing audio data: %w", copyErr)
+		return 0, fmt.Errorf("writing audio data: %w", copyErr)
 	}
 	if closeErr != nil {
 		_ = os.Remove(tmp)
-		return fmt.Errorf("closing temp file: %w", closeErr)
+		return 0, fmt.Errorf("closing temp file: %w", closeErr)
 	}
 
 	if err := os.Rename(tmp, destPath); err != nil {
 		_ = os.Remove(tmp)
-		return fmt.Errorf("finalizing download: %w", err)
+		return 0, fmt.Errorf("finalizing download: %w", err)
 	}
 
-	return nil
+	return written, nil
 }
 
 // ValidateDownloadURL checks that a download URL uses an allowed scheme and host.

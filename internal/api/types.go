@@ -19,10 +19,15 @@ const (
 
 // SpeakRequest is the POST body for agent-tts.
 type SpeakRequest struct {
-	Text     string  `json:"text"`
-	Voice    string  `json:"voice,omitempty"`
-	Speed    float64 `json:"speed,omitempty"`
-	Language string  `json:"language,omitempty"`
+	Text            string  `json:"text"`
+	Voice           string  `json:"voice,omitempty"`
+	Speed           float64 `json:"speed,omitempty"`
+	Language        string  `json:"language,omitempty"`
+	Source          string  `json:"source,omitempty"`
+	Webpage         string  `json:"webpage,omitempty"`
+	SourceTitle     string  `json:"source_title,omitempty"`
+	ArticleLanguage string  `json:"article_language,omitempty"`
+	Translate       string  `json:"translate,omitempty"`
 }
 
 // TTSResponse is the unified response shape from agent-tts.
@@ -34,10 +39,19 @@ type TTSResponse struct {
 	AudioURL          string     `json:"audio_url,omitempty"`
 	StatusURL         string     `json:"status_url,omitempty"`
 	RetryAfterSeconds *int       `json:"retry_after_seconds,omitempty"`
+	Progress          *Progress  `json:"progress,omitempty"`
 	Audio             *AudioInfo `json:"audio,omitempty"`
 	Billing           *Billing   `json:"billing,omitempty"`
+	Stats             *Stats     `json:"stats,omitempty"`
 	Error             *APIError  `json:"error,omitempty"`
 	Meta              *Meta      `json:"meta,omitempty"`
+}
+
+// Progress contains provider-backed job progress. Percent is absent when unknown.
+type Progress struct {
+	Phase   string `json:"phase,omitempty"`
+	Percent *int   `json:"percent,omitempty"`
+	Message string `json:"message,omitempty"`
 }
 
 // AudioInfo contains audio file metadata. All fields except Format may be absent.
@@ -48,6 +62,15 @@ type AudioInfo struct {
 	Voice           string   `json:"voice"`
 	Speed           float64  `json:"speed"`
 	ExpiresAt       string   `json:"expires_at,omitempty"`
+}
+
+// Stats contains final generation statistics.
+type Stats struct {
+	CharactersCount          *int     `json:"characters_count,omitempty"`
+	SpeechLengthSeconds      *float64 `json:"speech_length_seconds,omitempty"`
+	FileSizeBytes            *int64   `json:"file_size_bytes,omitempty"`
+	GenerationSeconds        *float64 `json:"generation_seconds,omitempty"`
+	GenerationCharsPerSecond *float64 `json:"generation_chars_per_second,omitempty"`
 }
 
 // Billing contains subscription usage data. Limit/Remaining are nil for unlimited tiers.
@@ -71,6 +94,11 @@ type Meta struct {
 	RequestID        string `json:"request_id"`
 	ProcessingTimeMs *int   `json:"processing_time_ms,omitempty"`
 	APIVersion       string `json:"api_version"`
+	Source           string `json:"source,omitempty"`
+	SourceURL        string `json:"source_url,omitempty"`
+	SourceLanguage   string `json:"source_language,omitempty"`
+	TargetLanguage   string `json:"target_language,omitempty"`
+	Translated       *bool  `json:"translated,omitempty"`
 }
 
 // APIResponseError wraps an API error response as a Go error.
