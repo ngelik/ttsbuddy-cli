@@ -1,7 +1,7 @@
 {
-  "name": "TTSBuddy CLI HN demo",
+  "name": "TTSBuddy CLI demo",
   "image": "mcr.microsoft.com/devcontainers/go:1.25-bookworm",
-  "postCreateCommand": "go mod download && go build -o /usr/local/bin/ttsbuddy . && chmod +x demo/hn-demo.sh",
+  "postCreateCommand": "go mod download && go build -o /usr/local/bin/ttsbuddy . && chmod +x demo/cli-demo.sh",
   "customizations": {
     "vscode": {
       "extensions": [
@@ -10,7 +10,7 @@
     }
   },
   "remoteEnv": {
-    "TTSBUDDY_API_URL": "https://www.ttsbuddy.com/v1/hn-cli-demo",
-    "TTSBUDDY_API_KEY": "ttsb_demo_hn"
+    "TTSBUDDY_API_URL": "https://www.ttsbuddy.com/v1/cli-demo",
+    "TTSBUDDY_API_KEY": "ttsb_demo_cli"
   }
 }
