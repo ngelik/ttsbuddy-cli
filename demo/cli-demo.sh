@@ -21,20 +21,20 @@ echo "API key: $TTSBUDDY_API_KEY"
 echo
 
 echo "1. Incident handoff Markdown -> MP3"
-ttsbuddy speak -f demo/oncall-summary.md -o out/oncall-summary.mp3
+ttsbuddy speak -f demo/oncall-summary.md --voice af_heart --speed 1 -o out/oncall-summary.mp3
 ls -lh out/oncall-summary.mp3
 echo
 
 echo "2. Release notes Markdown -> JSON response"
-ttsbuddy speak -f demo/release-notes.md --json
+ttsbuddy speak -f demo/release-notes.md --voice af_heart --speed 1 --json
 echo
 
 echo "3. Public docs webpage -> audio URL"
-ttsbuddy web https://www.ttsbuddy.com/docs/developers/cli --no-download
+ttsbuddy web https://www.ttsbuddy.com/docs/developers/cli --voice af_heart --speed 1 --no-download
 echo
 
 echo "4. Raw MP3 stdout -> file"
-ttsbuddy speak -f demo/oncall-summary.md -o - > out/oncall-summary-stdout.mp3
+ttsbuddy speak -f demo/oncall-summary.md --voice af_heart --speed 1 -o - > out/oncall-summary-stdout.mp3
 ls -lh out/oncall-summary-stdout.mp3
 echo
 
