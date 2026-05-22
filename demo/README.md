@@ -1,0 +1,38 @@
+# TTSBuddy CLI Hacker News Demo
+
+This demo is for the `Show HN` launch page at https://www.ttsbuddy.com/hn-cli.
+
+It uses a constrained no-signup endpoint:
+
+```bash
+export TTSBUDDY_API_URL=https://www.ttsbuddy.com/v1/hn-cli-demo
+export TTSBUDDY_API_KEY=ttsb_demo_hn
+```
+
+Demo mode accepts only these sample files plus the public CLI docs URL. It returns pregenerated MP3s so people can try the CLI without signup and without exposing a public arbitrary TTS generator.
+
+## Run
+
+```bash
+./demo/hn-demo.sh
+```
+
+## Manual Commands
+
+```bash
+ttsbuddy speak -f demo/oncall-summary.md -o out/oncall-summary.mp3
+ttsbuddy speak -f demo/release-notes.md --json
+ttsbuddy web https://www.ttsbuddy.com/docs/developers/cli --no-download
+ttsbuddy speak -f demo/oncall-summary.md -o - > out/oncall-summary-stdout.mp3
+```
+
+## Real API Mode
+
+For arbitrary text, unset the demo API URL and configure a real key:
+
+```bash
+unset TTSBUDDY_API_URL
+ttsbuddy config set key ttsb_your_key_here
+```
+
+API keys are created from the TTS Buddy dashboard. See https://www.ttsbuddy.com/docs/developers/api-keys.
