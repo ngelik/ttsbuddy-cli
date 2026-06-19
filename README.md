@@ -232,7 +232,7 @@ ttsbuddy version --json
 | API key | `TTSBUDDY_API_KEY` | `-k` | — |
 | Voice | `TTSBUDDY_VOICE` | `-v` | `st_m1` |
 | Language | `TTSBUDDY_LANGUAGE` | `-l, --language` | `en` |
-| Speed | `TTSBUDDY_SPEED` | `-s` | `1.0` |
+| Speed | `TTSBUDDY_SPEED` | `-s` | `1.2` |
 | Output dir | `TTSBUDDY_OUTPUT_DIR` | `--output-dir` | `.` |
 | Poll timeout | `TTSBUDDY_TIMEOUT` | `--timeout` | `10m` |
 | API URL | `TTSBUDDY_API_URL` | — | (production) |
@@ -344,19 +344,19 @@ go test -coverprofile=coverage.out ./...
 go tool cover -func=coverage.out        # per-function summary
 go tool cover -html=coverage.out         # interactive HTML report
 
-# Lint (install with: make tools)
+# Lint (uses installed golangci-lint or a pinned go run fallback)
 make lint
 
-# Live API integration tests (requires running API)
+# Live API acceptance tests (requires TTSBUDDY_API_KEY; TTSBUDDY_API_URL may point at local API)
 TTSBUDDY_API_KEY=ttsb_... TTSBUDDY_API_URL=http://localhost:54321/functions/v1/agent-tts \
-  ./scripts/integration_test.sh
+  BINARY=bin/ttsbuddy ./tests/acceptance_test.sh
 ```
 
 ### Test Architecture
 
 - **Internal packages** (`internal/api`, `internal/config`, `internal/markdown`) use standard Go unit tests with `httptest` servers — no network or live API needed.
 - **Command tests** (`cmd/`) use a **subprocess pattern** to safely test `os.Exit` paths and direct `os.Stdout/Stderr` writes. Each test re-invokes the test binary via `TestHelperProcess`, capturing real output and exit codes.
-- **Integration tests** (`scripts/integration_test.sh`) run the built binary against a live or local API, gated by `TTSBUDDY_API_KEY`.
+- **Acceptance tests** (`tests/acceptance_test.sh`) run the built binary against a live or local API, gated by `TTSBUDDY_API_KEY`.
 
 ### Build
 

@@ -1,4 +1,6 @@
 bin/
 dist/
 *.part
+coverage.out
+supabase/.temp/
 .env

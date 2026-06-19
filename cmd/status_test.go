@@ -69,6 +69,24 @@ func TestStatus404(t *testing.T) {
 	assertExitCode(t, r, 1)
 }
 
+func TestStatusJSON404PreservesAPICode(t *testing.T) {
+	apiSrv := startMockAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(404)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   map[string]string{"code": "NOT_FOUND", "message": "Job not found"},
+			"meta":    map[string]string{"request_id": "r1", "api_version": "2026-04"},
+		})
+	}))
+	home := t.TempDir()
+
+	r := runCLI(t, envForTest(home, apiSrv, "ttsb_test_key"), "status", "--json", "nonexistent")
+	assertExitCode(t, r, 1)
+	assertValidJSON(t, r.Stdout)
+	assertContains(t, r.Stdout, `"code": "NOT_FOUND"`, "stdout")
+	assertNotContains(t, r.Stdout, `"code": "CLI_ERROR"`, "stdout")
+}
+
 func TestStatusProcessing(t *testing.T) {
 	apiSrv := startMockAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{

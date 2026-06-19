@@ -212,14 +212,11 @@ func runSpeak(cmd *cobra.Command, args []string) error {
 		return &exitError{code: 1, msg: "audio file has expired and been deleted. Submit a new request."}
 
 	case resp.Status == "failed":
-		msg := "TTS generation failed"
-		if resp.Error != nil {
-			msg = resp.Error.Message
-		}
+		err := ttsFailureError(resp, "TTS generation failed")
 		if resp.Error != nil && api.NeedsNewIdempotencyKey(resp.Error) {
-			return &exitError{code: 1, msg: msg + "\nUse --idempotency-key with a new value to retry."}
+			err.msg += "\nUse --idempotency-key with a new value to retry."
 		}
-		return &exitError{code: 1, msg: msg}
+		return err
 
 	case status == 202 || resp.Status == "processing":
 		renderTranslationMeta(resp)
@@ -288,11 +285,7 @@ func pollUntilComplete(ctx context.Context, client *api.Client, initial *api.TTS
 		case "expired":
 			return &exitError{code: 1, msg: "audio file has expired. Submit a new request."}
 		case "failed":
-			msg := "TTS generation failed"
-			if resp.Error != nil {
-				msg = resp.Error.Message
-			}
-			return &exitError{code: 1, msg: msg}
+			return ttsFailureError(resp, "TTS generation failed")
 		case "processing":
 			if resp.RetryAfterSeconds != nil {
 				delay = time.Duration(*resp.RetryAfterSeconds) * time.Second
@@ -517,11 +510,24 @@ func isMarkdownFile(path string) bool {
 // --- Error helpers ---
 
 type exitError struct {
-	code int
-	msg  string
+	code     int
+	msg      string
+	jsonCode string
 }
 
 func (e *exitError) Error() string { return e.msg }
+
+func ttsFailureError(resp *api.TTSResponse, fallback string) *exitError {
+	msg := fallback
+	jsonCode := ""
+	if resp != nil && resp.Error != nil {
+		if resp.Error.Message != "" {
+			msg = resp.Error.Message
+		}
+		jsonCode = resp.Error.Code
+	}
+	return &exitError{code: 1, msg: msg, jsonCode: jsonCode}
+}
 
 func handleAPIError(err error, status int) error {
 	var apiErr *api.APIResponseError
@@ -529,11 +535,11 @@ func handleAPIError(err error, status int) error {
 		code := apiErr.ErrorCode()
 		switch code {
 		case api.ErrInvalidKey:
-			return &exitError{code: 1, msg: "invalid API key. Run: ttsbuddy config set key <your-key>"}
+			return &exitError{code: 1, msg: "invalid API key. Run: ttsbuddy config set key <your-key>", jsonCode: code}
 		case api.ErrInactiveSubscription:
-			return &exitError{code: 1, msg: "subscription inactive. Reactivate at https://ttsbuddy.com/billing"}
+			return &exitError{code: 1, msg: "subscription inactive. Reactivate at https://ttsbuddy.com/billing", jsonCode: code}
 		case api.ErrNoAPIAccess:
-			return &exitError{code: 1, msg: "your plan does not include API access. Check your plan or contact support."}
+			return &exitError{code: 1, msg: "your plan does not include API access. Check your plan or contact support.", jsonCode: code}
 		case api.ErrUsageLimitExceeded:
 			msg := "monthly TTS minutes exhausted."
 			if apiErr.Response.Error != nil && apiErr.Response.Error.Details != nil {
@@ -543,15 +549,15 @@ func handleAPIError(err error, status int) error {
 					}
 				}
 			}
-			return &exitError{code: 1, msg: msg}
+			return &exitError{code: 1, msg: msg, jsonCode: code}
 		case api.ErrTextTooLong:
-			return &exitError{code: 2, msg: "input exceeds 500,000 characters. Split into smaller chunks."}
+			return &exitError{code: 2, msg: "input exceeds 500,000 characters. Split into smaller chunks.", jsonCode: code}
 		case api.ErrRateLimited:
-			return &exitError{code: 1, msg: "rate limited. Please wait and try again."}
+			return &exitError{code: 1, msg: "rate limited. Please wait and try again.", jsonCode: code}
 		case api.ErrForbidden:
-			return &exitError{code: 1, msg: "access denied (HTTP 403). Check your subscription and API access at https://ttsbuddy.com/billing"}
+			return &exitError{code: 1, msg: "access denied (HTTP 403). Check your subscription and API access at https://ttsbuddy.com/billing", jsonCode: code}
 		default:
-			return &exitError{code: 1, msg: apiErr.Error()}
+			return &exitError{code: 1, msg: apiErr.Error(), jsonCode: code}
 		}
 	}
 	return &exitError{code: 1, msg: fmt.Sprintf("API request failed: %v", err)}

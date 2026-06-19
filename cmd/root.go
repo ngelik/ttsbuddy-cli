@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 
@@ -98,7 +99,7 @@ func Execute() error {
 		}
 
 		if flagJSON {
-			cliErr := api.NewCLIError("CLI_ERROR", err.Error())
+			cliErr := api.NewCLIError(jsonErrorCode(err), err.Error())
 			data, _ := json.MarshalIndent(cliErr, "", "  ")
 			_, _ = fmt.Fprintln(os.Stdout, string(data))
 		} else if !helpShown {
@@ -108,4 +109,12 @@ func Execute() error {
 		os.Exit(exitCode)
 	}
 	return nil
+}
+
+func jsonErrorCode(err error) string {
+	var exitErr *exitError
+	if errors.As(err, &exitErr) && exitErr.jsonCode != "" {
+		return exitErr.jsonCode
+	}
+	return "CLI_ERROR"
 }

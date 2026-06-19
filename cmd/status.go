@@ -199,7 +199,7 @@ func handleStatusError(err error, jobID string) error {
 	var apiErr *api.APIResponseError
 	if isAPIErr(err, &apiErr) {
 		if apiErr.ErrorCode() == api.ErrNotFound {
-			return &exitError{code: 1, msg: fmt.Sprintf("job not found: %s", jobID)}
+			return &exitError{code: 1, msg: fmt.Sprintf("job not found: %s", jobID), jsonCode: api.ErrNotFound}
 		}
 		return handleAPIError(err, apiErr.StatusCode)
 	}

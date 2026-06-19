@@ -96,6 +96,41 @@ func TestConfigSetBadTimeout(t *testing.T) {
 	assertExitCode(t, r, 2)
 }
 
+func TestConfigSetRejectsInvalidURLs(t *testing.T) {
+	home := t.TempDir()
+	cases := [][]string{
+		{"api_url", "not-a-url"},
+		{"api_url", "ftp://example.com/v1/agent-tts"},
+		{"api_url", "https:///v1/agent-tts"},
+		{"api_url", "https://:443/v1/agent-tts"},
+		{"api_url", "http://example.com/v1/agent-tts"},
+		{"tts_api_base_url", "example.com"},
+		{"tts_api_base_url", "https://:443"},
+		{"tts_api_base_url", "http://voice.example.com"},
+	}
+
+	for _, tc := range cases {
+		r := runCLI(t, envForTest(home, "", ""), "config", "set", tc[0], tc[1])
+		assertExitCode(t, r, 2)
+		assertContains(t, r.Stderr, "URL", "stderr")
+	}
+}
+
+func TestConfigSetAcceptsValidURLs(t *testing.T) {
+	home := t.TempDir()
+	cases := [][]string{
+		{"api_url", "https://api.example.com/v1/agent-tts"},
+		{"api_url", "http://localhost:54321/functions/v1/agent-tts"},
+		{"tts_api_base_url", "https://tts.example.com"},
+		{"tts_api_base_url", "http://127.0.0.1:8080"},
+	}
+
+	for _, tc := range cases {
+		r := runCLI(t, envForTest(home, "", ""), "config", "set", tc[0], tc[1])
+		assertExitCode(t, r, 0)
+	}
+}
+
 func TestConfigSetUnknownKey(t *testing.T) {
 	home := t.TempDir()
 	r := runCLI(t, envForTest(home, "", ""), "config", "set", "bogus", "value")

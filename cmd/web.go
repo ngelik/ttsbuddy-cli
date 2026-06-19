@@ -176,11 +176,7 @@ func runWeb(cmd *cobra.Command, rawURL string) error {
 	case resp.Status == "expired":
 		return &exitError{code: 1, msg: "audio file has expired and been deleted. Submit a new request."}
 	case resp.Status == "failed":
-		msg := "TTS generation failed"
-		if resp.Error != nil {
-			msg = resp.Error.Message
-		}
-		return &exitError{code: 1, msg: msg}
+		return ttsFailureError(resp, "TTS generation failed")
 	case status == 202 || resp.Status == "processing":
 		renderTranslationMeta(resp)
 		return pollUntilComplete(ctx, client, resp, resolved)

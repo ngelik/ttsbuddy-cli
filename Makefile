@@ -27,7 +27,12 @@ test-acceptance:
 	BINARY=bin/ttsbuddy ./tests/acceptance_test.sh
 
 lint:
-	golangci-lint run
+	@if command -v golangci-lint >/dev/null 2>&1; then \
+		golangci-lint run; \
+	else \
+		echo "golangci-lint not found on PATH; running pinned $(LINT_VERSION) via go run"; \
+		go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(LINT_VERSION) run; \
+	fi
 
 tools:
 	go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(LINT_VERSION)

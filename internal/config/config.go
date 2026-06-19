@@ -243,14 +243,38 @@ func Set(key, value string) error {
 	case "output_dir":
 		cfg.OutputDir = value
 	case "api_url":
+		if err := validateConfigURL(key, value); err != nil {
+			return err
+		}
 		cfg.APIURL = value
 	case "tts_api_base_url":
+		if err := validateConfigURL(key, value); err != nil {
+			return err
+		}
 		cfg.TTSAPIBaseURL = value
 	default:
 		return &ValidationError{Msg: fmt.Sprintf("unknown config key: %s", key)}
 	}
 
 	return Save(cfg)
+}
+
+func validateConfigURL(key, value string) error {
+	u, err := url.Parse(value)
+	host := ""
+	if u != nil {
+		host = u.Hostname()
+	}
+	if err != nil || u.Scheme == "" || host == "" {
+		return &ValidationError{Msg: fmt.Sprintf("invalid URL for %s: must include http(s) scheme and host", key)}
+	}
+	if u.Scheme != "https" && u.Scheme != "http" {
+		return &ValidationError{Msg: fmt.Sprintf("invalid URL for %s: scheme must be http or https", key)}
+	}
+	if u.Scheme == "http" && !isLocalhost(host) {
+		return &ValidationError{Msg: fmt.Sprintf("invalid URL for %s: HTTP is only allowed for localhost", key)}
+	}
+	return nil
 }
 
 // CheckInsecureURL returns an error if the URL would send credentials over
@@ -260,11 +284,14 @@ func CheckInsecureURL(rawURL string) error {
 	if err != nil || u.Scheme != "http" {
 		return nil // HTTPS or parse error (caught elsewhere)
 	}
-	host := u.Hostname()
-	if host == "localhost" || host == "127.0.0.1" || host == "::1" {
+	if isLocalhost(u.Hostname()) {
 		return nil // local dev is fine
 	}
-	return fmt.Errorf("refusing to send API key over insecure HTTP to %s — use HTTPS or localhost", host)
+	return fmt.Errorf("refusing to send API key over insecure HTTP to %s — use HTTPS or localhost", u.Hostname())
+}
+
+func isLocalhost(host string) bool {
+	return host == "localhost" || host == "127.0.0.1" || host == "::1"
 }
 
 // FormatSpeed formats a speed value preserving full precision.

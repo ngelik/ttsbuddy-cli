@@ -7,7 +7,7 @@ Go CLI tool for converting text to speech via the TTSBuddy Agent TTS API.
 ```bash
 make build              # Build binary to bin/ttsbuddy
 make test               # Run unit tests (deterministic, no network)
-make lint               # Run golangci-lint (requires GOPATH/bin on PATH)
+make lint               # Run golangci-lint (uses PATH or pinned go run fallback)
 make tools              # Install golangci-lint and goreleaser
 make test-acceptance    # Run acceptance tests (requires TTSBUDDY_API_KEY)
 make release-snapshot   # Build all platforms locally (install with: make tools)
@@ -52,7 +52,7 @@ Source of truth: `docs/agent-tts-api-v1.md` and `docs/cli-implementation-guide.m
 ### Unit tests
 ```bash
 make test       # deterministic, no network, runs with -race
-make lint       # golangci-lint v2 (needs GOPATH/bin on PATH, see below)
+make lint       # golangci-lint v2 (uses PATH or pinned go run fallback)
 ```
 
 ### Acceptance tests (live API)
@@ -95,7 +95,7 @@ TTSBUDDY_API_KEY=ttsb_... BINARY=ttsbuddy ./tests/acceptance_test.sh
 
 ## Linter Setup
 
-`make tools` installs `golangci-lint` and `goreleaser` to `$(go env GOPATH)/bin`. Ensure that directory is on your PATH:
+`make lint` uses `golangci-lint` from PATH when available, otherwise it runs the pinned version with `go run`. `make tools` installs `golangci-lint` and `goreleaser` to `$(go env GOPATH)/bin` for faster repeated local runs. To use the installed binaries directly, ensure that directory is on your PATH:
 
 ```bash
 export PATH="$PATH:$(go env GOPATH)/bin"
@@ -107,4 +107,4 @@ Then run: `make lint`. Config is in `.golangci.yml`.
 
 - `github.com/spf13/cobra` — CLI framework
 - `golang.org/x/term` — TTY detection
-- Go stdlib for everything else
+- `github.com/go-shiori/go-readability` and `golang.org/x/net/html` — webpage extraction

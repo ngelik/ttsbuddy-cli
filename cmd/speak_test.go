@@ -328,6 +328,49 @@ func TestSpeakAuthError(t *testing.T) {
 	assertContains(t, r.Stderr, "API key", "stderr")
 }
 
+func TestSpeakJSONAPIErrorPreservesAPICode(t *testing.T) {
+	apiSrv := startMockAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(401)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error":   map[string]string{"code": "INVALID_KEY", "message": "bad key"},
+			"meta":    map[string]string{"request_id": "r1", "api_version": "2026-04"},
+		})
+	}))
+	home := t.TempDir()
+
+	r := runCLI(t, envForTest(home, apiSrv, "ttsb_bad_key"), "speak", "--json", "hello")
+	assertExitCode(t, r, 1)
+	assertValidJSON(t, r.Stdout)
+	assertContains(t, r.Stdout, `"code": "INVALID_KEY"`, "stdout")
+	assertNotContains(t, r.Stdout, `"code": "CLI_ERROR"`, "stdout")
+	if r.Stderr != "" {
+		t.Errorf("--json should not write stderr, got %q", r.Stderr)
+	}
+}
+
+func TestSpeakJSONFailedResponsePreservesAPICode(t *testing.T) {
+	apiSrv := startMockAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"status":  "failed",
+			"job_id":  "job_failed",
+			"error":   map[string]string{"code": "TTS_PROVIDER_ERROR", "message": "provider failed"},
+			"meta":    map[string]string{"request_id": "r1", "api_version": "2026-04"},
+		})
+	}))
+	home := t.TempDir()
+
+	r := runCLI(t, envForTest(home, apiSrv, "ttsb_test_key"), "speak", "--json", "hello")
+	assertExitCode(t, r, 1)
+	assertValidJSON(t, r.Stdout)
+	assertContains(t, r.Stdout, `"code": "TTS_PROVIDER_ERROR"`, "stdout")
+	assertNotContains(t, r.Stdout, `"code": "CLI_ERROR"`, "stdout")
+	if r.Stderr != "" {
+		t.Errorf("--json should not write stderr, got %q", r.Stderr)
+	}
+}
+
 func TestSpeakExpired(t *testing.T) {
 	apiSrv := startMockAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
