@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 )
 
@@ -55,7 +56,8 @@ func TestWebCommandSendsWebpagePayloadWithoutImplicitPreferences(t *testing.T) {
 		})
 	}))
 
-	r := runCLI(t, envForTest(home, apiSrv, "ttsb_test_key"), "web", page.URL, "--no-download")
+	env := append(envForTest(home, apiSrv, "ttsb_test_key"), "TTSBUDDY_TEST_FAKE_WEB_ARTICLE=1")
+	r := runCLI(t, env, "web", page.URL, "--no-download")
 	assertExitCode(t, r, 0)
 	assertContains(t, r.Stderr, "Extracted \"Docs Page\"", "stderr")
 	assertContains(t, r.Stderr, "Translated en -> ru", "stderr")
@@ -112,7 +114,8 @@ func TestWebCommandSendsExplicitVoiceLanguageAndSpeed(t *testing.T) {
 		})
 	}))
 
-	r := runCLI(t, envForTest(home, apiSrv, "ttsb_test_key"), "web", page.URL, "--voice", "st_f3", "--language", "ru", "--speed", "1.1", "--no-download")
+	env := append(envForTest(home, apiSrv, "ttsb_test_key"), "TTSBUDDY_TEST_FAKE_WEB_ARTICLE=1")
+	r := runCLI(t, env, "web", page.URL, "--voice", "st_f3", "--language", "ru", "--speed", "1.1", "--no-download")
 	assertExitCode(t, r, 0)
 
 	if received["voice"] != "st_f3" {
@@ -165,7 +168,8 @@ func TestWebCommandShowsTranslationMetadataFromAsyncSubmit(t *testing.T) {
 		})
 	}))
 
-	r := runCLI(t, envForTest(home, apiSrv, "ttsb_test_key"), "web", page.URL, "--language", "ru", "--voice", "st_f4", "--no-download", "--timeout", "30s")
+	env := append(envForTest(home, apiSrv, "ttsb_test_key"), "TTSBUDDY_TEST_FAKE_WEB_ARTICLE=1")
+	r := runCLI(t, env, "web", page.URL, "--language", "ru", "--voice", "st_f4", "--no-download", "--timeout", "30s")
 	assertExitCode(t, r, 0)
 	assertContains(t, r.Stderr, "Translated en -> ru", "stderr")
 	if calls < 2 {
@@ -178,6 +182,28 @@ func TestWebCommandRejectsNonHTTPURL(t *testing.T) {
 	r := runCLI(t, envForTest(home, "https://example.com/v1/agent-tts", "ttsb_test_key"), "web", "file:///tmp/article.html", "--no-download")
 	assertExitCode(t, r, 2)
 	assertContains(t, r.Stderr, "http or https", "stderr")
+}
+
+func TestWebCommandRejectsPrivateNetworkURLBeforeSubmit(t *testing.T) {
+	home := t.TempDir()
+	private := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(`<html><body><h1>Internal</h1><p>private text should not be submitted.</p></body></html>`))
+	}))
+	defer private.Close()
+
+	var submitted atomic.Bool
+	apiSrv := startMockAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		submitted.Store(true)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+
+	r := runCLI(t, envForTest(home, apiSrv, "ttsb_test_key"), "web", private.URL, "--no-download")
+	assertExitCode(t, r, 2)
+	assertContains(t, r.Stderr, "private network", "stderr")
+	if submitted.Load() {
+		t.Fatal("web command submitted private-network content to API")
+	}
 }
 
 func TestWebCommandWritesOutputFile(t *testing.T) {
@@ -193,7 +219,8 @@ func TestWebCommandWritesOutputFile(t *testing.T) {
 	defer audioSrv.Close()
 
 	apiSrv := startMockAPI(t, mockCompletedHandler(audioSrv.URL))
-	r := runCLI(t, envForTest(home, apiSrv, "ttsb_test_key"), "web", page.URL, "-o", out)
+	env := append(envForTest(home, apiSrv, "ttsb_test_key"), "TTSBUDDY_TEST_FAKE_WEB_ARTICLE=1")
+	r := runCLI(t, env, "web", page.URL, "-o", out)
 	assertExitCode(t, r, 0)
 
 	data, err := os.ReadFile(out)

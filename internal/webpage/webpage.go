@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strings"
 	"time"
@@ -22,6 +24,48 @@ const (
 	maxRedirects     = 5
 )
 
+var privateWebPrefixes = []netip.Prefix{
+	netip.MustParsePrefix("0.0.0.0/8"),
+	netip.MustParsePrefix("10.0.0.0/8"),
+	netip.MustParsePrefix("100.64.0.0/10"),
+	netip.MustParsePrefix("127.0.0.0/8"),
+	netip.MustParsePrefix("169.254.0.0/16"),
+	netip.MustParsePrefix("172.16.0.0/12"),
+	netip.MustParsePrefix("192.0.0.0/24"),
+	netip.MustParsePrefix("192.0.2.0/24"),
+	netip.MustParsePrefix("192.31.196.0/24"),
+	netip.MustParsePrefix("192.52.193.0/24"),
+	netip.MustParsePrefix("192.88.99.0/24"),
+	netip.MustParsePrefix("192.168.0.0/16"),
+	netip.MustParsePrefix("192.175.48.0/24"),
+	netip.MustParsePrefix("198.18.0.0/15"),
+	netip.MustParsePrefix("198.51.100.0/24"),
+	netip.MustParsePrefix("203.0.113.0/24"),
+	netip.MustParsePrefix("224.0.0.0/4"),
+	netip.MustParsePrefix("240.0.0.0/4"),
+	netip.MustParsePrefix("255.255.255.255/32"),
+	netip.MustParsePrefix("::/128"),
+	netip.MustParsePrefix("::1/128"),
+	netip.MustParsePrefix("::ffff:0:0/96"),
+	netip.MustParsePrefix("64:ff9b::/96"),
+	netip.MustParsePrefix("64:ff9b:1::/48"),
+	netip.MustParsePrefix("100::/64"),
+	netip.MustParsePrefix("100:0:0:1::/64"),
+	netip.MustParsePrefix("2001::/23"),
+	netip.MustParsePrefix("2001:4:112::/48"),
+	netip.MustParsePrefix("2001:20::/28"),
+	netip.MustParsePrefix("2001:30::/28"),
+	netip.MustParsePrefix("2001:2::/48"),
+	netip.MustParsePrefix("2001:db8::/32"),
+	netip.MustParsePrefix("2002::/16"),
+	netip.MustParsePrefix("2620:4f:8000::/48"),
+	netip.MustParsePrefix("3fff::/20"),
+	netip.MustParsePrefix("5f00::/16"),
+	netip.MustParsePrefix("fc00::/7"),
+	netip.MustParsePrefix("fe80::/10"),
+	netip.MustParsePrefix("ff00::/8"),
+}
+
 // Article is readable webpage content ready to submit for TTS.
 type Article struct {
 	URL   string
@@ -29,24 +73,32 @@ type Article struct {
 	Text  string
 }
 
+type fetchOptions struct {
+	allowInitialPrivateNetwork bool
+}
+
 // FetchArticle fetches a public HTTP(S) page and extracts readable article text.
 func FetchArticle(ctx context.Context, rawURL, version string) (*Article, error) {
+	return fetchArticle(ctx, rawURL, version, fetchOptions{})
+}
+
+func fetchArticle(ctx context.Context, rawURL, version string, opts fetchOptions) (*Article, error) {
 	parsed, err := validateURL(rawURL)
 	if err != nil {
 		return nil, err
 	}
+	if !opts.allowInitialPrivateNetwork {
+		if err := validateWebDestination(ctx, parsed, false); err != nil {
+			return nil, err
+		}
+	}
 
-	client := &http.Client{
-		Timeout: fetchTimeout,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= maxRedirects {
-				return errors.New("too many redirects while fetching webpage")
-			}
-			if req.URL.Scheme != "http" && req.URL.Scheme != "https" {
-				return fmt.Errorf("redirected to unsupported URL scheme %q; use http or https", req.URL.Scheme)
-			}
-			return nil
-		},
+	return fetchArticleWithClient(ctx, newWebClient(opts.allowInitialPrivateNetwork), parsed, version)
+}
+
+func fetchArticleWithClient(ctx context.Context, client *http.Client, parsed *url.URL, version string) (*Article, error) {
+	if client == nil {
+		client = newWebClient(false)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, parsed.String(), nil)
@@ -105,6 +157,114 @@ func FetchArticle(ctx context.Context, rawURL, version string) (*Article, error)
 	}
 
 	return &Article{URL: finalURL.String(), Title: title, Text: text}, nil
+}
+
+func newWebClient(allowPrivateDial bool) *http.Client {
+	client := &http.Client{
+		Timeout: fetchTimeout,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= maxRedirects {
+				return errors.New("too many redirects while fetching webpage")
+			}
+			if req.URL.Scheme != "http" && req.URL.Scheme != "https" {
+				return fmt.Errorf("redirected to unsupported URL scheme %q; use http or https", req.URL.Scheme)
+			}
+			return validateWebDestination(req.Context(), req.URL, false)
+		},
+	}
+	if allowPrivateDial {
+		return client
+	}
+
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = nil
+	transport.DialTLSContext = nil
+	originalDialContext := transport.DialContext
+	if originalDialContext == nil {
+		originalDialContext = (&net.Dialer{}).DialContext
+	}
+	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(address)
+		if err != nil {
+			return nil, err
+		}
+		ips, err := publicWebIPs(ctx, host, false)
+		if err != nil {
+			return nil, err
+		}
+		var lastErr error
+		for _, ip := range ips {
+			conn, err := originalDialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+			if err == nil {
+				return conn, nil
+			}
+			lastErr = err
+		}
+		if lastErr != nil {
+			return nil, lastErr
+		}
+		return nil, fmt.Errorf("resolving webpage host %q: no public IP addresses", host)
+	}
+
+	client.Transport = transport
+	return client
+}
+
+func validateWebDestination(ctx context.Context, u *url.URL, allowPrivate bool) error {
+	if u == nil || u.Host == "" {
+		return errors.New("invalid webpage URL")
+	}
+	_, err := publicWebIPs(ctx, u.Hostname(), allowPrivate)
+	return err
+}
+
+func publicWebIPs(ctx context.Context, host string, allowPrivate bool) ([]netip.Addr, error) {
+	if host == "" {
+		return nil, errors.New("invalid webpage URL")
+	}
+	if addr, err := netip.ParseAddr(host); err == nil {
+		if !allowPrivate && isPrivateWebAddr(addr) {
+			return nil, fmt.Errorf("webpage destination is a private network address: %s", addr)
+		}
+		return []netip.Addr{addr}, nil
+	}
+
+	ips, err := net.DefaultResolver.LookupNetIP(ctx, "ip", host)
+	if err != nil {
+		return nil, fmt.Errorf("resolving webpage host %q: %w", host, err)
+	}
+	publicIPs := make([]netip.Addr, 0, len(ips))
+	for _, addr := range ips {
+		if isPrivateWebAddr(addr) {
+			if !allowPrivate {
+				return nil, fmt.Errorf("webpage destination resolves to private network address: %s", addr)
+			}
+			publicIPs = append(publicIPs, addr)
+			continue
+		}
+		publicIPs = append(publicIPs, addr)
+	}
+	if len(publicIPs) == 0 {
+		return nil, fmt.Errorf("resolving webpage host %q: no IP addresses", host)
+	}
+	return publicIPs, nil
+}
+
+func isPrivateWebAddr(addr netip.Addr) bool {
+	if !addr.IsValid() ||
+		addr.IsLoopback() ||
+		addr.IsPrivate() ||
+		addr.IsLinkLocalUnicast() ||
+		addr.IsMulticast() ||
+		addr.IsUnspecified() {
+		return true
+	}
+	for _, prefix := range privateWebPrefixes {
+		if prefix.Contains(addr) {
+			return true
+		}
+	}
+	return false
 }
 
 func validateURL(rawURL string) (*url.URL, error) {

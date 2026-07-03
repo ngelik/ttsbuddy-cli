@@ -475,7 +475,7 @@ echo "    🎲 Russian target voice: $RANDOM_SUPERTONIC_VOICE"
 echo "    ⏳ waiting ${POST_DELAY}s..."
 sleep "$POST_DELAY"
 set +e
-tb web "https://www.ttsbuddy.com/docs/" --language ru --voice "$RANDOM_SUPERTONIC_VOICE" --json --no-download >"$TB_OUT/web-ru.json" 2>"$TB_OUT/_stderr"
+tb web "https://www.ttsbuddy.com/docs/" --language ru --voice "$RANDOM_SUPERTONIC_VOICE" --json --no-download --timeout 10m >"$TB_OUT/web-ru.json" 2>"$TB_OUT/_stderr"
 w1_exit=$?
 set -e
 if [ "$w1_exit" -ne 0 ] && grep -q "rate limited" "$TB_OUT/_stderr" 2>/dev/null; then
@@ -483,7 +483,7 @@ if [ "$w1_exit" -ne 0 ] && grep -q "rate limited" "$TB_OUT/_stderr" 2>/dev/null;
     RATE_LIMITED_COUNT=$((RATE_LIMITED_COUNT + 1))
     sleep "$POST_DELAY"
     set +e
-    tb web "https://www.ttsbuddy.com/docs/" --language ru --voice "$RANDOM_SUPERTONIC_VOICE" --json --no-download >"$TB_OUT/web-ru.json" 2>"$TB_OUT/_stderr"
+    tb web "https://www.ttsbuddy.com/docs/" --language ru --voice "$RANDOM_SUPERTONIC_VOICE" --json --no-download --timeout 10m >"$TB_OUT/web-ru.json" 2>"$TB_OUT/_stderr"
     w1_exit=$?
     set -e
 fi

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -25,11 +26,42 @@ type Client struct {
 // NewClient creates a new API client.
 func NewClient(apiURL, apiKey, version string) *Client {
 	return &Client{
-		httpClient: &http.Client{},
+		httpClient: newAPIHTTPClient(apiURL),
 		apiURL:     strings.TrimRight(apiURL, "/"),
 		apiKey:     apiKey,
 		version:    version,
 	}
+}
+
+func newAPIHTTPClient(apiURL string) *http.Client {
+	origin := apiOrigin(apiURL)
+	return &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 10 {
+				return fmt.Errorf("too many API redirects")
+			}
+			if origin == nil || !sameOrigin(req.URL, origin) {
+				return fmt.Errorf("refusing cross-origin API redirect to %s", req.URL.Redacted())
+			}
+			return nil
+		},
+	}
+}
+
+func apiOrigin(rawURL string) *url.URL {
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return nil
+	}
+	return &url.URL{Scheme: u.Scheme, Host: u.Host}
+}
+
+func sameOrigin(candidate, origin *url.URL) bool {
+	if candidate == nil || origin == nil {
+		return false
+	}
+	return strings.EqualFold(candidate.Scheme, origin.Scheme) &&
+		strings.EqualFold(candidate.Host, origin.Host)
 }
 
 // Speak submits a TTS request. Returns the parsed response, HTTP status code, and any error.
@@ -89,6 +121,13 @@ func (c *Client) GetStatus(ctx context.Context, jobID string) (*TTSResponse, int
 // maxAudioSize caps audio downloads to prevent disk/memory exhaustion.
 const maxAudioSize = 500 * 1024 * 1024 // 500MB
 
+var downloadRetryDelays = []time.Duration{
+	500 * time.Millisecond,
+	1 * time.Second,
+	2 * time.Second,
+	4 * time.Second,
+}
+
 // NewDownloadClient creates an HTTP client with redirect validation.
 // Each redirect hop is validated against the same scheme + host policy.
 func NewDownloadClient(apiHost string) *http.Client {
@@ -112,28 +151,15 @@ func (c *Client) DownloadAudio(ctx context.Context, audioURL, destPath string) e
 // DownloadAudioWithSize downloads an audio file atomically and returns bytes written.
 func (c *Client) DownloadAudioWithSize(ctx context.Context, audioURL, destPath string) (int64, error) {
 	apiHost := apiHostFromURL(c.apiURL)
-	if err := ValidateDownloadURL(audioURL, apiHost); err != nil {
-		return 0, err
-	}
 
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, audioURL, nil)
+	resp, err := OpenDownload(ctx, audioURL, apiHost)
 	if err != nil {
-		return 0, fmt.Errorf("creating download request: %w", err)
-	}
-
-	dlClient := NewDownloadClient(apiHost)
-	resp, err := dlClient.Do(httpReq)
-	if err != nil {
-		return 0, fmt.Errorf("downloading audio: %w", err)
+		return 0, err
 	}
 	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return 0, fmt.Errorf("download failed with status %d", resp.StatusCode)
-	}
 
 	dir := filepath.Dir(destPath)
 	f, err := os.CreateTemp(dir, filepath.Base(destPath)+".part.*")
@@ -160,6 +186,99 @@ func (c *Client) DownloadAudioWithSize(ctx context.Context, audioURL, destPath s
 	}
 
 	return written, nil
+}
+
+// OpenDownload opens a validated audio download response, retrying short-lived
+// storage readiness failures before returning the first successful 200 response.
+// The caller must close the returned response body.
+func OpenDownload(ctx context.Context, audioURL, apiHost string) (*http.Response, error) {
+	if err := ValidateDownloadURL(audioURL, apiHost); err != nil {
+		return nil, err
+	}
+
+	dlClient := NewDownloadClient(apiHost)
+	var lastStatus int
+
+	attempts := 1 + len(downloadRetryDelays)
+	for attempt := 0; attempt < attempts; attempt++ {
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, audioURL, nil)
+		if err != nil {
+			return nil, fmt.Errorf("creating download request: %w", err)
+		}
+
+		resp, err := dlClient.Do(httpReq)
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			return nil, fmt.Errorf("downloading audio: %w", err)
+		}
+
+		if resp.StatusCode == http.StatusOK {
+			return resp, nil
+		}
+
+		lastStatus = resp.StatusCode
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1024))
+		_ = resp.Body.Close()
+
+		if !retryableDownloadStatus(lastStatus) || attempt == attempts-1 {
+			break
+		}
+
+		if err := sleepContext(ctx, downloadRetryDelays[attempt]); err != nil {
+			return nil, err
+		}
+	}
+
+	return nil, &DownloadStatusError{StatusCode: lastStatus}
+}
+
+// DownloadStatusError is returned when storage answers the download request
+// but does not return a successful response.
+type DownloadStatusError struct {
+	StatusCode int
+}
+
+func (e *DownloadStatusError) Error() string {
+	return fmt.Sprintf("download failed with status %d", e.StatusCode)
+}
+
+// IsRetryableDownloadError reports whether a download failure may be resolved
+// by refreshing stale storage state or retrying later.
+func IsRetryableDownloadError(err error) bool {
+	var statusErr *DownloadStatusError
+	return errors.As(err, &statusErr) && retryableDownloadStatus(statusErr.StatusCode)
+}
+
+func retryableDownloadStatus(status int) bool {
+	switch status {
+	case http.StatusBadRequest,
+		http.StatusForbidden,
+		http.StatusNotFound,
+		http.StatusRequestTimeout,
+		http.StatusConflict,
+		http.StatusTooEarly,
+		http.StatusTooManyRequests,
+		http.StatusInternalServerError,
+		http.StatusBadGateway,
+		http.StatusServiceUnavailable,
+		http.StatusGatewayTimeout:
+		return true
+	default:
+		return false
+	}
+}
+
+func sleepContext(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 // ValidateDownloadURL checks that a download URL uses an allowed scheme and host.
@@ -238,7 +357,7 @@ func (c *Client) FetchVoices(ctx context.Context, ttsAPIBaseURL string) ([]Voice
 	}
 	httpReq.Header.Set("User-Agent", "ttsbuddy-cli/"+c.version)
 
-	resp, err := c.httpClient.Do(httpReq)
+	resp, err := (&http.Client{}).Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("fetching voices: %w", err)
 	}

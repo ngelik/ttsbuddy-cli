@@ -16,6 +16,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var fetchArticleForWeb = webpage.FetchArticle
+
 var webCmd = &cobra.Command{
 	Use:   "web <url>",
 	Short: "Convert a webpage to speech",
@@ -102,7 +104,7 @@ func runWeb(cmd *cobra.Command, rawURL string) error {
 	if !flagJSON && !flagQuiet {
 		spin.Start("Fetching webpage...")
 	}
-	article, err := webpage.FetchArticle(ctx, rawURL, Version)
+	article, err := fetchArticleForWeb(ctx, rawURL, Version)
 	if err != nil {
 		spin.Stop()
 		return &exitError{code: 2, msg: err.Error()}
@@ -172,7 +174,7 @@ func runWeb(cmd *cobra.Command, rawURL string) error {
 
 	switch {
 	case resp.Status == "completed":
-		return handleCompleted(ctx, client, resp, resolved)
+		return handleCompletedWithFreshRetry(ctx, client, req, resp, resolved, false)
 	case resp.Status == "expired":
 		return &exitError{code: 1, msg: "audio file has expired and been deleted. Submit a new request."}
 	case resp.Status == "failed":
@@ -183,7 +185,9 @@ func runWeb(cmd *cobra.Command, rawURL string) error {
 		return &exitError{code: 1, msg: msg}
 	case status == 202 || resp.Status == "processing":
 		renderTranslationMeta(resp)
-		return pollUntilComplete(ctx, client, resp, resolved)
+		return pollUntilComplete(ctx, client, resp, resolved, func(done *api.TTSResponse) error {
+			return handleCompletedWithFreshRetry(ctx, client, req, done, resolved, false)
+		})
 	default:
 		if flagJSON {
 			enc := json.NewEncoder(os.Stdout)

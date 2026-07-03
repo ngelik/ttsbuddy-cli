@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -245,6 +246,135 @@ func TestGetStatus404(t *testing.T) {
 	}
 }
 
+func TestSpeakRejectsCrossOriginRedirectWithoutLeakingAuth(t *testing.T) {
+	var targetAuth string
+	var targetBody []byte
+	var targetHits int
+
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		targetHits++
+		targetAuth = r.Header.Get("Authorization")
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("reading redirected body: %v", err)
+		}
+		targetBody = body
+		_ = json.NewEncoder(w).Encode(TTSResponse{Success: true, Status: "completed", JobID: "leaked"})
+	}))
+	defer target.Close()
+
+	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("expected POST, got %s", r.Method)
+		}
+		http.Redirect(w, r, target.URL, http.StatusTemporaryRedirect)
+	}))
+	defer redirector.Close()
+
+	client := NewClient(redirector.URL, "test_key", "test")
+	_, _, err := client.Speak(context.Background(), SpeakRequest{Text: "hello", Voice: "af_heart", Speed: 1.0}, "test-idem")
+	if err == nil {
+		t.Fatal("expected cross-origin redirect error")
+	}
+	if !strings.Contains(err.Error(), "cross-origin API redirect") {
+		t.Fatalf("expected cross-origin redirect error, got %v", err)
+	}
+	if targetHits != 0 {
+		t.Fatalf("expected redirected target not to be reached, got %d hits", targetHits)
+	}
+	if targetAuth != "" {
+		t.Fatalf("redirected target received Authorization header: %q", targetAuth)
+	}
+	if len(targetBody) != 0 {
+		t.Fatalf("redirected target received body: %q", string(targetBody))
+	}
+}
+
+func TestGetStatusRejectsCrossOriginRedirectWithoutLeakingAuth(t *testing.T) {
+	var targetAuth string
+	var targetBody []byte
+	var targetHits int
+
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		targetHits++
+		targetAuth = r.Header.Get("Authorization")
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("reading redirected body: %v", err)
+		}
+		targetBody = body
+		_ = json.NewEncoder(w).Encode(TTSResponse{Success: true, Status: "completed", JobID: "leaked"})
+	}))
+	defer target.Close()
+
+	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("expected GET, got %s", r.Method)
+		}
+		http.Redirect(w, r, target.URL, http.StatusTemporaryRedirect)
+	}))
+	defer redirector.Close()
+
+	client := NewClient(redirector.URL, "test_key", "test")
+	_, _, err := client.GetStatus(context.Background(), "job-123")
+	if err == nil {
+		t.Fatal("expected cross-origin redirect error")
+	}
+	if !strings.Contains(err.Error(), "cross-origin API redirect") {
+		t.Fatalf("expected cross-origin redirect error, got %v", err)
+	}
+	if targetHits != 0 {
+		t.Fatalf("expected redirected target not to be reached, got %d hits", targetHits)
+	}
+	if targetAuth != "" {
+		t.Fatalf("redirected target received Authorization header: %q", targetAuth)
+	}
+	if len(targetBody) != 0 {
+		t.Fatalf("redirected target received body: %q", string(targetBody))
+	}
+}
+
+func TestSpeakAllowsSameOriginRedirect(t *testing.T) {
+	var finalAuth string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/start":
+			http.Redirect(w, r, "/final", http.StatusTemporaryRedirect)
+		case "/final":
+			if r.Method != http.MethodPost {
+				t.Errorf("expected POST, got %s", r.Method)
+			}
+			finalAuth = r.Header.Get("Authorization")
+			_ = json.NewEncoder(w).Encode(TTSResponse{
+				Success: true,
+				Status:  "completed",
+				JobID:   "same-origin",
+				Meta:    &Meta{RequestID: "req-same-origin", APIVersion: "2026-04"},
+			})
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	client := NewClient(srv.URL+"/start", "test_key", "test")
+	resp, status, err := client.Speak(context.Background(), SpeakRequest{Text: "hello", Voice: "af_heart", Speed: 1.0}, "test-idem")
+	if err != nil {
+		t.Fatalf("Speak error: %v", err)
+	}
+	if status != http.StatusOK {
+		t.Errorf("expected 200, got %d", status)
+	}
+	if finalAuth != "Bearer test_key" {
+		t.Fatalf("expected Authorization on same-origin redirect, got %q", finalAuth)
+	}
+	if resp.JobID != "same-origin" {
+		t.Fatalf("expected same-origin job ID, got %q", resp.JobID)
+	}
+}
+
 func TestCompletedMissingAudio(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(TTSResponse{
@@ -323,6 +453,8 @@ func TestDownloadAudioAtomic(t *testing.T) {
 }
 
 func TestDownloadAudioCleanupOnError(t *testing.T) {
+	withDownloadRetryDelays(t, nil)
+
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(500)
 	}))
@@ -344,6 +476,51 @@ func TestDownloadAudioCleanupOnError(t *testing.T) {
 	if _, err := os.Stat(dest + ".part"); !os.IsNotExist(err) {
 		t.Error(".part file should not exist after error")
 	}
+}
+
+func TestDownloadAudioRetriesTransientStatus(t *testing.T) {
+	withDownloadRetryDelays(t, []time.Duration{time.Millisecond})
+
+	attempts := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts == 1 {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte("object not ready"))
+			return
+		}
+		_, _ = w.Write([]byte("fake mp3 data"))
+	}))
+	defer srv.Close()
+
+	tmp := t.TempDir()
+	dest := filepath.Join(tmp, "output.mp3")
+
+	client := NewClient("", "", "test")
+	if err := client.DownloadAudio(context.Background(), srv.URL, dest); err != nil {
+		t.Fatalf("DownloadAudio error: %v", err)
+	}
+
+	data, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatalf("cannot read output: %v", err)
+	}
+	if string(data) != "fake mp3 data" {
+		t.Errorf("content mismatch: got %q", data)
+	}
+	if attempts != 2 {
+		t.Errorf("attempts = %d, want 2", attempts)
+	}
+}
+
+func withDownloadRetryDelays(t *testing.T, delays []time.Duration) {
+	t.Helper()
+
+	orig := downloadRetryDelays
+	downloadRetryDelays = delays
+	t.Cleanup(func() {
+		downloadRetryDelays = orig
+	})
 }
 
 // --- Security tests ---
@@ -390,14 +567,14 @@ func TestAllowedDownloadHost(t *testing.T) {
 		host, apiHost string
 		want          bool
 	}{
-		{"api.ttsbuddy.com", "api.ttsbuddy.com", true},   // same as API
-		{"s3.amazonaws.com", "api.ttsbuddy.com", true},    // S3
-		{"bucket.s3.us-east-1.amazonaws.com", "", true},   // S3 subdomain
-		{"localhost", "", true},                            // local
-		{"127.0.0.1", "", true},                           // local
-		{"evil.com", "api.ttsbuddy.com", false},           // random host
-		{"internal.corp", "api.ttsbuddy.com", false},      // internal host
-		{"amazonaws.com.evil.com", "", false},              // suffix trick
+		{"api.ttsbuddy.com", "api.ttsbuddy.com", true},  // same as API
+		{"s3.amazonaws.com", "api.ttsbuddy.com", true},  // S3
+		{"bucket.s3.us-east-1.amazonaws.com", "", true}, // S3 subdomain
+		{"localhost", "", true},                         // local
+		{"127.0.0.1", "", true},                         // local
+		{"evil.com", "api.ttsbuddy.com", false},         // random host
+		{"internal.corp", "api.ttsbuddy.com", false},    // internal host
+		{"amazonaws.com.evil.com", "", false},           // suffix trick
 	}
 	for _, tc := range cases {
 		got := allowedDownloadHost(tc.host, tc.apiHost)
@@ -533,6 +710,39 @@ func TestFetchVoices(t *testing.T) {
 	voices, err := client.FetchVoices(context.Background(), srv.URL)
 	if err != nil {
 		t.Fatalf("FetchVoices error: %v", err)
+	}
+	if len(voices) != 1 || voices[0].ID != "af_heart" {
+		t.Errorf("expected af_heart, got %+v", voices)
+	}
+}
+
+func TestFetchVoicesFollowsPublicRedirectWithEmptyAPIURL(t *testing.T) {
+	var finalHits int
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/voices":
+			http.Redirect(w, r, "/final-voices", http.StatusTemporaryRedirect)
+		case "/final-voices":
+			finalHits++
+			if r.Header.Get("Authorization") != "" {
+				t.Fatalf("unexpected Authorization header on public voices request: %q", r.Header.Get("Authorization"))
+			}
+			_, _ = w.Write([]byte(`[{"id":"af_heart","name":"Heart","gender":"Female","language":"English"}]`))
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	client := NewClient("", "", "test")
+	voices, err := client.FetchVoices(context.Background(), srv.URL)
+	if err != nil {
+		t.Fatalf("FetchVoices error: %v", err)
+	}
+	if finalHits != 1 {
+		t.Fatalf("expected final voices endpoint to be reached once, got %d", finalHits)
 	}
 	if len(voices) != 1 || voices[0].ID != "af_heart" {
 		t.Errorf("expected af_heart, got %+v", voices)

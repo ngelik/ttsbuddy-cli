@@ -66,19 +66,19 @@ func runStatus(cmd *cobra.Command, args []string) error {
 
 	// Single GET (default)
 	if !statusWatch {
-		return statusOnce(client, jobID)
+		return statusOnce(client, jobID, resolved)
 	}
 
 	// --watch: poll until terminal
 	return statusPoll(client, jobID, resolved)
 }
 
-func statusOnce(client *api.Client, jobID string) error {
+func statusOnce(client *api.Client, jobID string, resolved *config.ResolvedConfig) error {
 	resp, _, err := client.GetStatus(context.Background(), jobID)
 	if err != nil {
 		return handleStatusError(err, jobID)
 	}
-	return renderStatus(resp, jobID)
+	return renderStatus(resp, jobID, resolved)
 }
 
 func statusPoll(client *api.Client, jobID string, resolved *config.ResolvedConfig) error {
@@ -121,7 +121,7 @@ func statusPoll(client *api.Client, jobID string, resolved *config.ResolvedConfi
 
 		switch resp.Status {
 		case "completed", "failed", "expired":
-			return renderStatus(resp, jobID)
+			return renderStatus(resp, jobID, resolved)
 		case "processing":
 			elapsed := time.Since(deadline.Add(-dur))
 			stderrMsg("%s elapsed\n", renderProgress(resp, elapsed))
@@ -143,7 +143,13 @@ func statusPoll(client *api.Client, jobID string, resolved *config.ResolvedConfi
 	}
 }
 
-func renderStatus(resp *api.TTSResponse, jobID string) error {
+func renderStatus(resp *api.TTSResponse, jobID string, resolved *config.ResolvedConfig) error {
+	if resp.Status == "completed" {
+		if err := validateCompletedAudioURL(resp, resolved); err != nil {
+			return err
+		}
+	}
+
 	if flagJSON {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")

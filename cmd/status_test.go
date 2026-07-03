@@ -9,12 +9,13 @@ import (
 )
 
 func TestStatusExplicitID(t *testing.T) {
+	audioSrv := startMockAPI(t, mockAudioHandler())
 	apiSrv := startMockAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"success":   true,
 			"status":    "completed",
 			"job_id":    "test-job",
-			"audio_url": "https://example.com/audio.mp3",
+			"audio_url": audioSrv + "/audio.mp3",
 			"audio":     map[string]interface{}{"format": "mp3", "duration_seconds": 5.0},
 			"meta":      map[string]string{"request_id": "r1", "api_version": "2026-04"},
 		})
@@ -28,10 +29,11 @@ func TestStatusExplicitID(t *testing.T) {
 }
 
 func TestStatusLastJob(t *testing.T) {
+	audioSrv := startMockAPI(t, mockAudioHandler())
 	apiSrv := startMockAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": true, "status": "completed", "job_id": "saved-job",
-			"audio_url": "https://example.com/a.mp3",
+			"audio_url": audioSrv + "/a.mp3",
 			"meta":      map[string]string{"request_id": "r1", "api_version": "2026-04"},
 		})
 	}))
@@ -115,12 +117,13 @@ func TestStatusExpired(t *testing.T) {
 }
 
 func TestStatusJSON(t *testing.T) {
+	audioSrv := startMockAPI(t, mockAudioHandler())
 	apiSrv := startMockAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"success":   true,
 			"status":    "completed",
 			"job_id":    "json-job",
-			"audio_url": "https://example.com/a.mp3",
+			"audio_url": audioSrv + "/a.mp3",
 			"meta":      map[string]string{"request_id": "r1", "api_version": "2026-04"},
 		})
 	}))
@@ -130,6 +133,47 @@ func TestStatusJSON(t *testing.T) {
 	assertExitCode(t, r, 0)
 	assertValidJSON(t, r.Stdout)
 	assertContains(t, r.Stdout, "completed", "stdout")
+}
+
+func TestStatusJSONRejectsUnsafeAudioURL(t *testing.T) {
+	apiSrv := startMockAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":   true,
+			"status":    "completed",
+			"job_id":    "json-unsafe-job",
+			"audio_url": "http://evil.example/audio.mp3",
+			"meta":      map[string]string{"request_id": "r1", "api_version": "2026-04"},
+		})
+	}))
+	home := t.TempDir()
+
+	r := runCLI(t, envForTest(home, apiSrv, "ttsb_test_key"), "status", "--json", "json-unsafe-job")
+	assertExitCode(t, r, 1)
+	assertValidJSON(t, r.Stdout)
+	assertContains(t, r.Stdout, "CLI_ERROR", "stdout")
+	assertContains(t, r.Stdout, "refusing to download over insecure HTTP", "stdout")
+	assertNotContains(t, r.Stdout, "audio.mp3", "stdout")
+}
+
+func TestStatusRejectsMalformedAudioURLWithoutLeakingRawURL(t *testing.T) {
+	apiSrv := startMockAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":   true,
+			"status":    "completed",
+			"job_id":    "malformed-job",
+			"audio_url": "http://%zz/path?token=secret-token",
+			"meta":      map[string]string{"request_id": "r1", "api_version": "2026-04"},
+		})
+	}))
+	home := t.TempDir()
+
+	r := runCLI(t, envForTest(home, apiSrv, "ttsb_test_key"), "status", "--json", "malformed-job")
+	assertExitCode(t, r, 1)
+	assertValidJSON(t, r.Stdout)
+	assertContains(t, r.Stdout, "CLI_ERROR", "stdout")
+	assertContains(t, r.Stdout, "invalid audio URL in API response", "stdout")
+	assertNotContains(t, r.Stdout, "secret-token", "stdout")
+	assertNotContains(t, r.Stdout, "%zz", "stdout")
 }
 
 func TestStatusUnknownStatus(t *testing.T) {
@@ -147,6 +191,7 @@ func TestStatusUnknownStatus(t *testing.T) {
 }
 
 func TestStatusWatchCompletes(t *testing.T) {
+	audioSrv := startMockAPI(t, mockAudioHandler())
 	calls := 0
 	apiSrv := startMockAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
@@ -167,7 +212,7 @@ func TestStatusWatchCompletes(t *testing.T) {
 			"success":   true,
 			"status":    "completed",
 			"job_id":    "watch-job",
-			"audio_url": "https://example.com/a.mp3",
+			"audio_url": audioSrv + "/a.mp3",
 			"stats": map[string]interface{}{
 				"speech_length_seconds":       90,
 				"file_size_bytes":             4096,
@@ -183,4 +228,31 @@ func TestStatusWatchCompletes(t *testing.T) {
 	assertContains(t, r.Stderr, "Processing 42%", "stderr")
 	assertContains(t, r.Stderr, "Speech length: 1m30s", "stderr")
 	assertContains(t, r.Stderr, "MP3 size: 4.0 KB", "stderr")
+}
+
+func TestStatusWatchRejectsUnsafeAudioURL(t *testing.T) {
+	calls := 0
+	apiSrv := startMockAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls == 1 {
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": true, "status": "processing", "job_id": "watch-unsafe-job",
+				"retry_after_seconds": 0,
+				"meta":                map[string]string{"request_id": "r1", "api_version": "2026-04"},
+			})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":   true,
+			"status":    "completed",
+			"job_id":    "watch-unsafe-job",
+			"audio_url": "https://attacker.example/audio.mp3",
+			"meta":      map[string]string{"request_id": "r2", "api_version": "2026-04"},
+		})
+	}))
+	home := t.TempDir()
+
+	r := runCLI(t, envForTest(home, apiSrv, "ttsb_test_key"), "status", "watch-unsafe-job", "--watch", "--timeout", "30s")
+	assertExitCode(t, r, 1)
+	assertContains(t, r.Stderr, "not in allowed list", "stderr")
 }

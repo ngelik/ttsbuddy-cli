@@ -11,7 +11,7 @@ LDFLAGS := -s -w \
   -X $(MODULE)/cmd.Commit=$(COMMIT) \
   -X $(MODULE)/cmd.Date=$(DATE)
 
-.PHONY: build test test-live test-acceptance lint tools release-snapshot clean
+.PHONY: build test test-live test-acceptance lint tools release-snapshot check-actions-pinned clean
 
 build:
 	go build -ldflags "$(LDFLAGS)" -o bin/ttsbuddy .
@@ -35,6 +35,9 @@ tools:
 
 release-snapshot:
 	goreleaser release --snapshot --clean
+
+check-actions-pinned:
+	./scripts/check-github-actions-pinned.sh
 
 clean:
 	rm -rf bin/ dist/

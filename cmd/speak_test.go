@@ -32,6 +32,10 @@ func TestReadInputPositionalArg(t *testing.T) {
 	}
 }
 
+func sameOriginAudioURL(r *http.Request) string {
+	return "http://" + r.Host + "/audio.mp3"
+}
+
 func TestReadInputFile(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "test.txt")
@@ -221,6 +225,65 @@ func TestSpeakInline(t *testing.T) {
 	}
 }
 
+func TestSpeakRetriesFreshKeyForStaleCachedDownload(t *testing.T) {
+	audioSrv := startMockAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/stale.mp3" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte("stale signed URL"))
+			return
+		}
+		w.Header().Set("Content-Type", "audio/mpeg")
+		_, _ = w.Write([]byte("fresh-mp3-data"))
+	}))
+
+	var postCount int
+	var keys []string
+	apiSrv := startMockAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		postCount++
+		keys = append(keys, r.Header.Get("Idempotency-Key"))
+		audioPath := "/stale.mp3"
+		jobID := "stale-job"
+		if postCount > 1 {
+			audioPath = "/fresh.mp3"
+			jobID = "fresh-job"
+		}
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":   true,
+			"status":    "completed",
+			"job_id":    jobID,
+			"audio_url": audioSrv + audioPath,
+			"audio": map[string]interface{}{
+				"format": "mp3",
+				"voice":  "st_m1",
+				"speed":  1.2,
+			},
+			"meta": map[string]string{"request_id": "r1", "api_version": "2026-04"},
+		})
+	}))
+
+	home := t.TempDir()
+	out := filepath.Join(home, "out.mp3")
+	r := runCLI(t, envForTest(home, apiSrv, "ttsb_test_key"), "speak", "hello", "-o", out, "--quiet")
+
+	assertExitCode(t, r, 0)
+	if r.Stderr != "" {
+		t.Errorf("--quiet should suppress recovered stale download output, got: %q", r.Stderr)
+	}
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("cannot read output: %v", err)
+	}
+	if string(data) != "fresh-mp3-data" {
+		t.Errorf("output = %q, want fresh audio", data)
+	}
+	if postCount != 2 {
+		t.Fatalf("postCount = %d, want 2", postCount)
+	}
+	if keys[0] == "" || keys[1] == "" || keys[0] == keys[1] {
+		t.Fatalf("expected fresh idempotency key, got %q then %q", keys[0], keys[1])
+	}
+}
+
 func TestSpeakJSON(t *testing.T) {
 	audioSrv := startMockAPI(t, mockAudioHandler())
 	apiSrv := startMockAPI(t, mockCompletedHandler(audioSrv))
@@ -242,7 +305,7 @@ func TestSpeakJSONPreservesProgressAndStats(t *testing.T) {
 			"success":   true,
 			"status":    "completed",
 			"job_id":    "json-stats-job",
-			"audio_url": "https://example.com/audio.mp3",
+			"audio_url": sameOriginAudioURL(r),
 			"progress": map[string]interface{}{
 				"phase": "finalizing",
 			},
@@ -369,6 +432,98 @@ func TestSpeakMissingAudioURL(t *testing.T) {
 	assertContains(t, r2.Stdout, "CLI_ERROR", "stdout")
 }
 
+func TestSpeakJSONRejectsUnsafeAudioURL(t *testing.T) {
+	apiSrv := startMockAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":   true,
+			"status":    "completed",
+			"job_id":    "j1",
+			"audio_url": "http://evil.example/audio.mp3",
+			"meta":      map[string]string{"request_id": "r1", "api_version": "2026-04"},
+		})
+	}))
+	home := t.TempDir()
+
+	r := runCLI(t, envForTest(home, apiSrv, "ttsb_test_key"), "speak", "hello", "--json")
+	assertExitCode(t, r, 1)
+	assertValidJSON(t, r.Stdout)
+	assertContains(t, r.Stdout, "CLI_ERROR", "stdout")
+	assertContains(t, r.Stdout, "refusing to download over insecure HTTP", "stdout")
+	assertNotContains(t, r.Stdout, "evil.example/audio.mp3", "stdout")
+	assertNotContains(t, r.Stderr, "evil.example/audio.mp3", "stderr")
+}
+
+func TestSpeakNoDownloadRejectsUnsafeAudioURL(t *testing.T) {
+	apiSrv := startMockAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":   true,
+			"status":    "completed",
+			"job_id":    "j1",
+			"audio_url": "http://evil.example/audio.mp3",
+			"meta":      map[string]string{"request_id": "r1", "api_version": "2026-04"},
+		})
+	}))
+	home := t.TempDir()
+
+	r := runCLI(t, envForTest(home, apiSrv, "ttsb_test_key"), "speak", "hello", "--no-download")
+	assertExitCode(t, r, 1)
+	assertContains(t, r.Stderr, "refusing to download over insecure HTTP", "stderr")
+	assertNotContains(t, r.Stderr, "evil.example/audio.mp3", "stderr")
+	assertNotContains(t, r.Stdout, "evil.example/audio.mp3", "stdout")
+}
+
+func TestSpeakRejectsMalformedAudioURLWithoutLeakingRawURL(t *testing.T) {
+	const malformedURL = "http://%zz/path?token=secret-token"
+
+	apiSrv := startMockAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":   true,
+			"status":    "completed",
+			"job_id":    "j1",
+			"audio_url": malformedURL,
+			"meta":      map[string]string{"request_id": "r1", "api_version": "2026-04"},
+		})
+	}))
+
+	tests := []struct {
+		name       string
+		args       []string
+		wantJSON   bool
+		wantOutput func(cliResult) string
+	}{
+		{
+			name:       "json",
+			args:       []string{"speak", "hello", "--json"},
+			wantJSON:   true,
+			wantOutput: func(r cliResult) string { return r.Stdout },
+		},
+		{
+			name:       "no-download",
+			args:       []string{"speak", "hello", "--no-download"},
+			wantOutput: func(r cliResult) string { return r.Stderr },
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			home := t.TempDir()
+			r := runCLI(t, envForTest(home, apiSrv, "ttsb_test_key"), tt.args...)
+			assertExitCode(t, r, 1)
+			if tt.wantJSON {
+				assertValidJSON(t, r.Stdout)
+				assertContains(t, r.Stdout, "CLI_ERROR", "stdout")
+			}
+			assertContains(t, tt.wantOutput(r), "invalid audio URL in API response", "output")
+			assertNotContains(t, r.Stdout, malformedURL, "stdout")
+			assertNotContains(t, r.Stderr, malformedURL, "stderr")
+			assertNotContains(t, r.Stdout, "%zz", "stdout")
+			assertNotContains(t, r.Stderr, "%zz", "stderr")
+			assertNotContains(t, r.Stdout, "secret-token", "stdout")
+			assertNotContains(t, r.Stderr, "secret-token", "stderr")
+		})
+	}
+}
+
 func TestSpeakAsync(t *testing.T) {
 	calls := 0
 	audioSrv := startMockAPI(t, mockAudioHandler())
@@ -421,7 +576,7 @@ func TestSpeakMarkdownStrip(t *testing.T) {
 			"success":   true,
 			"status":    "completed",
 			"job_id":    "md-job",
-			"audio_url": "https://example.com/audio.mp3",
+			"audio_url": sameOriginAudioURL(r),
 			"meta":      map[string]string{"request_id": "r1", "api_version": "2026-04"},
 		})
 	}))
@@ -453,7 +608,7 @@ func TestSpeakSupertonicLanguageFlag(t *testing.T) {
 			"success":   true,
 			"status":    "completed",
 			"job_id":    "lang-job",
-			"audio_url": "https://example.com/audio.mp3",
+			"audio_url": sameOriginAudioURL(r),
 			"meta":      map[string]string{"request_id": "r1", "api_version": "2026-04"},
 		})
 	}))
@@ -485,7 +640,7 @@ func TestSpeakConfiguredSupertonicLanguage(t *testing.T) {
 			"success":   true,
 			"status":    "completed",
 			"job_id":    "lang-job",
-			"audio_url": "https://example.com/audio.mp3",
+			"audio_url": sameOriginAudioURL(r),
 			"meta":      map[string]string{"request_id": "r1", "api_version": "2026-04"},
 		})
 	}))

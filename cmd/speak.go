@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	httpPkg "net/http"
 	urlPkg "net/url"
 	"os"
 	"os/signal"
@@ -203,10 +202,14 @@ func runSpeak(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// 9. Handle response
+	allowFreshDownloadRetry := speakIdempotencyKey == "" && !fromStdin && !flagJSON && !speakNoDownload
+	return handleSpeakResponse(ctx, client, req, resp, status, resolved, allowFreshDownloadRetry)
+}
+
+func handleSpeakResponse(ctx context.Context, client *api.Client, req api.SpeakRequest, resp *api.TTSResponse, status int, resolved *config.ResolvedConfig, allowFreshDownloadRetry bool) error {
 	switch {
 	case resp.Status == "completed":
-		return handleCompleted(ctx, client, resp, resolved)
+		return handleCompletedWithFreshRetry(ctx, client, req, resp, resolved, allowFreshDownloadRetry)
 
 	case resp.Status == "expired":
 		return &exitError{code: 1, msg: "audio file has expired and been deleted. Submit a new request."}
@@ -223,14 +226,16 @@ func runSpeak(cmd *cobra.Command, args []string) error {
 
 	case status == 202 || resp.Status == "processing":
 		renderTranslationMeta(resp)
-		return pollUntilComplete(ctx, client, resp, resolved)
+		return pollUntilComplete(ctx, client, resp, resolved, func(done *api.TTSResponse) error {
+			return handleCompletedWithFreshRetry(ctx, client, req, done, resolved, allowFreshDownloadRetry)
+		})
 
 	default:
 		return &exitError{code: 1, msg: fmt.Sprintf("unexpected response status: %s", resp.Status)}
 	}
 }
 
-func pollUntilComplete(ctx context.Context, client *api.Client, initial *api.TTSResponse, resolved *config.ResolvedConfig) error {
+func pollUntilComplete(ctx context.Context, client *api.Client, initial *api.TTSResponse, resolved *config.ResolvedConfig, onCompleted func(*api.TTSResponse) error) error {
 	jobID := initial.JobID
 	spin := display.New()
 	if !flagJSON && !flagQuiet {
@@ -284,7 +289,7 @@ func pollUntilComplete(ctx context.Context, client *api.Client, initial *api.TTS
 
 		switch resp.Status {
 		case "completed":
-			return handleCompleted(ctx, client, resp, resolved)
+			return onCompleted(resp)
 		case "expired":
 			return &exitError{code: 1, msg: "audio file has expired. Submit a new request."}
 		case "failed":
@@ -310,8 +315,8 @@ func pollUntilComplete(ctx context.Context, client *api.Client, initial *api.TTS
 func handleCompleted(ctx context.Context, client *api.Client, resp *api.TTSResponse, resolved *config.ResolvedConfig) error {
 	// Validate audio_url BEFORE emitting JSON — ensures --json never returns
 	// exit 0 with an unusable payload. Execute() handles JSON error output.
-	if resp.AudioURL == "" {
-		return &exitError{code: 1, msg: "completed but no audio URL in response"}
+	if err := validateCompletedAudioURL(resp, resolved); err != nil {
+		return err
 	}
 
 	// --json mode: emit raw API response
@@ -337,7 +342,10 @@ func handleCompleted(ctx context.Context, client *api.Client, resp *api.TTSRespo
 
 	// -o - : raw MP3 to stdout
 	if speakOutput == "-" {
-		return downloadToStdout(ctx, resp.AudioURL, resolved.APIURL)
+		if err := downloadToStdout(ctx, resp.AudioURL, resolved.APIURL); err != nil {
+			return &exitError{code: 1, msg: err.Error(), err: &downloadFailure{err: err, audioURL: resp.AudioURL}}
+		}
+		return nil
 	}
 
 	// Determine output path
@@ -369,15 +377,90 @@ func handleCompleted(ctx context.Context, client *api.Client, resp *api.TTSRespo
 	downloadedBytes, err := client.DownloadAudioWithSize(ctx, resp.AudioURL, destPath)
 	if err != nil {
 		dlSpin.Stop()
-		// On download failure, show the URL so user can retry manually
-		fmt.Fprintf(os.Stderr, "Download failed: %v\nAudio URL: %s\n", err, resp.AudioURL)
-		return &exitError{code: 1, msg: "download failed"}
+		return &exitError{code: 1, msg: "download failed", err: &downloadFailure{err: err, audioURL: resp.AudioURL}}
 	}
 
 	dlSpin.Stop()
 	stderrMsg("Saved to %s\n", destPath)
 	renderTranslationMeta(resp)
 	renderCompletionSummary(resp, downloadedBytes)
+
+	return nil
+}
+
+func handleCompletedWithFreshRetry(ctx context.Context, client *api.Client, req api.SpeakRequest, resp *api.TTSResponse, resolved *config.ResolvedConfig, allowFreshRetry bool) error {
+	err := handleCompleted(ctx, client, resp, resolved)
+	if err == nil {
+		return nil
+	}
+
+	if !allowFreshRetry || !shouldRetryWithFreshKey(err) {
+		printDownloadFailure(err)
+		return err
+	}
+
+	stderrMsg("Cached audio URL was not downloadable; retrying with a fresh job...\n")
+	freshResp, status, freshErr := api.WithRetry(ctx, api.DefaultRetryConfig(), func(key string) (*api.TTSResponse, int, error) {
+		return client.Speak(ctx, req, key)
+	}, api.GenerateNew())
+	if freshErr != nil {
+		if ctx.Err() != nil {
+			fmt.Fprintln(os.Stderr, "\nInterrupted.")
+			os.Exit(130)
+		}
+		return handleAPIError(freshErr, status)
+	}
+
+	if freshResp.JobID != "" {
+		if err := config.SaveLastJob(freshResp.JobID); err != nil {
+			stderrMsg("Warning: could not save job ID: %v\n", err)
+		}
+	}
+
+	return handleSpeakResponse(ctx, client, req, freshResp, status, resolved, false)
+}
+
+func shouldRetryWithFreshKey(err error) bool {
+	var dl *downloadFailure
+	if !errors.As(err, &dl) {
+		return false
+	}
+	return api.IsRetryableDownloadError(dl.err)
+}
+
+func printDownloadFailure(err error) {
+	var dl *downloadFailure
+	if !errors.As(err, &dl) || dl.audioURL == "" {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "Download failed: %v\nAudio URL: %s\n", dl.err, dl.audioURL)
+}
+
+type downloadFailure struct {
+	err      error
+	audioURL string
+}
+
+func (e *downloadFailure) Error() string {
+	return "download failed"
+}
+
+func (e *downloadFailure) Unwrap() error {
+	return e.err
+}
+
+func validateCompletedAudioURL(resp *api.TTSResponse, resolved *config.ResolvedConfig) error {
+	if resp.AudioURL == "" {
+		return &exitError{code: 1, msg: "completed but no audio URL in response"}
+	}
+
+	apiHost := apiHostFromURL(resolved.APIURL)
+	if err := api.ValidateDownloadURL(resp.AudioURL, apiHost); err != nil {
+		if strings.HasPrefix(err.Error(), "invalid download URL:") {
+			return &exitError{code: 1, msg: "invalid audio URL in API response"}
+		}
+		return &exitError{code: 1, msg: err.Error()}
+	}
 
 	return nil
 }
@@ -391,25 +474,15 @@ func downloadToStdout(ctx context.Context, audioURL, apiURL string) error {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 
-	httpReq, err := httpPkg.NewRequestWithContext(ctx, httpPkg.MethodGet, audioURL, nil)
-	if err != nil {
-		return &exitError{code: 1, msg: fmt.Sprintf("creating download request: %v", err)}
-	}
-
-	dlClient := api.NewDownloadClient(apiHost)
-	resp, err := dlClient.Do(httpReq)
+	resp, err := api.OpenDownload(ctx, audioURL, apiHost)
 	if err != nil {
 		if ctx.Err() != nil {
 			fmt.Fprintln(os.Stderr, "\nInterrupted.")
 			os.Exit(130)
 		}
-		return &exitError{code: 1, msg: fmt.Sprintf("downloading audio: %v", err)}
+		return &exitError{code: 1, msg: err.Error()}
 	}
 	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != 200 {
-		return &exitError{code: 1, msg: fmt.Sprintf("download returned status %d", resp.StatusCode)}
-	}
 
 	_, err = api.CopyBounded(os.Stdout, resp.Body, 500*1024*1024)
 	if err != nil && ctx.Err() != nil {
@@ -519,9 +592,12 @@ func isMarkdownFile(path string) bool {
 type exitError struct {
 	code int
 	msg  string
+	err  error
 }
 
 func (e *exitError) Error() string { return e.msg }
+
+func (e *exitError) Unwrap() error { return e.err }
 
 func handleAPIError(err error, status int) error {
 	var apiErr *api.APIResponseError

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,8 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+
+	"github.com/ngelik/ttsbuddy-cli/internal/webpage"
 )
 
 // TestHelperProcess is the subprocess re-entry point for tests that need
@@ -23,6 +26,15 @@ func TestHelperProcess(t *testing.T) {
 		if a == "--" {
 			os.Args = append([]string{"ttsbuddy"}, args[i+1:]...)
 			break
+		}
+	}
+	if os.Getenv("TTSBUDDY_TEST_FAKE_WEB_ARTICLE") == "1" {
+		fetchArticleForWeb = func(ctx context.Context, rawURL, version string) (*webpage.Article, error) {
+			return &webpage.Article{
+				URL:   rawURL,
+				Title: "Docs Page",
+				Text:  "Readable article text for the web command test.",
+			}, nil
 		}
 	}
 	_ = Execute()
@@ -151,7 +163,7 @@ func mockCompletedHandler(audioServerURL string) http.Handler {
 				"estimated_cost_cents": 0,
 			},
 			"meta": map[string]interface{}{
-				"request_id": "req-001",
+				"request_id":  "req-001",
 				"api_version": "2026-04",
 			},
 		}
@@ -167,4 +179,3 @@ func mockAudioHandler() http.Handler {
 		_, _ = w.Write([]byte("fake-mp3-data-for-testing"))
 	})
 }
-
