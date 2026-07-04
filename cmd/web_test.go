@@ -179,7 +179,8 @@ func TestWebCommandShowsTranslationMetadataFromAsyncSubmit(t *testing.T) {
 
 func TestWebCommandRejectsNonHTTPURL(t *testing.T) {
 	home := t.TempDir()
-	r := runCLI(t, envForTest(home, "https://example.com/v1/agent-tts", "ttsb_test_key"), "web", "file:///tmp/article.html", "--no-download")
+	env := append(envForTest(home, "https://example.com/v1/agent-tts", "ttsb_test_key"), "TTSBUDDY_ALLOW_CUSTOM_API_URL=true")
+	r := runCLI(t, env, "web", "file:///tmp/article.html", "--no-download")
 	assertExitCode(t, r, 2)
 	assertContains(t, r.Stderr, "http or https", "stderr")
 }

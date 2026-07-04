@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -524,6 +525,116 @@ func TestSpeakRejectsMalformedAudioURLWithoutLeakingRawURL(t *testing.T) {
 	}
 }
 
+func TestSpeakDownloadFailureRedactsSignedAudioURL(t *testing.T) {
+	var sawSignedQuery atomic.Bool
+	audioSrv := startMockAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("X-Amz-Signature") == "supersecret" && r.URL.Query().Get("token") == "abc" {
+			sawSignedQuery.Store(true)
+		}
+		http.Error(w, "not available", http.StatusTeapot)
+	}))
+	signedURL := audioSrv + "/audio.mp3?X-Amz-Signature=supersecret&token=abc#frag"
+
+	apiSrv := startMockAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":   true,
+			"status":    "completed",
+			"job_id":    "j1",
+			"audio_url": signedURL,
+			"meta":      map[string]string{"request_id": "r1", "api_version": "2026-04"},
+		})
+	}))
+
+	home := t.TempDir()
+	out := filepath.Join(t.TempDir(), "audio.mp3")
+	r := runCLI(t, envForTest(home, apiSrv, "ttsb_test_key"), "speak", "hello", "-o", out, "--idempotency-key", "fixed")
+	assertExitCode(t, r, 1)
+	if !sawSignedQuery.Load() {
+		t.Fatal("download request did not preserve signed query parameters")
+	}
+	assertContains(t, r.Stderr, "Download failed:", "stderr")
+	assertContains(t, r.Stderr, "Audio URL: "+audioSrv+"/audio.mp3", "stderr")
+	assertNotContains(t, r.Stderr, signedURL, "stderr")
+	assertNotContains(t, r.Stderr, "X-Amz-Signature", "stderr")
+	assertNotContains(t, r.Stderr, "supersecret", "stderr")
+	assertNotContains(t, r.Stderr, "token=abc", "stderr")
+	assertNotContains(t, r.Stderr, "#frag", "stderr")
+}
+
+func TestSpeakDownloadNetworkFailureRedactsSignedURLInError(t *testing.T) {
+	signedURL := "http://127.0.0.1:1/audio.mp3?X-Amz-Signature=supersecret&token=abc#frag"
+	apiSrv := startMockAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":   true,
+			"status":    "completed",
+			"job_id":    "j1",
+			"audio_url": signedURL,
+			"meta":      map[string]string{"request_id": "r1", "api_version": "2026-04"},
+		})
+	}))
+
+	home := t.TempDir()
+	out := filepath.Join(t.TempDir(), "audio.mp3")
+	r := runCLI(t, envForTest(home, apiSrv, "ttsb_test_key"), "speak", "hello", "-o", out, "--idempotency-key", "fixed")
+	assertExitCode(t, r, 1)
+	assertContains(t, r.Stderr, "Download failed:", "stderr")
+	assertContains(t, r.Stderr, "Audio URL: http://127.0.0.1:1/audio.mp3", "stderr")
+	assertNotContains(t, r.Stderr, signedURL, "stderr")
+	assertNotContains(t, r.Stderr, "X-Amz-Signature", "stderr")
+	assertNotContains(t, r.Stderr, "supersecret", "stderr")
+	assertNotContains(t, r.Stderr, "token=abc", "stderr")
+	assertNotContains(t, r.Stderr, "#frag", "stderr")
+}
+
+func TestSpeakStdoutDownloadFailureRedactsSignedURLInOuterError(t *testing.T) {
+	signedURL := "http://127.0.0.1:1/audio.mp3?X-Amz-Signature=supersecret&token=abc#frag"
+	apiSrv := startMockAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":   true,
+			"status":    "completed",
+			"job_id":    "j1",
+			"audio_url": signedURL,
+			"meta":      map[string]string{"request_id": "r1", "api_version": "2026-04"},
+		})
+	}))
+
+	home := t.TempDir()
+	r := runCLI(t, envForTest(home, apiSrv, "ttsb_test_key"), "speak", "hello", "-o", "-", "--idempotency-key", "fixed")
+	assertExitCode(t, r, 1)
+	assertContains(t, r.Stderr, "Download failed:", "stderr")
+	assertContains(t, r.Stderr, "Error: download failed", "stderr")
+	assertNotContains(t, r.Stderr, signedURL, "stderr")
+	assertNotContains(t, r.Stderr, "X-Amz-Signature", "stderr")
+	assertNotContains(t, r.Stderr, "supersecret", "stderr")
+	assertNotContains(t, r.Stderr, "token=abc", "stderr")
+	assertNotContains(t, r.Stderr, "#frag", "stderr")
+}
+
+func TestSpeakDownloadFailureRedactsSignedURLWithUserinfo(t *testing.T) {
+	signedURL := "http://user:password@127.0.0.1:1/audio.mp3?token=abc#frag"
+	apiSrv := startMockAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":   true,
+			"status":    "completed",
+			"job_id":    "j1",
+			"audio_url": signedURL,
+			"meta":      map[string]string{"request_id": "r1", "api_version": "2026-04"},
+		})
+	}))
+
+	home := t.TempDir()
+	out := filepath.Join(t.TempDir(), "audio.mp3")
+	r := runCLI(t, envForTest(home, apiSrv, "ttsb_test_key"), "speak", "hello", "-o", out, "--idempotency-key", "fixed")
+	assertExitCode(t, r, 1)
+	assertContains(t, r.Stderr, "Download failed:", "stderr")
+	assertContains(t, r.Stderr, "Audio URL: http://127.0.0.1:1/audio.mp3", "stderr")
+	assertNotContains(t, r.Stderr, signedURL, "stderr")
+	assertNotContains(t, r.Stderr, "user:", "stderr")
+	assertNotContains(t, r.Stderr, "password", "stderr")
+	assertNotContains(t, r.Stderr, "token=abc", "stderr")
+	assertNotContains(t, r.Stderr, "#frag", "stderr")
+}
+
 func TestSpeakAsync(t *testing.T) {
 	calls := 0
 	audioSrv := startMockAPI(t, mockAudioHandler())
@@ -656,7 +767,8 @@ func TestSpeakConfiguredSupertonicLanguage(t *testing.T) {
 
 func TestSpeakRejectsLanguageForKokoroVoice(t *testing.T) {
 	home := t.TempDir()
-	r := runCLI(t, envForTest(home, "https://example.com/v1/agent-tts", "ttsb_test_key"), "speak", "-v", "ff_siwis", "--language", "fr", "bonjour")
+	env := append(envForTest(home, "https://example.com/v1/agent-tts", "ttsb_test_key"), "TTSBUDDY_ALLOW_CUSTOM_API_URL=true")
+	r := runCLI(t, env, "speak", "-v", "ff_siwis", "--language", "fr", "bonjour")
 	assertExitCode(t, r, 2)
 	assertContains(t, r.Stderr, "Supertonic", "stderr")
 }

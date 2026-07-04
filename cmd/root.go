@@ -57,20 +57,32 @@ var rootCmd = &cobra.Command{
 		var warnings []string
 		resolvedCfg, warnings = config.Resolve(cfg, flags)
 
-		// Block insecure API URL when credentials are configured
-		if resolvedCfg.APIKey != "" {
-			if err := config.CheckInsecureURL(resolvedCfg.APIURL); err != nil {
-				return err
-			}
-		}
-
 		if !flagJSON {
 			for _, w := range warnings {
 				_, _ = fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
 			}
 		}
+
+		// Block untrusted API URL destinations only before commands that
+		// can send bearer credentials over the network.
+		if resolvedCfg.APIKey != "" && commandUsesCredentialedAPI(cmd) {
+			if err := config.CheckCredentialedAPIURL(resolvedCfg.APIURL, resolvedCfg.AllowCustomAPIURL); err != nil {
+				return err
+			}
+		}
+
 		return nil
 	},
+}
+
+func commandUsesCredentialedAPI(cmd *cobra.Command) bool {
+	for c := cmd; c != nil; c = c.Parent() {
+		switch c.Name() {
+		case "speak", "web", "status":
+			return true
+		}
+	}
+	return false
 }
 
 func init() {

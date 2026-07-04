@@ -59,8 +59,7 @@ func runCLI(t *testing.T, env []string, args ...string) cliResult {
 	cmdArgs = append(cmdArgs, args...)
 
 	cmd := exec.Command(os.Args[0], cmdArgs...)
-	cmd.Env = append(os.Environ(), "TTSBUDDY_TEST_HELPER=1")
-	cmd.Env = append(cmd.Env, env...)
+	cmd.Env = subprocessTestEnv(env)
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -82,6 +81,20 @@ func runCLI(t *testing.T, env []string, args ...string) cliResult {
 		Stderr:   stderr.String(),
 		ExitCode: exitCode,
 	}
+}
+
+func subprocessTestEnv(overrides []string) []string {
+	filtered := make([]string, 0, len(os.Environ())+len(overrides)+1)
+	for _, kv := range os.Environ() {
+		key, _, _ := strings.Cut(kv, "=")
+		if strings.HasPrefix(key, "TTSBUDDY_") || key == "TB_HOME" {
+			continue
+		}
+		filtered = append(filtered, kv)
+	}
+	filtered = append(filtered, "TTSBUDDY_TEST_HELPER=1")
+	filtered = append(filtered, overrides...)
+	return filtered
 }
 
 // startMockAPI creates an httptest server and returns its URL.

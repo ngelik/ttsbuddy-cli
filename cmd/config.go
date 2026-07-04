@@ -20,7 +20,7 @@ Usage:
   ttsbuddy config get <key>          Show a single value
   ttsbuddy config set <key> <value>  Set a value
 
-Valid keys: key, voice, language, speed, timeout, output_dir, api_url, tts_api_base_url`,
+Valid keys: key, voice, language, speed, timeout, output_dir, api_url, tts_api_base_url, allow_custom_api_url`,
 	Args: noArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Show resolved values (file + env + defaults) for consistency
@@ -46,6 +46,7 @@ Valid keys: key, voice, language, speed, timeout, output_dir, api_url, tts_api_b
 		_, _ = fmt.Fprintf(os.Stdout, "%-20s %s\n", "output_dir:", resolved.OutputDir)
 		_, _ = fmt.Fprintf(os.Stdout, "%-20s %s\n", "api_url:", resolved.APIURL)
 		_, _ = fmt.Fprintf(os.Stdout, "%-20s %s\n", "tts_api_base_url:", resolved.TTSAPIBaseURL)
+		_, _ = fmt.Fprintf(os.Stdout, "%-20s %t\n", "allow_custom_api_url:", resolved.AllowCustomAPIURL)
 		return nil
 	},
 }
@@ -57,7 +58,7 @@ var configGetCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		key := args[0]
 		if !config.IsValidKey(key) {
-			return &exitError{code: 2, msg: fmt.Sprintf("unknown config key: %s\nValid keys: key, voice, language, speed, timeout, output_dir, api_url, tts_api_base_url", key)}
+			return &exitError{code: 2, msg: fmt.Sprintf("unknown config key: %s\nValid keys: key, voice, language, speed, timeout, output_dir, api_url, tts_api_base_url, allow_custom_api_url", key)}
 		}
 		resolved := resolvedCfg
 		if resolved == nil {
@@ -77,7 +78,7 @@ var configSetCmd = &cobra.Command{
 		key, value := args[0], args[1]
 
 		if !config.IsValidKey(key) {
-			return &exitError{code: 2, msg: fmt.Sprintf("unknown config key: %s\nValid keys: key, voice, language, speed, timeout, output_dir, api_url, tts_api_base_url", key)}
+			return &exitError{code: 2, msg: fmt.Sprintf("unknown config key: %s\nValid keys: key, voice, language, speed, timeout, output_dir, api_url, tts_api_base_url, allow_custom_api_url", key)}
 		}
 
 		if (key == "key" || key == "api_key") && !strings.HasPrefix(value, "ttsb_") {
@@ -120,6 +121,8 @@ func getResolvedValue(r *config.ResolvedConfig, key string) string {
 		return r.APIURL
 	case "tts_api_base_url":
 		return r.TTSAPIBaseURL
+	case "allow_custom_api_url":
+		return fmt.Sprintf("%t", r.AllowCustomAPIURL)
 	default:
 		return ""
 	}

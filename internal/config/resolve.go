@@ -19,14 +19,15 @@ type FlagValues struct {
 
 // ResolvedConfig contains fully resolved values with all defaults applied.
 type ResolvedConfig struct {
-	APIKey        string
-	APIURL        string
-	TTSAPIBaseURL string
-	Voice         string
-	Language      string
-	Speed         float64
-	OutputDir     string
-	PollTimeout   string
+	APIKey            string
+	APIURL            string
+	TTSAPIBaseURL     string
+	AllowCustomAPIURL bool
+	Voice             string
+	Language          string
+	Speed             float64
+	OutputDir         string
+	PollTimeout       string
 }
 
 // Resolve applies precedence: flags > env vars > config file > defaults.
@@ -36,14 +37,15 @@ type ResolvedConfig struct {
 func Resolve(cfg *Config, flags FlagValues) (*ResolvedConfig, []string) {
 	var warnings []string
 	r := &ResolvedConfig{
-		APIKey:        cfg.APIKey,
-		APIURL:        or(cfg.APIURL, DefaultAPIURL),
-		TTSAPIBaseURL: or(cfg.TTSAPIBaseURL, DefaultTTSAPIBaseURL),
-		Voice:         or(cfg.DefaultVoice, DefaultVoice),
-		Language:      or(cfg.DefaultLanguage, DefaultLanguage),
-		Speed:         orFloat(cfg.DefaultSpeed, DefaultSpeed),
-		OutputDir:     or(cfg.OutputDir, DefaultOutputDir),
-		PollTimeout:   or(cfg.PollTimeout, DefaultPollTimeout),
+		APIKey:            cfg.APIKey,
+		APIURL:            or(cfg.APIURL, DefaultAPIURL),
+		TTSAPIBaseURL:     or(cfg.TTSAPIBaseURL, DefaultTTSAPIBaseURL),
+		AllowCustomAPIURL: cfg.AllowCustomAPIURL,
+		Voice:             or(cfg.DefaultVoice, DefaultVoice),
+		Language:          or(cfg.DefaultLanguage, DefaultLanguage),
+		Speed:             orFloat(cfg.DefaultSpeed, DefaultSpeed),
+		OutputDir:         or(cfg.OutputDir, DefaultOutputDir),
+		PollTimeout:       or(cfg.PollTimeout, DefaultPollTimeout),
 	}
 
 	// Layer 2: environment variables override config file.
@@ -65,6 +67,14 @@ func applyEnv(r *ResolvedConfig) []string {
 	}
 	if v := os.Getenv("TTSBUDDY_TTS_API_BASE_URL"); v != "" {
 		r.TTSAPIBaseURL = v
+	}
+	if v := os.Getenv("TTSBUDDY_ALLOW_CUSTOM_API_URL"); v != "" {
+		allow, err := strconv.ParseBool(v)
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("invalid TTSBUDDY_ALLOW_CUSTOM_API_URL=%q, using default %v", v, r.AllowCustomAPIURL))
+		} else {
+			r.AllowCustomAPIURL = allow
+		}
 	}
 	if v := os.Getenv("TTSBUDDY_VOICE"); v != "" {
 		r.Voice = v

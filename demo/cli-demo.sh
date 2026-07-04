@@ -4,8 +4,31 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-export TTSBUDDY_API_URL="${TTSBUDDY_API_URL:-https://www.ttsbuddy.com/v1/cli-demo}"
-export TTSBUDDY_API_KEY="${TTSBUDDY_API_KEY:-ttsb_demo_cli}"
+DEMO_API_URL="https://www.ttsbuddy.com/v1/cli-demo"
+DEMO_API_KEY="ttsb_demo_cli"
+
+redact_api_key() {
+  local key="${1:-}"
+  if [[ -z "$key" ]]; then
+    printf "(none)"
+    return
+  fi
+  if [[ "$key" == ttsb_*_* ]]; then
+    local rest="${key#ttsb_}"
+    local public_id="${rest%%_*}"
+    printf "ttsb_%s_..." "$public_id"
+    return
+  fi
+  printf "***"
+}
+
+if [[ "${TTSBUDDY_DEMO_USE_REAL_KEY:-}" == "1" ]]; then
+  : "${TTSBUDDY_API_KEY:?TTSBUDDY_API_KEY is required when TTSBUDDY_DEMO_USE_REAL_KEY=1}"
+  export TTSBUDDY_API_URL="${TTSBUDDY_API_URL:-https://www.ttsbuddy.com/v1/agent-tts}"
+else
+  export TTSBUDDY_API_URL="$DEMO_API_URL"
+  export TTSBUDDY_API_KEY="$DEMO_API_KEY"
+fi
 
 if ! command -v ttsbuddy >/dev/null 2>&1; then
   echo "ttsbuddy was not found on PATH; building local CLI binary..."
@@ -17,7 +40,7 @@ mkdir -p out
 
 echo "== TTSBuddy CLI demo =="
 echo "API URL: $TTSBUDDY_API_URL"
-echo "API key: $TTSBUDDY_API_KEY"
+echo "API key: $(redact_api_key "$TTSBUDDY_API_KEY")"
 echo
 
 echo "1. Incident handoff Markdown -> MP3"
@@ -45,6 +68,5 @@ Demo mode is intentionally constrained:
 - It is for no-signup CLI evaluation.
 
 For real API mode:
-  unset TTSBUDDY_API_URL
-  ttsbuddy config set key ttsb_your_key_here
+  TTSBUDDY_DEMO_USE_REAL_KEY=1 TTSBUDDY_API_KEY=ttsb_your_... ./demo/cli-demo.sh
 MSG

@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"encoding/json"
+	"net/http"
+	"sync/atomic"
 	"testing"
 )
 
@@ -103,4 +105,63 @@ func TestJSONErrorOutput(t *testing.T) {
 	assertExitCode(t, r, 2)
 	assertValidJSON(t, r.Stdout)
 	assertContains(t, r.Stdout, "CLI_ERROR", "stdout")
+}
+
+func TestRunCLIDoesNotInheritTTSBuddyCredentials(t *testing.T) {
+	var called atomic.Bool
+	apiSrv := startMockAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called.Store(true)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"status":  "failed",
+			"error":   map[string]string{"code": "INVALID_API_KEY", "message": "parent key used"},
+		})
+	}))
+
+	t.Setenv("TTSBUDDY_API_KEY", "ttsb_parent_secret")
+	t.Setenv("TTSBUDDY_API_URL", apiSrv)
+
+	home := t.TempDir()
+	r := runCLI(t, envForTest(home, "", ""), "speak", "hello")
+	assertExitCode(t, r, 2)
+	assertContains(t, r.Stderr, "no API key configured", "stderr")
+	assertNotContains(t, r.Stderr, "ttsb_parent_secret", "stderr")
+	assertNotContains(t, r.Stdout, "ttsb_parent_secret", "stdout")
+	if called.Load() {
+		t.Fatal("subprocess inherited parent TTSBUDDY_* env and called the API")
+	}
+}
+
+func TestCustomHTTPSAPIURLDeniedBeforeNetworkCommand(t *testing.T) {
+	home := t.TempDir()
+	env := append(envForTest(home, "https://api.example.com/v1/agent-tts", "ttsb_test_key"), "TTSBUDDY_ALLOW_CUSTOM_API_URL=false")
+	r := runCLI(t, env, "speak", "hello")
+	assertExitCode(t, r, 1)
+	assertContains(t, r.Stderr, "custom API URL", "stderr")
+}
+
+func TestCustomHTTPSAPIURLAllowedWithEnvOptIn(t *testing.T) {
+	home := t.TempDir()
+	env := append(envForTest(home, "https://api.example.com/v1/agent-tts", "ttsb_test_key"), "TTSBUDDY_ALLOW_CUSTOM_API_URL=true")
+	r := runCLI(t, env, "speak", "")
+	assertExitCode(t, r, 2)
+	assertContains(t, r.Stderr, "no text provided", "stderr")
+	assertNotContains(t, r.Stderr, "custom API URL", "stderr")
+}
+
+func TestConfigSetAllowCustomAPIURLBypassesCredentialedAPIGate(t *testing.T) {
+	home := t.TempDir()
+	env := append(envForTest(home, "https://api.example.com/v1/agent-tts", "ttsb_test_key"), "TTSBUDDY_ALLOW_CUSTOM_API_URL=false")
+	r := runCLI(t, env, "config", "set", "allow_custom_api_url", "true")
+	assertExitCode(t, r, 0)
+	assertContains(t, r.Stderr, "allow_custom_api_url set: true", "stderr")
+}
+
+func TestInvalidAllowCustomAPIURLEnvWarningPrintsBeforeGate(t *testing.T) {
+	home := t.TempDir()
+	env := append(envForTest(home, "https://api.example.com/v1/agent-tts", "ttsb_test_key"), "TTSBUDDY_ALLOW_CUSTOM_API_URL=sometimes")
+	r := runCLI(t, env, "speak", "hello")
+	assertExitCode(t, r, 1)
+	assertContains(t, r.Stderr, "Warning: invalid TTSBUDDY_ALLOW_CUSTOM_API_URL", "stderr")
+	assertContains(t, r.Stderr, "custom API URL", "stderr")
 }

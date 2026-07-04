@@ -343,7 +343,7 @@ func handleCompleted(ctx context.Context, client *api.Client, resp *api.TTSRespo
 	// -o - : raw MP3 to stdout
 	if speakOutput == "-" {
 		if err := downloadToStdout(ctx, resp.AudioURL, resolved.APIURL); err != nil {
-			return &exitError{code: 1, msg: err.Error(), err: &downloadFailure{err: err, audioURL: resp.AudioURL}}
+			return &exitError{code: 1, msg: "download failed", err: &downloadFailure{err: err, audioURL: resp.AudioURL}}
 		}
 		return nil
 	}
@@ -433,7 +433,67 @@ func printDownloadFailure(err error) {
 	if !errors.As(err, &dl) || dl.audioURL == "" {
 		return
 	}
-	fmt.Fprintf(os.Stderr, "Download failed: %v\nAudio URL: %s\n", dl.err, dl.audioURL)
+	fmt.Fprintf(os.Stderr, "Download failed: %s\nAudio URL: %s\n", redactDownloadErrorForDisplay(dl.err, dl.audioURL), redactURLForDisplay(dl.audioURL))
+}
+
+func redactURLForDisplay(rawURL string) string {
+	if rawURL == "" {
+		return ""
+	}
+	u, err := urlPkg.Parse(rawURL)
+	if err != nil {
+		return "(invalid URL)"
+	}
+	u.RawQuery = ""
+	u.Fragment = ""
+	u.User = nil
+	return u.String()
+}
+
+func redactDownloadErrorForDisplay(err error, audioURL string) string {
+	if err == nil {
+		return ""
+	}
+	msg := err.Error()
+	redacted := redactURLForDisplay(audioURL)
+	for _, sensitive := range sensitiveURLVariants(audioURL) {
+		if sensitive == "" {
+			continue
+		}
+		msg = strings.ReplaceAll(msg, sensitive, redacted)
+	}
+	return msg
+}
+
+func sensitiveURLVariants(rawURL string) []string {
+	if rawURL == "" {
+		return nil
+	}
+	variants := []string{rawURL}
+	u, err := urlPkg.Parse(rawURL)
+	if err != nil {
+		return variants
+	}
+	withoutFragment := *u
+	withoutFragment.Fragment = ""
+	if v := withoutFragment.String(); v != rawURL {
+		variants = append(variants, v)
+	}
+	if v := u.Redacted(); v != rawURL {
+		variants = append(variants, v)
+	}
+	withoutFragmentRedacted := withoutFragment.Redacted()
+	if withoutFragmentRedacted != rawURL && withoutFragmentRedacted != withoutFragment.String() {
+		variants = append(variants, withoutFragmentRedacted)
+	}
+	if u.User != nil {
+		masked := u.Scheme + "://" + u.User.Username() + ":***@" + u.Host + u.RequestURI()
+		if u.Fragment != "" {
+			variants = append(variants, masked+"#"+u.Fragment)
+		}
+		variants = append(variants, masked)
+	}
+	return variants
 }
 
 type downloadFailure struct {

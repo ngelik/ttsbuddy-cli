@@ -11,6 +11,8 @@ export TTSBUDDY_API_KEY=ttsb_demo_cli
 
 Demo mode accepts only these sample files plus the public CLI docs URL. It returns pregenerated MP3s so people can try the CLI without signup and without exposing a public arbitrary TTS generator.
 
+`demo/cli-demo.sh` runs in constrained demo mode by default. It ignores inherited `TTSBUDDY_API_KEY` and `TTSBUDDY_API_URL`, uses the demo endpoint/key, and prints only a redacted key.
+
 The pregenerated demo audio uses `af_heart` (Madison, American English) at `1.0x` speed.
 
 ## Run
@@ -30,11 +32,10 @@ ttsbuddy speak -f demo/oncall-summary.md --voice af_heart --speed 1 -o - > out/o
 
 ## Real API Mode
 
-For arbitrary text, unset the demo API URL and configure a real key:
+To intentionally test the script with a real key, run it with `TTSBUDDY_DEMO_USE_REAL_KEY=1` and an explicit `TTSBUDDY_API_KEY`. If `TTSBUDDY_API_URL` is not set, real-key mode defaults to `https://www.ttsbuddy.com/v1/agent-tts`.
 
 ```bash
-unset TTSBUDDY_API_URL
-ttsbuddy config set key ttsb_your_key_here
+TTSBUDDY_DEMO_USE_REAL_KEY=1 TTSBUDDY_API_KEY=ttsb_your_... ./demo/cli-demo.sh
 ```
 
 API keys are created from the TTS Buddy dashboard. See https://www.ttsbuddy.com/docs/developers/api-keys.

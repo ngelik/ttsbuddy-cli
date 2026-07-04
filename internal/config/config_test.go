@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -389,6 +390,75 @@ func TestCheckInsecureURL(t *testing.T) {
 		if !tc.wantErr && err != nil {
 			t.Errorf("CheckInsecureURL(%q) should not error, got: %v", tc.url, err)
 		}
+	}
+}
+
+func TestCheckCredentialedAPIURL(t *testing.T) {
+	tests := []struct {
+		name        string
+		rawURL      string
+		allowCustom bool
+		wantErr     bool
+	}{
+		{name: "default www host allowed", rawURL: "https://www.ttsbuddy.com/v1/agent-tts", wantErr: false},
+		{name: "apex prod host allowed", rawURL: "https://ttsbuddy.com/v1/agent-tts", wantErr: false},
+		{name: "localhost http allowed for dev", rawURL: "http://localhost:54321/v1/agent-tts", wantErr: false},
+		{name: "loopback http allowed for tests", rawURL: "http://127.0.0.1:8080/v1/agent-tts", wantErr: false},
+		{name: "ipv6 loopback http allowed for tests", rawURL: "http://[::1]:8080/v1/agent-tts", wantErr: false},
+		{name: "custom https denied by default", rawURL: "https://api.example.com/v1/agent-tts", wantErr: true},
+		{name: "custom https allowed with explicit opt in", rawURL: "https://api.example.com/v1/agent-tts", allowCustom: true, wantErr: false},
+		{name: "non-local http denied even with opt in", rawURL: "http://api.example.com/v1/agent-tts", allowCustom: true, wantErr: true},
+		{name: "unsupported scheme denied", rawURL: "ftp://ttsbuddy.com/v1/agent-tts", allowCustom: true, wantErr: true},
+		{name: "unsupported localhost scheme denied", rawURL: "ftp://localhost/v1/agent-tts", allowCustom: true, wantErr: true},
+		{name: "hostless unsupported scheme denied", rawURL: "file:///tmp/api", allowCustom: true, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := CheckCredentialedAPIURL(tt.rawURL, tt.allowCustom)
+			if tt.wantErr && err == nil {
+				t.Fatalf("CheckCredentialedAPIURL(%q, %v) returned nil, want error", tt.rawURL, tt.allowCustom)
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("CheckCredentialedAPIURL(%q, %v) returned error: %v", tt.rawURL, tt.allowCustom, err)
+			}
+		})
+	}
+}
+
+func TestResolveAllowCustomAPIURL(t *testing.T) {
+	t.Setenv("TTSBUDDY_ALLOW_CUSTOM_API_URL", "")
+
+	cfg := &Config{AllowCustomAPIURL: true}
+	resolved, warnings := Resolve(cfg, FlagValues{})
+	if len(warnings) != 0 {
+		t.Fatalf("unexpected warnings: %v", warnings)
+	}
+	if !resolved.AllowCustomAPIURL {
+		t.Fatal("config AllowCustomAPIURL should resolve to true")
+	}
+
+	t.Setenv("TTSBUDDY_ALLOW_CUSTOM_API_URL", "false")
+	resolved, warnings = Resolve(cfg, FlagValues{})
+	if len(warnings) != 0 {
+		t.Fatalf("unexpected warnings: %v", warnings)
+	}
+	if resolved.AllowCustomAPIURL {
+		t.Fatal("env false should override config true")
+	}
+}
+
+func TestResolveAllowCustomAPIURLWarning(t *testing.T) {
+	t.Setenv("TTSBUDDY_ALLOW_CUSTOM_API_URL", "sometimes")
+	resolved, warnings := Resolve(&Config{}, FlagValues{})
+	if resolved.AllowCustomAPIURL {
+		t.Fatal("invalid env value should not enable custom API URLs")
+	}
+	if len(warnings) != 1 {
+		t.Fatalf("warnings: got %d, want 1 (%v)", len(warnings), warnings)
+	}
+	if !strings.Contains(warnings[0], "invalid TTSBUDDY_ALLOW_CUSTOM_API_URL") {
+		t.Fatalf("warning should mention invalid env var, got %q", warnings[0])
 	}
 }
 

@@ -199,9 +199,10 @@ ttsbuddy config set voice st_m1
 ttsbuddy config set language fr
 ttsbuddy config set speed 0.9
 ttsbuddy config set timeout 5m
+ttsbuddy config set allow_custom_api_url true
 ```
 
-Valid keys: `key`, `voice`, `language`, `speed`, `timeout`, `output_dir`, `api_url`, `tts_api_base_url`
+Valid keys: `key`, `voice`, `language`, `speed`, `timeout`, `output_dir`, `api_url`, `tts_api_base_url`, `allow_custom_api_url`
 
 ### version
 
@@ -237,6 +238,9 @@ ttsbuddy version --json
 | Poll timeout | `TTSBUDDY_TIMEOUT` | `--timeout` | `10m` |
 | API URL | `TTSBUDDY_API_URL` | — | (production) |
 | Voice catalog API URL | `TTSBUDDY_TTS_API_BASE_URL` | — | `https://tts.api.prod.ttsbuddy.website` |
+| Allow custom API URL | `TTSBUDDY_ALLOW_CUSTOM_API_URL` | — | `false` |
+
+By default, credentialed commands may use the production TTSBuddy hosts or localhost development endpoints. Sending an API key to any other HTTPS API host requires explicit opt-in with `ttsbuddy config set allow_custom_api_url true` or `TTSBUDDY_ALLOW_CUSTOM_API_URL=true`.
 
 ## Global Flags
 

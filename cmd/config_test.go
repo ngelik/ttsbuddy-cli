@@ -90,6 +90,24 @@ func TestConfigSetTimeout(t *testing.T) {
 	assertExitCode(t, r, 0)
 }
 
+func TestConfigSetAllowCustomAPIURL(t *testing.T) {
+	home := t.TempDir()
+	r := runCLI(t, envForTest(home, "", ""), "config", "set", "allow_custom_api_url", "true")
+	assertExitCode(t, r, 0)
+	assertContains(t, r.Stderr, "allow_custom_api_url set: true", "stderr")
+
+	r = runCLI(t, envForTest(home, "", ""), "config", "get", "allow_custom_api_url")
+	assertExitCode(t, r, 0)
+	assertContains(t, r.Stdout, "true", "stdout")
+}
+
+func TestConfigSetAllowCustomAPIURLInvalid(t *testing.T) {
+	home := t.TempDir()
+	r := runCLI(t, envForTest(home, "", ""), "config", "set", "allow_custom_api_url", "sometimes")
+	assertExitCode(t, r, 2)
+	assertContains(t, r.Stderr, "invalid allow_custom_api_url", "stderr")
+}
+
 func TestConfigSetBadTimeout(t *testing.T) {
 	home := t.TempDir()
 	r := runCLI(t, envForTest(home, "", ""), "config", "set", "timeout", "garbage")

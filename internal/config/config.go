@@ -23,28 +23,30 @@ const (
 
 // Config represents the persisted configuration file.
 type Config struct {
-	APIKey          string  `json:"api_key,omitempty"`
-	APIURL          string  `json:"api_url,omitempty"`
-	TTSAPIBaseURL   string  `json:"tts_api_base_url,omitempty"`
-	DefaultVoice    string  `json:"default_voice,omitempty"`
-	DefaultLanguage string  `json:"default_language,omitempty"`
-	DefaultSpeed    float64 `json:"default_speed,omitempty"`
-	OutputDir       string  `json:"output_dir,omitempty"`
-	PollTimeout     string  `json:"poll_timeout,omitempty"`
+	APIKey            string  `json:"api_key,omitempty"`
+	APIURL            string  `json:"api_url,omitempty"`
+	TTSAPIBaseURL     string  `json:"tts_api_base_url,omitempty"`
+	AllowCustomAPIURL bool    `json:"allow_custom_api_url,omitempty"`
+	DefaultVoice      string  `json:"default_voice,omitempty"`
+	DefaultLanguage   string  `json:"default_language,omitempty"`
+	DefaultSpeed      float64 `json:"default_speed,omitempty"`
+	OutputDir         string  `json:"output_dir,omitempty"`
+	PollTimeout       string  `json:"poll_timeout,omitempty"`
 }
 
 // validKeys maps user-facing key names to Config field setters.
 var validKeys = map[string]bool{
-	"key":              true,
-	"api_key":          true,
-	"voice":            true,
-	"language":         true,
-	"default_language": true,
-	"speed":            true,
-	"timeout":          true,
-	"output_dir":       true,
-	"api_url":          true,
-	"tts_api_base_url": true,
+	"key":                  true,
+	"api_key":              true,
+	"voice":                true,
+	"language":             true,
+	"default_language":     true,
+	"speed":                true,
+	"timeout":              true,
+	"output_dir":           true,
+	"api_url":              true,
+	"tts_api_base_url":     true,
+	"allow_custom_api_url": true,
 }
 
 // IsValidKey returns true if the key name is recognized.
@@ -204,6 +206,8 @@ func Get(cfg *Config, key string) (string, error) {
 		return cfg.APIURL, nil
 	case "tts_api_base_url":
 		return cfg.TTSAPIBaseURL, nil
+	case "allow_custom_api_url":
+		return strconv.FormatBool(cfg.AllowCustomAPIURL), nil
 	default:
 		return "", fmt.Errorf("unknown config key: %s", key)
 	}
@@ -246,6 +250,12 @@ func Set(key, value string) error {
 		cfg.APIURL = value
 	case "tts_api_base_url":
 		cfg.TTSAPIBaseURL = value
+	case "allow_custom_api_url":
+		allow, parseErr := strconv.ParseBool(value)
+		if parseErr != nil {
+			return &ValidationError{Msg: fmt.Sprintf("invalid allow_custom_api_url value: %s (use true or false)", value)}
+		}
+		cfg.AllowCustomAPIURL = allow
 	default:
 		return &ValidationError{Msg: fmt.Sprintf("unknown config key: %s", key)}
 	}
@@ -256,15 +266,48 @@ func Set(key, value string) error {
 // CheckInsecureURL returns an error if the URL would send credentials over
 // insecure HTTP to a non-localhost host. Returns nil if safe.
 func CheckInsecureURL(rawURL string) error {
+	return CheckCredentialedAPIURL(rawURL, true)
+}
+
+// CheckCredentialedAPIURL returns an error if a configured API URL is not a
+// trusted destination for bearer credentials.
+func CheckCredentialedAPIURL(rawURL string, allowCustom bool) error {
 	u, err := url.Parse(rawURL)
-	if err != nil || u.Scheme != "http" {
-		return nil // HTTPS or parse error (caught elsewhere)
+	if err != nil || rawURL == "" || u.Scheme == "" {
+		return nil
 	}
-	host := u.Hostname()
-	if host == "localhost" || host == "127.0.0.1" || host == "::1" {
-		return nil // local dev is fine
+
+	scheme := strings.ToLower(u.Scheme)
+	host := strings.ToLower(u.Hostname())
+
+	switch scheme {
+	case "http":
+		if host == "" {
+			return fmt.Errorf("refusing to send API key to invalid API URL host")
+		}
+		if isLocalAPIHost(host) {
+			return nil
+		}
+		return fmt.Errorf("refusing to send API key over insecure HTTP to %s; use HTTPS or localhost", host)
+	case "https":
+		if host == "" {
+			return fmt.Errorf("refusing to send API key to invalid API URL host")
+		}
+		if isLocalAPIHost(host) || isOfficialAPIHost(host) || allowCustom {
+			return nil
+		}
+		return fmt.Errorf("refusing to send API key to custom API URL host %q; set allow_custom_api_url=true or TTSBUDDY_ALLOW_CUSTOM_API_URL=true to opt in", host)
+	default:
+		return fmt.Errorf("refusing to send API key to unsupported API URL scheme %q", u.Scheme)
 	}
-	return fmt.Errorf("refusing to send API key over insecure HTTP to %s — use HTTPS or localhost", host)
+}
+
+func isOfficialAPIHost(host string) bool {
+	return host == "ttsbuddy.com" || host == "www.ttsbuddy.com"
+}
+
+func isLocalAPIHost(host string) bool {
+	return host == "localhost" || host == "127.0.0.1" || host == "::1"
 }
 
 // FormatSpeed formats a speed value preserving full precision.

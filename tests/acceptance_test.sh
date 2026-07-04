@@ -37,6 +37,7 @@ fi
 
 TB_HOME="$(mktemp -d /tmp/ttsbuddy-accept.XXXXXX)"
 TB_OUT="$(mktemp -d /tmp/ttsbuddy-out.XXXXXX)"
+ACCEPTANCE_RUN_ID="$(date +%Y%m%d%H%M%S)-$$-$RANDOM"
 trap 'rm -rf "$TB_HOME" "$TB_OUT"' EXIT
 
 tb() { HOME="$TB_HOME" "$BINARY" "$@"; }
@@ -49,6 +50,7 @@ echo "=== TTSBuddy CLI Acceptance Tests ==="
 echo "Binary:     $BINARY ($(command -v "$BINARY" 2>/dev/null || echo "$BINARY"))"
 echo "API Key:    ${TTSBUDDY_API_KEY:0:15}..."
 echo "POST delay: ${POST_DELAY}s"
+echo "Run ID:     $ACCEPTANCE_RUN_ID"
 echo "TB_HOME:    $TB_HOME"
 echo "TB_OUT:     $TB_OUT"
 echo ""
@@ -79,6 +81,11 @@ skip() {
     SKIP=$((SKIP + 1))
     TOTAL=$((TOTAL + 1))
     echo "  ⏭️  $1: $2"
+}
+
+is_audio_file() {
+    local path="$1"
+    [ -s "$path" ] && file "$path" 2>/dev/null | grep -qi "audio\|mpeg\|mp3\|ID3"
 }
 
 # run_test <id> <expected_exit> <cmd...>
@@ -443,7 +450,7 @@ if [ -s "$TB_OUT/t4.mp3" ]; then pass "P.4 md file exists"; else fail "P.4 md fi
 echo "    ⏳ waiting ${POST_DELAY}s..."
 sleep "$POST_DELAY"
 set +e
-tb speak "Yo" -v bf_emma -s 0.7 --idempotency-key accept-test -o - >"$TB_OUT/t5.mp3" 2>"$TB_OUT/_stderr"
+tb speak "Yo" -v bf_emma -s 0.7 --idempotency-key "accept-test-${ACCEPTANCE_RUN_ID}-p5" -o - >"$TB_OUT/t5.mp3" 2>"$TB_OUT/_stderr"
 p5_exit=$?
 set -e
 if [ "$p5_exit" -ne 0 ] && grep -q "rate limited" "$TB_OUT/_stderr" 2>/dev/null; then
@@ -451,11 +458,11 @@ if [ "$p5_exit" -ne 0 ] && grep -q "rate limited" "$TB_OUT/_stderr" 2>/dev/null;
     RATE_LIMITED_COUNT=$((RATE_LIMITED_COUNT + 1))
     sleep "$POST_DELAY"
     set +e
-    tb speak "Yo" -v bf_emma -s 0.7 --idempotency-key accept-test-2 -o - >"$TB_OUT/t5.mp3" 2>"$TB_OUT/_stderr"
+    tb speak "Yo" -v bf_emma -s 0.7 --idempotency-key "accept-test-${ACCEPTANCE_RUN_ID}-p5-retry" -o - >"$TB_OUT/t5.mp3" 2>"$TB_OUT/_stderr"
     p5_exit=$?
     set -e
 fi
-if [ "$p5_exit" -eq 0 ] && [ -s "$TB_OUT/t5.mp3" ]; then
+if [ "$p5_exit" -eq 0 ] && is_audio_file "$TB_OUT/t5.mp3"; then
     pass "P.5 stdout + voice + speed"
 else
     fail "P.5 stdout + voice + speed" "exit $p5_exit"
@@ -538,13 +545,13 @@ echo ""
 echo "📋 Artifact Verification"
 
 # MP3 identification
-if file "$TB_OUT/t1.mp3" 2>/dev/null | grep -qi "audio\|mpeg\|mp3\|ID3"; then
+if is_audio_file "$TB_OUT/t1.mp3"; then
     pass "V.1 t1.mp3 is audio"
 else
     fail "V.1 t1.mp3 is audio" "$(file "$TB_OUT/t1.mp3" 2>&1)"
 fi
 
-if file "$TB_OUT/t5.mp3" 2>/dev/null | grep -qi "audio\|mpeg\|mp3\|ID3"; then
+if is_audio_file "$TB_OUT/t5.mp3"; then
     pass "V.2 t5.mp3 (stdout) is audio"
 else
     fail "V.2 t5.mp3 (stdout) is audio" "$(file "$TB_OUT/t5.mp3" 2>&1)"
