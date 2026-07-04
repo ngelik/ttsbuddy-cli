@@ -37,6 +37,10 @@ tests/
 - **Download security** — scheme+host allowlist, redirect validation, bounded size (500MB), symlink-safe temps
 - **Credential protection** — HTTP to non-localhost hard-blocked, keys redacted in all output
 
+## Branching
+
+Always work directly on `main` unless the user explicitly asks for a feature branch, worktree, or separate branch name.
+
 ## API Contract
 
 Source of truth: `docs/agent-tts-api-v1.md` and `docs/cli-implementation-guide.md` in the tts-study-buddy repo.
