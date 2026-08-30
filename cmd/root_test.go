@@ -10,7 +10,8 @@ import (
 func TestVersion(t *testing.T) {
 	r := runCLI(t, nil, "version")
 	assertExitCode(t, r, 0)
-	assertContains(t, r.Stdout, "ttsbuddy-cli", "stdout")
+	assertContains(t, r.Stdout, "ttsbuddy ", "stdout")
+	assertNotContains(t, r.Stdout, "ttsbuddy-cli", "stdout")
 }
 
 func TestVersionJSON(t *testing.T) {
@@ -30,7 +31,8 @@ func TestVersionJSON(t *testing.T) {
 func TestDashDashVersion(t *testing.T) {
 	r := runCLI(t, nil, "--version")
 	assertExitCode(t, r, 0)
-	assertContains(t, r.Stdout, "ttsbuddy-cli", "stdout")
+	assertContains(t, r.Stdout, "ttsbuddy ", "stdout")
+	assertNotContains(t, r.Stdout, "ttsbuddy-cli", "stdout")
 }
 
 func TestHelpExitsZero(t *testing.T) {
@@ -97,6 +99,26 @@ func TestJSONArgErrorStaysJSONOnly(t *testing.T) {
 func TestVersionWithBrokenHome(t *testing.T) {
 	r := runCLI(t, []string{"HOME=/nonexistent"}, "version")
 	assertExitCode(t, r, 0)
+}
+
+func TestMissingKeyErrorsPointToDashboardSettings(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{name: "speak", args: []string{"speak", "hello"}},
+		{name: "status", args: []string{"status", "job-123"}},
+		{name: "web", args: []string{"web", "https://example.com/article"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := runCLI(t, envForTest(t.TempDir(), "", ""), tt.args...)
+			assertExitCode(t, r, 2)
+			assertContains(t, r.Stderr, "Dashboard -> Settings", "stderr")
+			assertContains(t, r.Stderr, "https://ttsbuddy.com/dashboard", "stderr")
+		})
+	}
 }
 
 func TestJSONErrorOutput(t *testing.T) {

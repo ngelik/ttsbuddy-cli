@@ -57,7 +57,7 @@ func runWeb(cmd *cobra.Command, rawURL string) error {
 		return &exitError{code: 1, msg: "config not loaded"}
 	}
 	if resolved.APIKey == "" {
-		return &exitError{code: 2, msg: "no API key configured. Run: ttsbuddy config set key <your-key>"}
+		return &exitError{code: 2, msg: missingAPIKeyMessage}
 	}
 
 	if cmd.Flags().Changed("output-dir") {

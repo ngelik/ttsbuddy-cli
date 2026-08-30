@@ -14,7 +14,7 @@ LDFLAGS := -s -w \
 .PHONY: build test test-live test-acceptance lint tools release-snapshot check-actions-pinned clean
 
 build:
-	go build -ldflags "$(LDFLAGS)" -o bin/ttsbuddy .
+	go build -ldflags "$(LDFLAGS)" -o bin/ttsbuddy ./cmd/ttsbuddy
 
 test:
 	go test -race -count=1 ./...

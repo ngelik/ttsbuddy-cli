@@ -101,7 +101,7 @@ func runSpeak(cmd *cobra.Command, args []string) error {
 	}
 
 	if resolved.APIKey == "" {
-		return &exitError{code: 2, msg: "no API key configured. Run: ttsbuddy config set key <your-key>"}
+		return &exitError{code: 2, msg: missingAPIKeyMessage}
 	}
 
 	// 2. Read input text (fromStdin true when input came from pipe or explicit "-")

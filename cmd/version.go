@@ -5,12 +5,45 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"runtime/debug"
 
 	"github.com/spf13/cobra"
 )
 
+func resolveBuildMetadata(
+	version, commit, date string,
+	info *debug.BuildInfo,
+	ok bool,
+) (string, string, string) {
+	if !ok || info == nil {
+		return version, commit, date
+	}
+
+	if version == "dev" && info.Main.Version != "" && info.Main.Version != "(devel)" {
+		version = info.Main.Version
+	}
+
+	for _, setting := range info.Settings {
+		switch setting.Key {
+		case "vcs.revision":
+			if commit == "none" && setting.Value != "" {
+				commit = setting.Value
+				if len(commit) > 7 {
+					commit = commit[:7]
+				}
+			}
+		case "vcs.time":
+			if date == "unknown" && setting.Value != "" {
+				date = setting.Value
+			}
+		}
+	}
+
+	return version, commit, date
+}
+
 func versionString() string {
-	return fmt.Sprintf("ttsbuddy-cli %s (%s, %s), %s", Version, Commit, Date, runtime.Version())
+	return fmt.Sprintf("ttsbuddy %s (%s, %s), %s", Version, Commit, Date, runtime.Version())
 }
 
 var versionCmd = &cobra.Command{

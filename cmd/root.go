@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"runtime/debug"
 
 	"github.com/ngelik/ttsbuddy-cli/internal/api"
 	"github.com/ngelik/ttsbuddy-cli/internal/config"
@@ -16,6 +17,8 @@ var (
 	Commit  = "none"
 	Date    = "unknown"
 )
+
+const missingAPIKeyMessage = "no API key configured. Create one in Dashboard -> Settings: https://ttsbuddy.com/dashboard. Then run: ttsbuddy config set key <your-key>"
 
 // Global flag values.
 var (
@@ -86,6 +89,9 @@ func commandUsesCredentialedAPI(cmd *cobra.Command) bool {
 }
 
 func init() {
+	info, ok := debug.ReadBuildInfo()
+	Version, Commit, Date = resolveBuildMetadata(Version, Commit, Date, info, ok)
+
 	rootCmd.CompletionOptions.DisableDefaultCmd = true
 	rootCmd.SetFlagErrorFunc(helpOnFlagError)
 	rootCmd.PersistentFlags().StringVarP(&flagAPIKey, "key", "k", "", "API key (overrides config/env)")

@@ -4,7 +4,7 @@ project_name: ttsbuddy
 
 builds:
   - id: ttsbuddy
-    main: .
+    main: ./cmd/ttsbuddy
     binary: ttsbuddy
     env:
       - CGO_ENABLED=0

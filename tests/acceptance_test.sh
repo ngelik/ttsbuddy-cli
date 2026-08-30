@@ -219,9 +219,9 @@ echo ""
 # ============================================================
 
 echo "📋 A. Command Surface"
-run_test_stdout "A.1 version" 0 "ttsbuddy-cli" tb version
+run_test_stdout "A.1 version" 0 "ttsbuddy" tb version
 run_test_json   "A.2 version --json" tb version --json
-run_test_stdout "A.3 --version" 0 "ttsbuddy-cli" tb --version
+run_test_stdout "A.3 --version" 0 "ttsbuddy" tb --version
 run_test_stdout "A.4 --help" 0 "completion" tb --help
 run_test_stdout "A.5 speak --help" 0 "idempotency-key" tb speak --help
 run_test_stdout "A.5b web --help" 0 "webpage" tb web --help

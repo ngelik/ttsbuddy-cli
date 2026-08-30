@@ -43,7 +43,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		return &exitError{code: 1, msg: "config not loaded"}
 	}
 	if resolved.APIKey == "" {
-		return &exitError{code: 2, msg: "no API key configured. Run: ttsbuddy config set key <your-key>"}
+		return &exitError{code: 2, msg: missingAPIKeyMessage}
 	}
 
 	// Determine job ID
