@@ -11,6 +11,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -162,6 +163,34 @@ func TestCDPSignerFailsClosedForTransportAndResponseFailures(t *testing.T) {
 		})
 	}
 }
+
+func TestCDPSignerRejectsWrongSignerAndEntropyFailure(t *testing.T) {
+	configured, _ := evmsigners.NewClientSignerFromPrivateKey(localTestPrivateKey)
+	wrong, _ := evmsigners.NewClientSignerFromPrivateKey("0x59c6995e998f97a5a0044966f094538eD1A0dDeA3dA9d19eE4f4eFf9b0fF1b5a")
+	domain, types, message := cdpTypedDataFixture(configured.Address())
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		signature, _ := wrong.SignTypedData(context.Background(), domain, types, "TransferWithAuthorization", message)
+		_ = json.NewEncoder(w).Encode(map[string]string{"signature": "0x" + hex.EncodeToString(signature)})
+	}))
+	defer server.Close()
+	signer, err := newCDPSigner(testCDPCredentials(t), server.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = signer.SignTypedData(context.Background(), domain, types, "TransferWithAuthorization", message); err == nil {
+		t.Fatal("expected wrong signer rejection")
+	}
+
+	randomReader = failingReader{}
+	defer func() { randomReader = rand.Reader }()
+	if _, err = signer.SignTypedData(context.Background(), domain, types, "TransferWithAuthorization", message); err == nil {
+		t.Fatal("expected entropy failure")
+	}
+}
+
+type failingReader struct{}
+
+func (failingReader) Read([]byte) (int, error) { return 0, errors.New("entropy unavailable") }
 
 func TestCDPSignerRedactsCredentialsAndRejectsRedirects(t *testing.T) {
 	credentials := testCDPCredentials(t)

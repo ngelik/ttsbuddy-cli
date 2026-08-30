@@ -30,6 +30,10 @@ const (
 	cdpRequestLimit = 10 * time.Second
 )
 
+// randomReader is replaceable only by package tests; production always uses
+// crypto/rand.Reader and fails closed if entropy is unavailable.
+var randomReader io.Reader = rand.Reader
+
 // CredentialSource keeps CDP credentials out of callers' constructor arguments.
 type CredentialSource interface {
 	LookupEnv(string) (string, bool)
@@ -193,7 +197,7 @@ func cdpClaims(apiKeyID, method, host, path string) map[string]interface{} {
 
 func signECDSADigest(key *ecdsa.PrivateKey, data []byte) ([]byte, error) {
 	digest := sha256.Sum256(data)
-	r, s, err := ecdsa.Sign(rand.Reader, key, digest[:])
+	r, s, err := ecdsa.Sign(randomReader, key, digest[:])
 	if err != nil {
 		return nil, err
 	}
@@ -216,7 +220,7 @@ func signJWT(header, claims map[string]interface{}, sign func([]byte) ([]byte, e
 }
 func randomID() (string, error) {
 	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
+	if _, err := io.ReadFull(randomReader, b); err != nil {
 		return "", err
 	}
 	return hex.EncodeToString(b), nil
