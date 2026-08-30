@@ -6,4 +6,4 @@ The probe never creates, imports, exports, or funds a wallet, and it never submi
 
 This command is intentionally a readiness probe, not a payment executor: it cannot provide live proof by itself because doing so would submit an authorization and settlement. The live proof path must be a separately reviewed command using `TTSBUDDY_EVM_PRIVATE_KEY` or the existing CDP account credentials, with an already-funded disposable account; this repository deliberately provides no wallet provisioning or funding path. Until that command is implemented and authorized, the hard gate remains closed.
 
-The local suite validates the x402 Deno adapter against a localhost facilitator and validates both signer request contracts with deterministic keys and `httptest`. It does not establish the required live facilitator settlement or CDP remote-signature acceptance.
+The local suite validates the x402 Deno adapter against a deterministic fake facilitator transport and validates both signer request contracts with deterministic keys and `httptest`. It does not establish the required live facilitator settlement or CDP remote-signature acceptance.
