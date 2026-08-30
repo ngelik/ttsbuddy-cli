@@ -11,6 +11,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"io"
 	"math/big"
@@ -47,6 +48,7 @@ type cdpSigner struct {
 	address    string
 	apiKeyID   string
 	apiPrivate ed25519.PrivateKey
+	apiEC      *ecdsa.PrivateKey
 	walletKey  *ecdsa.PrivateKey
 	baseURL    *url.URL
 	httpClient *http.Client
@@ -63,8 +65,8 @@ func newCDPSigner(source CredentialSource, baseURL string, client *http.Client) 
 	if !okID || apiID == "" || !okSecret || apiSecret == "" || !okWallet || walletSecret == "" || !okAddress || !isAddress(address) {
 		return nil, errors.New("CDP signer requires CDP_API_KEY_ID, CDP_API_KEY_SECRET, CDP_WALLET_SECRET, and TTSBUDDY_CDP_EVM_ACCOUNT_ADDRESS")
 	}
-	apiBytes, err := base64.StdEncoding.DecodeString(apiSecret)
-	if err != nil || len(apiBytes) != ed25519.PrivateKeySize {
+	apiPrivate, apiEC, err := parseCDPAPICredential(apiSecret)
+	if err != nil {
 		return nil, errors.New("invalid CDP API credential")
 	}
 	walletBytes, err := base64.StdEncoding.DecodeString(walletSecret)
@@ -91,7 +93,7 @@ func newCDPSigner(source CredentialSource, baseURL string, client *http.Client) 
 	}
 	configuredClient.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
 	client = &configuredClient
-	return &cdpSigner{address: address, apiKeyID: apiID, apiPrivate: ed25519.PrivateKey(apiBytes), walletKey: walletKey, baseURL: u, httpClient: client}, nil
+	return &cdpSigner{address: address, apiKeyID: apiID, apiPrivate: apiPrivate, apiEC: apiEC, walletKey: walletKey, baseURL: u, httpClient: client}, nil
 }
 
 func (s *cdpSigner) Address() string { return s.address }
@@ -105,9 +107,10 @@ func (s *cdpSigner) SignTypedData(ctx context.Context, domain evm.TypedDataDomai
 	if err != nil {
 		return nil, errors.New("invalid CDP typed data")
 	}
-	path := "/v2/evm/accounts/" + s.address + "/sign/typed-data"
+	endpointPath := "/v2/evm/accounts/" + s.address + "/sign/typed-data"
 	u := *s.baseURL
-	u.Path = strings.TrimRight(u.Path, "/") + path
+	u.Path = strings.TrimRight(u.Path, "/") + endpointPath
+	path := u.EscapedPath()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil, errors.New("unable to create CDP signing request")
@@ -120,9 +123,13 @@ func (s *cdpSigner) SignTypedData(ctx context.Context, domain evm.TypedDataDomai
 	if err != nil {
 		return nil, errors.New("unable to authenticate CDP signing request")
 	}
+	idempotencyKey, err := randomID()
+	if err != nil {
+		return nil, errors.New("unable to authenticate CDP signing request")
+	}
 	req.Header.Set("Authorization", "Bearer "+apiJWT)
 	req.Header.Set("X-Wallet-Auth", walletJWT)
-	req.Header.Set("X-Idempotency-Key", randomID())
+	req.Header.Set("X-Idempotency-Key", idempotencyKey)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
@@ -149,26 +156,52 @@ func (s *cdpSigner) SignTypedData(ctx context.Context, domain evm.TypedDataDomai
 	if signature[64] != 27 && signature[64] != 28 {
 		return nil, errors.New("invalid CDP signature")
 	}
+	valid, err := evm.VerifyEOATypedData(s.address, domain, types, primaryType, message, signature)
+	if err != nil || !valid {
+		return nil, errors.New("CDP signature did not match configured EVM account")
+	}
 	return signature, nil
 }
 
 func (s *cdpSigner) apiJWT(method, host, path string) (string, error) {
-	return signJWT(map[string]interface{}{"alg": "EdDSA", "kid": s.apiKeyID, "nonce": randomID(), "typ": "JWT"}, map[string]interface{}{"sub": s.apiKeyID, "iss": "cdp", "iat": time.Now().Unix(), "nbf": time.Now().Unix(), "exp": time.Now().Add(120 * time.Second).Unix(), "uris": []string{method + " " + host + path}}, func(data []byte) ([]byte, error) { return ed25519.Sign(s.apiPrivate, data), nil })
+	nonce, err := randomID()
+	if err != nil {
+		return "", err
+	}
+	header := map[string]interface{}{"kid": s.apiKeyID, "nonce": nonce, "typ": "JWT"}
+	if s.apiEC != nil {
+		header["alg"] = "ES256"
+		return signJWT(header, cdpClaims(s.apiKeyID, method, host, path), func(data []byte) ([]byte, error) { return signECDSADigest(s.apiEC, data) })
+	}
+	header["alg"] = "EdDSA"
+	return signJWT(header, cdpClaims(s.apiKeyID, method, host, path), func(data []byte) ([]byte, error) { return ed25519.Sign(s.apiPrivate, data), nil })
 }
 
 func walletJWT(key *ecdsa.PrivateKey, method, host, path string, body []byte) (string, error) {
 	hash := sha256.Sum256(body)
-	return signJWT(map[string]interface{}{"alg": "ES256", "typ": "JWT"}, map[string]interface{}{"uris": []string{method + " " + host + path}, "iat": time.Now().Unix(), "nbf": time.Now().Unix(), "jti": randomID(), "reqHash": hex.EncodeToString(hash[:])}, func(data []byte) ([]byte, error) {
-		r, s, err := ecdsa.Sign(rand.Reader, key, data)
-		if err != nil {
-			return nil, err
-		}
-		size := (key.Curve.Params().BitSize + 7) / 8
-		out := make([]byte, size*2)
-		r.FillBytes(out[:size])
-		s.FillBytes(out[size:])
-		return out, nil
-	})
+	jti, err := randomID()
+	if err != nil {
+		return "", err
+	}
+	return signJWT(map[string]interface{}{"alg": "ES256", "typ": "JWT"}, map[string]interface{}{"uris": []string{method + " " + host + path}, "iat": time.Now().Unix(), "nbf": time.Now().Unix(), "jti": jti, "reqHash": hex.EncodeToString(hash[:])}, func(data []byte) ([]byte, error) { return signECDSADigest(key, data) })
+}
+
+func cdpClaims(apiKeyID, method, host, path string) map[string]interface{} {
+	now := time.Now()
+	return map[string]interface{}{"sub": apiKeyID, "iss": "cdp", "iat": now.Unix(), "nbf": now.Unix(), "exp": now.Add(120 * time.Second).Unix(), "uris": []string{method + " " + host + path}}
+}
+
+func signECDSADigest(key *ecdsa.PrivateKey, data []byte) ([]byte, error) {
+	digest := sha256.Sum256(data)
+	r, s, err := ecdsa.Sign(rand.Reader, key, digest[:])
+	if err != nil {
+		return nil, err
+	}
+	size := (key.Curve.Params().BitSize + 7) / 8
+	out := make([]byte, size*2)
+	r.FillBytes(out[:size])
+	s.FillBytes(out[size:])
+	return out, nil
 }
 
 func signJWT(header, claims map[string]interface{}, sign func([]byte) ([]byte, error)) (string, error) {
@@ -181,12 +214,34 @@ func signJWT(header, claims map[string]interface{}, sign func([]byte) ([]byte, e
 	}
 	return input + "." + base64.RawURLEncoding.EncodeToString(sig), nil
 }
-func randomID() string {
+func randomID() (string, error) {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
-		return "unavailable"
+		return "", err
 	}
-	return hex.EncodeToString(b)
+	return hex.EncodeToString(b), nil
+}
+
+func parseCDPAPICredential(value string) (ed25519.PrivateKey, *ecdsa.PrivateKey, error) {
+	if decoded, err := base64.StdEncoding.DecodeString(value); err == nil && len(decoded) == ed25519.PrivateKeySize {
+		return ed25519.PrivateKey(decoded), nil, nil
+	}
+	block, _ := pem.Decode([]byte(value))
+	if block == nil {
+		return nil, nil, errors.New("unsupported CDP API credential")
+	}
+	if key, err := x509.ParseECPrivateKey(block.Bytes); err == nil {
+		return nil, key, nil
+	}
+	key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err != nil {
+		return nil, nil, errors.New("unsupported CDP API credential")
+	}
+	ec, ok := key.(*ecdsa.PrivateKey)
+	if !ok {
+		return nil, nil, errors.New("unsupported CDP API credential")
+	}
+	return nil, ec, nil
 }
 func normalizeTypedData(value interface{}) interface{} {
 	switch v := value.(type) {

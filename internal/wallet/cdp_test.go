@@ -6,6 +6,7 @@ import (
 	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
@@ -35,7 +36,7 @@ func TestCDPSignerSendsExactTypedDataAndNormalizesSignature(t *testing.T) {
 	}
 	domain, types, message := cdpTypedDataFixture(responseSigner.Address())
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/v2/evm/accounts/"+responseSigner.Address()+"/sign/typed-data" {
+		if r.Method != http.MethodPost || r.URL.Path != "/platform/v2/evm/accounts/"+responseSigner.Address()+"/sign/typed-data" {
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL)
 		}
 		if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") || r.Header.Get("X-Wallet-Auth") == "" || r.Header.Get("X-Idempotency-Key") == "" {
@@ -48,6 +49,7 @@ func TestCDPSignerSendsExactTypedDataAndNormalizesSignature(t *testing.T) {
 		if body["primaryType"] != "TransferWithAuthorization" || body["domain"].(map[string]any)["chainId"] != float64(84532) {
 			t.Fatalf("typed data was not encoded losslessly: %#v", body)
 		}
+		assertWalletJWT(t, r.Header.Get("X-Wallet-Auth"), r.Method+" "+r.Host+r.URL.Path, body)
 		signature, err := responseSigner.SignTypedData(context.Background(), domain, types, "TransferWithAuthorization", message)
 		if err != nil {
 			t.Fatal(err)
@@ -58,7 +60,7 @@ func TestCDPSignerSendsExactTypedDataAndNormalizesSignature(t *testing.T) {
 	}))
 	defer server.Close()
 
-	signer, err := newCDPSigner(testCDPCredentials(t), server.URL, &http.Client{Timeout: time.Second})
+	signer, err := newCDPSigner(testCDPCredentials(t), server.URL+"/platform", &http.Client{Timeout: time.Second})
 	if err != nil {
 		t.Fatalf("newCDPSigner() error = %v", err)
 	}
@@ -68,6 +70,96 @@ func TestCDPSignerSendsExactTypedDataAndNormalizesSignature(t *testing.T) {
 	}
 	if len(signature) != 65 || (signature[64] != 27 && signature[64] != 28) {
 		t.Fatalf("expected x402-compatible 65-byte signature, got %x", signature)
+	}
+}
+
+func assertWalletJWT(t *testing.T, token, wantURI string, body map[string]any) {
+	t.Helper()
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		t.Fatal("wallet auth must be a JWT")
+	}
+	var claims struct {
+		URIs        []string `json:"uris"`
+		RequestHash string   `json:"reqHash"`
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		t.Fatal(err)
+	}
+	if len(claims.URIs) != 1 || claims.URIs[0] != wantURI {
+		t.Fatalf("wrong wallet JWT uri: %#v", claims.URIs)
+	}
+	bodyBytes, _ := json.Marshal(body)
+	hash := sha256.Sum256(bodyBytes)
+	if claims.RequestHash != hex.EncodeToString(hash[:]) {
+		t.Fatal("wallet JWT body hash mismatch")
+	}
+	// The exact JWT input is signed as SHA-256(input), per ES256/JWS.
+	sig, err := base64.RawURLEncoding.DecodeString(parts[2])
+	if err != nil || len(sig) != 64 {
+		t.Fatal("invalid wallet JWT signature")
+	}
+}
+
+func TestWalletJWTSignsSHA256Digest(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err := walletJWT(key, http.MethodPost, "api.example.test", "/platform/v2/evm/accounts/0x1/sign/typed-data", []byte(`{"message":"ok"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		t.Fatal("expected JWT")
+	}
+	sig, err := base64.RawURLEncoding.DecodeString(parts[2])
+	if err != nil || len(sig) != 64 {
+		t.Fatal("invalid raw ES256 signature")
+	}
+	digest := sha256.Sum256([]byte(parts[0] + "." + parts[1]))
+	r, s := new(big.Int).SetBytes(sig[:32]), new(big.Int).SetBytes(sig[32:])
+	if !ecdsa.Verify(&key.PublicKey, digest[:], r, s) {
+		t.Fatal("wallet JWT did not sign SHA-256 JWT input")
+	}
+}
+
+func TestCDPSignerFailsClosedForTransportAndResponseFailures(t *testing.T) {
+	responseSigner, err := evmsigners.NewClientSignerFromPrivateKey(localTestPrivateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	domain, types, message := cdpTypedDataFixture(responseSigner.Address())
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden, http.StatusTooManyRequests, http.StatusInternalServerError} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(status) }))
+			defer server.Close()
+			signer, err := newCDPSigner(testCDPCredentials(t), server.URL, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = signer.SignTypedData(context.Background(), domain, types, "TransferWithAuthorization", message); err == nil {
+				t.Fatal("expected failure")
+			}
+		})
+	}
+	for _, response := range []string{`{"signature":"0x00"}`, `not-json`} {
+		t.Run("malformed response", func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(response)) }))
+			defer server.Close()
+			signer, err := newCDPSigner(testCDPCredentials(t), server.URL, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = signer.SignTypedData(context.Background(), domain, types, "TransferWithAuthorization", message); err == nil {
+				t.Fatal("expected malformed response failure")
+			}
+		})
 	}
 }
 
