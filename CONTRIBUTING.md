@@ -4,7 +4,12 @@ Thanks for your interest in contributing! Here's how you can help.
 
 ## Reporting Bugs
 
-Open a [bug report](https://github.com/ngelik/ttsbuddy-cli/issues/new?template=bug_report.yml) with:
+Security vulnerabilities must not be reported in public issues. Use
+[GitHub private vulnerability reporting](https://github.com/ngelik/ttsbuddy-cli/security/advisories/new)
+as described in [SECURITY.md](SECURITY.md).
+
+For non-security bugs, open a
+[bug report](https://github.com/ngelik/ttsbuddy-cli/issues/new?template=bug_report.yml) with:
 
 - TTSBuddy CLI version (`ttsbuddy version`)
 - OS and architecture
@@ -23,6 +28,7 @@ Open a [feature request](https://github.com/ngelik/ttsbuddy-cli/issues/new?templ
    ```bash
    make test    # unit tests with race detector
    make lint    # golangci-lint
+   make vuln    # reachable dependency and toolchain vulnerabilities
    ```
 4. Open a pull request against `main`
 

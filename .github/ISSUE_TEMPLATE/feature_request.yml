@@ -2,6 +2,18 @@ name: Feature Request
 description: Suggest a new feature or improvement
 labels: ["enhancement"]
 body:
+  - type: markdown
+    attributes:
+      value: |
+        **Security issue? Stop here.** Do not disclose vulnerabilities publicly.
+        Use [private vulnerability reporting](https://github.com/ngelik/ttsbuddy-cli/security/advisories/new).
+  - type: checkboxes
+    id: security
+    attributes:
+      label: Security check
+      options:
+        - label: This request does not describe a security vulnerability or expose credentials.
+          required: true
   - type: textarea
     id: problem
     attributes:

@@ -1,0 +1,13 @@
+# Default ownership for all repository changes.
+* @ngelik
+
+# Security-sensitive policy and release surfaces.
+/.github/workflows/ @ngelik
+/.github/dependabot.yml @ngelik
+/.github/CODEOWNERS @ngelik
+/.goreleaser.yml @ngelik
+/go.mod @ngelik
+/go.sum @ngelik
+/SECURITY.md @ngelik
+/internal/api/ @ngelik
+/internal/config/ @ngelik

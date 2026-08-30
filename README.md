@@ -363,6 +363,9 @@ go tool cover -html=coverage.out         # interactive HTML report
 # Lint (install with: make tools)
 make lint
 
+# Reachable Go dependency and toolchain vulnerabilities
+make vuln
+
 # Live API acceptance tests
 TTSBUDDY_API_KEY=ttsb_... make test-acceptance
 ```
@@ -377,7 +380,7 @@ TTSBUDDY_API_KEY=ttsb_... make test-acceptance
 
 ```bash
 make build                   # build to bin/ttsbuddy
-make tools                   # install golangci-lint + goreleaser
+make tools                   # install lint, vulnerability, SBOM, and release tools
 make release-snapshot        # test release build for all platforms
 make clean                   # remove bin/ and dist/
 ```

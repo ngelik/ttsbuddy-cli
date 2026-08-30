@@ -29,17 +29,46 @@ archives:
         formats:
           - zip
 
-brews:
+checksum:
+  name_template: checksums.txt
+
+sboms:
+  - artifacts: archive
+
+signs:
+  - cmd: cosign
+    signature: "${artifact}.sigstore.json"
+    args:
+      - sign-blob
+      - "--bundle=${signature}"
+      - "${artifact}"
+      - --yes
+    artifacts: checksum
+
+release:
+  draft: true
+
+homebrew_casks:
   - name: ttsbuddy
     repository:
       owner: ngelik
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
-    directory: Formula
+    directory: Casks
+    skip_upload: true
+    url:
+      verified: github.com/ngelik/ttsbuddy-cli
     homepage: https://ttsbuddy.com
     description: "TTSBuddy CLI — convert text to speech from the command line"
-    install: |
-      bin.install "ttsbuddy"
+    license: MIT
+    binaries:
+      - ttsbuddy
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/ttsbuddy"]
+          end
 
 changelog:
   sort: asc

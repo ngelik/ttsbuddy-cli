@@ -74,14 +74,16 @@ TTSBUDDY_API_KEY=ttsb_... BINARY=ttsbuddy ./tests/acceptance_test.sh
 **Before every commit:**
 1. `make test` — all unit tests pass
 2. `make lint` — zero issues
+3. `make vuln` — zero reachable Go vulnerabilities
 
 **Before every release (tag + push):**
 1. `make test` — all unit tests pass
 2. `make lint` — zero issues
-3. `TTSBUDDY_API_KEY=ttsb_... make test-acceptance` — acceptance tests pass
-4. Fix any failures and re-run until all acceptance tests are green
-5. `make release-snapshot` — all platform builds succeed
-6. Only then: `git tag -a vX.Y.Z` and `git push origin vX.Y.Z`
+3. `make vuln` — zero reachable Go vulnerabilities
+4. `TTSBUDDY_API_KEY=ttsb_... make test-acceptance` — acceptance tests pass
+5. Fix any failures and re-run until all acceptance tests are green
+6. `make release-snapshot` — all platform builds and SBOMs succeed
+7. Only then: `git tag -a vX.Y.Z` and `git push origin vX.Y.Z`
 
 **Do NOT tag a release if acceptance tests have failures.** Rate-limit retries are acceptable, but any exit-code mismatch, missing output, or broken command is a blocker.
 
@@ -90,12 +92,14 @@ TTSBUDDY_API_KEY=ttsb_... BINARY=ttsbuddy ./tests/acceptance_test.sh
 - GoReleaser builds darwin/linux × amd64/arm64 on tag push
 - Homebrew tap: `ngelik/homebrew-tap`
 - `make release-snapshot` to test locally before tagging
-- GitHub Actions CI runs test + lint on every push
-- GitHub Actions Release runs goreleaser on tag push
+- GitHub Actions CI runs tests, lint, dependency review, CodeQL, and govulncheck
+- GitHub Actions Release validates the tag, then publishes signed artifacts,
+  checksums, SBOMs, and GitHub provenance attestations
 
 ## Linter Setup
 
-`make tools` installs `golangci-lint` and `goreleaser` to `$(go env GOPATH)/bin`. Ensure that directory is on your PATH:
+`make tools` installs `golangci-lint`, `govulncheck`, `syft`, and
+`goreleaser` to `$(go env GOPATH)/bin`. Ensure that directory is on your PATH:
 
 ```bash
 export PATH="$PATH:$(go env GOPATH)/bin"

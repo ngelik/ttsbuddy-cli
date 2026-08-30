@@ -1,6 +1,6 @@
 {
   "name": "TTSBuddy CLI demo",
-  "image": "mcr.microsoft.com/devcontainers/go:1.25-bookworm",
+  "image": "mcr.microsoft.com/devcontainers/go:1.26-bookworm@sha256:8bbd6e045ce3b7157fafb3794940342f5bf2e2a0432ed33a21c51bca8b069fe5",
   "postCreateCommand": "go mod download && go build -o /usr/local/bin/ttsbuddy . && chmod +x demo/cli-demo.sh",
   "customizations": {
     "vscode": {

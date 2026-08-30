@@ -1,7 +1,19 @@
 name: Bug Report
-description: Report a bug in TTSBuddy CLI
+description: Report a non-security bug in TTSBuddy CLI
 labels: ["bug"]
 body:
+  - type: markdown
+    attributes:
+      value: |
+        **Security issue? Stop here.** Do not disclose vulnerabilities publicly.
+        Use [private vulnerability reporting](https://github.com/ngelik/ttsbuddy-cli/security/advisories/new).
+  - type: checkboxes
+    id: security
+    attributes:
+      label: Security check
+      options:
+        - label: This report does not describe a security vulnerability or expose credentials.
+          required: true
   - type: input
     id: version
     attributes:
@@ -45,5 +57,5 @@ body:
     id: logs
     attributes:
       label: Logs or error output
-      description: Paste any relevant terminal output (redact your API key).
+      description: Paste relevant output only after removing API keys, tokens, personal data, and sensitive URLs.
       render: shell
