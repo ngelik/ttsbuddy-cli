@@ -11,10 +11,12 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -47,8 +49,29 @@ func TestCDPSignerSendsExactTypedDataAndNormalizesSignature(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatal(err)
 		}
-		if body["primaryType"] != "TransferWithAuthorization" || body["domain"].(map[string]any)["chainId"] != float64(84532) {
-			t.Fatalf("typed data was not encoded losslessly: %#v", body)
+		wantBody := map[string]any{
+			"domain": map[string]any{
+				"name":              "USD Coin",
+				"version":           "2",
+				"chainId":           float64(84532),
+				"verifyingContract": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+			},
+			"types": map[string]any{
+				"TransferWithAuthorization": []any{
+					map[string]any{"name": "from", "type": "address"},
+					map[string]any{"name": "to", "type": "address"},
+					map[string]any{"name": "value", "type": "uint256"},
+				},
+			},
+			"primaryType": "TransferWithAuthorization",
+			"message": map[string]any{
+				"from":  responseSigner.Address(),
+				"to":    "0x1111111111111111111111111111111111111111",
+				"value": "10000",
+			},
+		}
+		if !reflect.DeepEqual(body, wantBody) {
+			t.Fatalf("typed data was not encoded losslessly:\n got: %#v\nwant: %#v", body, wantBody)
 		}
 		assertWalletJWT(t, r.Header.Get("X-Wallet-Auth"), r.Method+" "+r.Host+r.URL.Path, body)
 		signature, err := responseSigner.SignTypedData(context.Background(), domain, types, "TransferWithAuthorization", message)
@@ -161,6 +184,105 @@ func TestCDPSignerFailsClosedForTransportAndResponseFailures(t *testing.T) {
 				t.Fatal("expected malformed response failure")
 			}
 		})
+	}
+}
+
+func TestCDPSignerTimesOutAndBoundsResponses(t *testing.T) {
+	responseSigner, err := evmsigners.NewClientSignerFromPrivateKey(localTestPrivateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	domain, types, message := cdpTypedDataFixture(responseSigner.Address())
+
+	t.Run("HTTP timeout", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			time.Sleep(100 * time.Millisecond)
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer server.Close()
+		signer, err := newCDPSigner(testCDPCredentials(t), server.URL, &http.Client{Timeout: 25 * time.Millisecond})
+		if err != nil {
+			t.Fatal(err)
+		}
+		started := time.Now()
+		_, err = signer.SignTypedData(context.Background(), domain, types, "TransferWithAuthorization", message)
+		if err == nil {
+			t.Fatal("expected HTTP timeout to fail closed")
+		}
+		if time.Since(started) > time.Second {
+			t.Fatal("HTTP timeout did not bound the signing request")
+		}
+	})
+
+	t.Run("response larger than 64 KiB", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(strings.Repeat("x", cdpResponseMax+1)))
+		}))
+		defer server.Close()
+		signer, err := newCDPSigner(testCDPCredentials(t), server.URL, &http.Client{Timeout: time.Second})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = signer.SignTypedData(context.Background(), domain, types, "TransferWithAuthorization", message); err == nil {
+			t.Fatal("expected oversized CDP response to fail closed")
+		}
+	})
+}
+
+func TestCDPSignerRejectsNonP256ECDSACredentials(t *testing.T) {
+	for _, testCase := range []struct {
+		name  string
+		curve elliptic.Curve
+	}{
+		{name: "P-384", curve: elliptic.P384()},
+		{name: "P-521", curve: elliptic.P521()},
+	} {
+		t.Run(testCase.name+" API key", func(t *testing.T) {
+			key, err := ecdsa.GenerateKey(testCase.curve, rand.Reader)
+			if err != nil {
+				t.Fatal(err)
+			}
+			der, err := x509.MarshalECPrivateKey(key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			credentials := testCDPCredentials(t)
+			credentials["CDP_API_KEY_SECRET"] = string(pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: der}))
+			if _, err = newCDPSigner(credentials, "https://api.example.test", nil); err == nil {
+				t.Fatalf("expected %s API key rejection", testCase.name)
+			}
+		})
+
+		t.Run(testCase.name+" wallet key", func(t *testing.T) {
+			key, err := ecdsa.GenerateKey(testCase.curve, rand.Reader)
+			if err != nil {
+				t.Fatal(err)
+			}
+			der, err := x509.MarshalPKCS8PrivateKey(key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			credentials := testCDPCredentials(t)
+			credentials["CDP_WALLET_SECRET"] = base64.StdEncoding.EncodeToString(der)
+			if _, err = newCDPSigner(credentials, "https://api.example.test", nil); err == nil {
+				t.Fatalf("expected %s wallet key rejection", testCase.name)
+			}
+		})
+	}
+}
+
+func TestParseCDPAPICredentialAcceptsP256ECKey(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	der, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, parsed, err := parseCDPAPICredential(string(pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: der})))
+	if err != nil || parsed == nil || !isP256PrivateKey(parsed) {
+		t.Fatalf("expected P-256 API credential acceptance, got key=%v err=%v", parsed != nil, err)
 	}
 }
 

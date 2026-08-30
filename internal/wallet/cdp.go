@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
@@ -79,7 +80,7 @@ func newCDPSigner(source CredentialSource, baseURL string, client *http.Client) 
 	}
 	parsed, err := x509.ParsePKCS8PrivateKey(walletBytes)
 	walletKey, ok := parsed.(*ecdsa.PrivateKey)
-	if err != nil || !ok {
+	if err != nil || !ok || !isP256PrivateKey(walletKey) {
 		return nil, errors.New("invalid CDP wallet credential")
 	}
 	u, err := url.Parse(baseURL)
@@ -182,6 +183,9 @@ func (s *cdpSigner) apiJWT(method, host, path string) (string, error) {
 }
 
 func walletJWT(key *ecdsa.PrivateKey, method, host, path string, body []byte) (string, error) {
+	if !isP256PrivateKey(key) {
+		return "", errors.New("wallet JWT requires a P-256 key")
+	}
 	hash := sha256.Sum256(body)
 	jti, err := randomID()
 	if err != nil {
@@ -196,6 +200,9 @@ func cdpClaims(apiKeyID, method, host, path string) map[string]interface{} {
 }
 
 func signECDSADigest(key *ecdsa.PrivateKey, data []byte) ([]byte, error) {
+	if !isP256PrivateKey(key) {
+		return nil, errors.New("ES256 requires a P-256 key")
+	}
 	digest := sha256.Sum256(data)
 	r, s, err := ecdsa.Sign(randomReader, key, digest[:])
 	if err != nil {
@@ -235,6 +242,9 @@ func parseCDPAPICredential(value string) (ed25519.PrivateKey, *ecdsa.PrivateKey,
 		return nil, nil, errors.New("unsupported CDP API credential")
 	}
 	if key, err := x509.ParseECPrivateKey(block.Bytes); err == nil {
+		if !isP256PrivateKey(key) {
+			return nil, nil, errors.New("unsupported CDP API credential")
+		}
 		return nil, key, nil
 	}
 	key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
@@ -245,7 +255,14 @@ func parseCDPAPICredential(value string) (ed25519.PrivateKey, *ecdsa.PrivateKey,
 	if !ok {
 		return nil, nil, errors.New("unsupported CDP API credential")
 	}
+	if !isP256PrivateKey(ec) {
+		return nil, nil, errors.New("unsupported CDP API credential")
+	}
 	return nil, ec, nil
+}
+
+func isP256PrivateKey(key *ecdsa.PrivateKey) bool {
+	return key != nil && key.Curve == elliptic.P256()
 }
 func normalizeTypedData(value interface{}) interface{} {
 	switch v := value.(type) {
