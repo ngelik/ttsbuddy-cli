@@ -395,6 +395,12 @@ func mutateAndSaveConfig(update func(*Config) (bool, error)) error {
 	configMutationMu.Lock()
 	defer configMutationMu.Unlock()
 
+	lock, err := acquireConfigMutationLock()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = lock.release() }()
+
 	cfg, err := Load()
 	if err != nil {
 		return err
