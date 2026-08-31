@@ -765,6 +765,108 @@ func TestSpeakConfiguredSupertonicLanguage(t *testing.T) {
 	}
 }
 
+func TestSpeakAccessPassUsesUTF16LimitAndOverridesSubscriptionEnv(t *testing.T) {
+	pass := testAccessPassCredential()
+	underLimit := strings.Repeat("a", 99_998) + "😀"
+	overLimit := strings.Repeat("a", 99_999) + "😀"
+
+	var called atomic.Bool
+	apiSrv := startMockAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called.Store(true)
+		if got := r.Header.Get("Authorization"); got != "Bearer "+pass {
+			t.Fatalf("Authorization = %q, want access pass", got)
+		}
+		var body map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		if body["text"] != underLimit {
+			t.Fatalf("server received wrong text length")
+		}
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":   true,
+			"status":    "completed",
+			"job_id":    "pass-job",
+			"audio_url": sameOriginAudioURL(r),
+			"billing": map[string]interface{}{
+				"mode":            "prepaid_pass",
+				"request_units":   100_000,
+				"remaining_units": 400_000,
+			},
+			"meta": map[string]string{"request_id": "r1", "api_version": "2026-04"},
+		})
+	}))
+	home := t.TempDir()
+	env := append(envForTest(home, apiSrv, testSubscriptionCredential()), "TTSBUDDY_ACCESS_PASS="+pass)
+
+	r := runCLIInput(t, underLimit, env, "speak", "-", "--no-download")
+	assertExitCode(t, r, 0)
+	if !called.Load() {
+		t.Fatal("under-limit pass request did not reach server")
+	}
+	assertNotContains(t, r.Stdout, pass, "stdout")
+	assertNotContains(t, r.Stderr, pass, "stderr")
+
+	called.Store(false)
+	r = runCLIInput(t, overLimit, env, "speak", "-", "--no-download")
+	assertExitCode(t, r, 2)
+	assertContains(t, r.Stderr, "local estimate", "stderr")
+	assertContains(t, r.Stderr, "100,000", "stderr")
+	if called.Load() {
+		t.Fatal("over-limit pass request reached server")
+	}
+}
+
+func TestSpeakSubscriptionUTF16LimitPreservesFiveHundredThousandUnits(t *testing.T) {
+	overLimit := strings.Repeat("😀", 250_000) + "a"
+	var called atomic.Bool
+	apiSrv := startMockAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called.Store(true)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	home := t.TempDir()
+
+	r := runCLIInput(t, overLimit, envForTest(home, apiSrv, testSubscriptionCredential()), "speak", "-", "--no-download")
+	assertExitCode(t, r, 2)
+	assertContains(t, r.Stderr, "local estimate", "stderr")
+	assertContains(t, r.Stderr, "500,000", "stderr")
+	if called.Load() {
+		t.Fatal("over-limit subscription request reached server")
+	}
+}
+
+func TestSpeakPassBalanceErrorDirectsExplicitAccessBuyWithoutAutoPayment(t *testing.T) {
+	pass := testAccessPassCredential()
+	var calls atomic.Int32
+	apiSrv := startMockAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusPaymentRequired)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": false,
+			"error": map[string]interface{}{
+				"code":    "PASS_BALANCE_INSUFFICIENT",
+				"message": "prepaid pass does not have enough units",
+				"details": map[string]interface{}{
+					"requested_units": 100_001,
+					"remaining_units": 42,
+				},
+			},
+			"meta": map[string]string{"request_id": "r1", "api_version": "2026-04"},
+		})
+	}))
+	home := t.TempDir()
+
+	r := runCLI(t, append(envForTest(home, apiSrv, ""), "TTSBUDDY_ACCESS_PASS="+pass), "speak", "hello")
+	assertExitCode(t, r, 1)
+	assertContains(t, r.Stderr, "ttsbuddy access buy starter --wallet", "stderr")
+	assertContains(t, r.Stderr, "requested_units=100001", "stderr")
+	assertContains(t, r.Stderr, "remaining_units=42", "stderr")
+	assertNotContains(t, r.Stderr, pass, "stderr")
+	if calls.Load() != 1 {
+		t.Fatalf("speak calls = %d, want exactly one API call", calls.Load())
+	}
+}
+
 func TestSpeakRejectsLanguageForKokoroVoice(t *testing.T) {
 	home := t.TempDir()
 	env := append(envForTest(home, "https://example.com/v1/agent-tts", "ttsb_test_key"), "TTSBUDDY_ALLOW_CUSTOM_API_URL=true")

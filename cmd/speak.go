@@ -6,18 +6,20 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	urlPkg "net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/ngelik/ttsbuddy-cli/internal/api"
 	"github.com/ngelik/ttsbuddy-cli/internal/config"
 	"github.com/ngelik/ttsbuddy-cli/internal/display"
 	"github.com/ngelik/ttsbuddy-cli/internal/markdown"
+	"github.com/ngelik/ttsbuddy-cli/internal/units"
 	"github.com/spf13/cobra"
 )
 
@@ -120,9 +122,10 @@ func runSpeak(cmd *cobra.Command, args []string) error {
 		return &exitError{code: 2, msg: "no text provided"}
 	}
 
-	charCount := utf8.RuneCountInString(text)
-	if charCount > 500_000 {
-		return &exitError{code: 2, msg: fmt.Sprintf("input exceeds 500,000 characters (%d characters). Split into smaller chunks.", charCount)}
+	unitLimit := synthesisUnitLimit(resolved.CredentialKind)
+	unitCount := units.UTF16Units(text)
+	if unitCount > unitLimit {
+		return &exitError{code: 2, msg: fmt.Sprintf("input local estimate exceeds %s UTF-16 units (%s units). Split into smaller chunks.", formatUnits(int64(unitLimit)), formatUnits(int64(unitCount)))}
 	}
 
 	// 4. Resolve voice and speed
@@ -562,8 +565,8 @@ func apiHostFromURL(rawURL string) string {
 
 // --- Input helpers ---
 
-// maxInputSize is a byte-level memory safety cap (~2MB to cover 500k multi-byte chars).
-// The actual 500k character limit is enforced via utf8.RuneCountInString after reading.
+// maxInputSize is a byte-level memory safety cap (~2MB to cover large inputs).
+// The credential-specific UTF-16 unit limit is enforced after reading.
 const maxInputSize = 2*1024*1024 + 1024
 
 func readInput(args []string, filePath string) (text string, inputFile string, fromStdin bool, err error) {
@@ -637,7 +640,7 @@ func readBounded(r io.Reader) (string, error) {
 		return "", &exitError{code: 1, msg: fmt.Sprintf("reading input: %v", err)}
 	}
 	if len(data) > maxInputSize {
-		return "", &exitError{code: 2, msg: "input too large. The limit is 500,000 characters — split into smaller chunks."}
+		return "", &exitError{code: 2, msg: "input too large for local processing. Split into smaller chunks."}
 	}
 	return string(data), nil
 }
@@ -680,18 +683,80 @@ func handleAPIError(err error, status int) error {
 					}
 				}
 			}
+			if unitDetails := serverUnitDetails(apiErr.Response.Error); unitDetails != "" {
+				msg += " " + unitDetails
+			}
 			return &exitError{code: 1, msg: msg}
 		case api.ErrTextTooLong:
-			return &exitError{code: 2, msg: "input exceeds 500,000 characters. Split into smaller chunks."}
+			msg := "input exceeds the server text limit of 500,000 UTF-16 units. Split into smaller chunks."
+			if unitDetails := serverUnitDetails(apiErr.Response.Error); unitDetails != "" {
+				msg += " " + unitDetails
+			}
+			return &exitError{code: 2, msg: msg}
 		case api.ErrRateLimited:
 			return &exitError{code: 1, msg: "rate limited. Please wait and try again."}
 		case api.ErrForbidden:
 			return &exitError{code: 1, msg: "access denied (HTTP 403). Check your subscription and API access at https://ttsbuddy.com/billing"}
 		default:
+			if status == http.StatusPaymentRequired || strings.Contains(code, "PASS_BALANCE") {
+				msg := "prepaid access pass has insufficient remaining units. Run: " + accessBuyCommandHint
+				if unitDetails := serverUnitDetails(apiErr.Response.Error); unitDetails != "" {
+					msg += " " + unitDetails
+				}
+				return &exitError{code: 1, msg: msg}
+			}
 			return &exitError{code: 1, msg: apiErr.Error()}
 		}
 	}
 	return &exitError{code: 1, msg: fmt.Sprintf("API request failed: %v", err)}
+}
+
+const subscriptionLocalUnitLimit = 500_000
+
+func synthesisUnitLimit(kind config.CredentialKind) int {
+	if kind == config.CredentialKindAccessPass {
+		return accessPassLocalUnitLimit
+	}
+	return subscriptionLocalUnitLimit
+}
+
+func serverUnitDetails(apiErr *api.APIError) string {
+	if apiErr == nil || apiErr.Details == nil {
+		return ""
+	}
+	details, ok := apiErr.Details.(map[string]interface{})
+	if !ok {
+		return ""
+	}
+	var parts []string
+	if value, ok := unitDetail(details["requested_units"]); ok {
+		parts = append(parts, "requested_units="+value)
+	}
+	if value, ok := unitDetail(details["remaining_units"]); ok {
+		parts = append(parts, "remaining_units="+value)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "(" + strings.Join(parts, " ") + ")"
+}
+
+func unitDetail(value interface{}) (string, bool) {
+	switch v := value.(type) {
+	case int:
+		return strconv.Itoa(v), true
+	case int64:
+		return strconv.FormatInt(v, 10), true
+	case float64:
+		if v == float64(int64(v)) {
+			return strconv.FormatInt(int64(v), 10), true
+		}
+		return strconv.FormatFloat(v, 'f', -1, 64), true
+	case json.Number:
+		return v.String(), true
+	default:
+		return "", false
+	}
 }
 
 func stderrMsg(format string, a ...interface{}) {

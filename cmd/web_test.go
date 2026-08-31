@@ -207,6 +207,28 @@ func TestWebCommandRejectsPrivateNetworkURLBeforeSubmit(t *testing.T) {
 	}
 }
 
+func TestWebCommandRejectsAccessPassBeforeFetchOrSubmit(t *testing.T) {
+	home := t.TempDir()
+	var submitted atomic.Bool
+	apiSrv := startMockAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		submitted.Store(true)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+
+	env := append(
+		envForTest(home, apiSrv, ""),
+		"TTSBUDDY_ACCESS_PASS="+testAccessPassCredential(),
+		"TTSBUDDY_TEST_FAKE_WEB_ARTICLE=1",
+	)
+	r := runCLI(t, env, "web", "https://example.com/article", "--no-download")
+	assertExitCode(t, r, 2)
+	assertContains(t, r.Stderr, "prepaid access pass", "stderr")
+	assertContains(t, r.Stderr, "speak -f", "stderr")
+	if submitted.Load() {
+		t.Fatal("web command submitted article text with a pass credential")
+	}
+}
+
 func TestWebCommandWritesOutputFile(t *testing.T) {
 	home := t.TempDir()
 	out := filepath.Join(home, "article.mp3")

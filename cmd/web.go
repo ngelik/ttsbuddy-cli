@@ -7,11 +7,11 @@ import (
 	"os"
 	"os/signal"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/ngelik/ttsbuddy-cli/internal/api"
 	"github.com/ngelik/ttsbuddy-cli/internal/config"
 	"github.com/ngelik/ttsbuddy-cli/internal/display"
+	"github.com/ngelik/ttsbuddy-cli/internal/units"
 	"github.com/ngelik/ttsbuddy-cli/internal/webpage"
 	"github.com/spf13/cobra"
 )
@@ -58,6 +58,9 @@ func runWeb(cmd *cobra.Command, rawURL string) error {
 	}
 	if resolved.APIKey == "" {
 		return &exitError{code: 2, msg: missingAPIKeyMessage}
+	}
+	if resolved.CredentialKind == config.CredentialKindAccessPass {
+		return &exitError{code: 2, msg: "web is not supported with a prepaid access pass. Use ttsbuddy speak -f <file> or pipe text to ttsbuddy speak -."}
 	}
 
 	if cmd.Flags().Changed("output-dir") {
@@ -115,14 +118,14 @@ func runWeb(cmd *cobra.Command, rawURL string) error {
 		if title == "" {
 			title = article.URL
 		}
-		stderrMsg("Extracted %q (%d chars)\n", title, utf8.RuneCountInString(article.Text))
+		stderrMsg("Extracted %q (%s UTF-16 units)\n", title, formatUnits(int64(units.UTF16Units(article.Text))))
 	}
 
 	if strings.TrimSpace(article.Text) == "" {
 		return &exitError{code: 2, msg: "no readable text found on webpage"}
 	}
-	if charCount := utf8.RuneCountInString(article.Text); charCount > 500_000 {
-		return &exitError{code: 2, msg: fmt.Sprintf("webpage text exceeds 500,000 characters (%d characters)", charCount)}
+	if unitCount := units.UTF16Units(article.Text); unitCount > subscriptionLocalUnitLimit {
+		return &exitError{code: 2, msg: fmt.Sprintf("webpage text local estimate exceeds %s UTF-16 units (%s units)", formatUnits(int64(subscriptionLocalUnitLimit)), formatUnits(int64(unitCount)))}
 	}
 
 	idemKey := speakIdempotencyKey

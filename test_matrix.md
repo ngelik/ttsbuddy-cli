@@ -28,7 +28,9 @@ Check each item after verifying. Run `make test` for unit tests, `make test-live
 - [ ] `st_*` voice speed: `-v st_m1 -s 1.3` → requests 1.3 without capping
 - [ ] `--timeout 30s`: custom poll timeout
 - [ ] `--idempotency-key custom-key`: override auto-generated key
-- [ ] Text > 500k chars → exit 2
+- [ ] Subscription/CLI-session text > 500,000 UTF-16 units → local estimate exit 2
+- [ ] Prepaid pass text > 100,000 UTF-16 units → local estimate exit 2
+- [ ] Emoji input is counted by UTF-16 units, matching JavaScript string length
 
 ## Response Paths (require live API)
 - [ ] POST 200 completed (inline, short text)
@@ -44,7 +46,8 @@ Check each item after verifying. Run `make test` for unit tests, `make test-live
 - [ ] 403 `USAGE_LIMIT_EXCEEDED` — exhausted quota
 - [ ] 429 `RATE_LIMITED` — >20 req/min
 - [ ] 400 `INVALID_REQUEST` — missing text
-- [ ] 400 `TEXT_TOO_LONG` — >500k chars
+- [ ] 400 `TEXT_TOO_LONG` — server-side text limit rejection with authoritative unit details when provided
+- [ ] 402 `PASS_BALANCE_INSUFFICIENT` — shows server `requested_units`/`remaining_units` and tells the user to run explicit `access buy`
 - [ ] 502 `TTS_PROVIDER_ERROR` — upstream down
 - [ ] 500 `INTERNAL_ERROR` — server error
 
@@ -63,7 +66,9 @@ Check each item after verifying. Run `make test` for unit tests, `make test-live
 
 ## Config Precedence
 - [ ] Flag `-k` overrides env `TTSBUDDY_API_KEY`
+- [ ] Env `TTSBUDDY_ACCESS_PASS` overrides env `TTSBUDDY_API_KEY`
 - [ ] Env `TTSBUDDY_API_KEY` overrides config file `api_key`
+- [ ] Stored prepaid access pass overrides active CLI session and stored permanent key
 - [ ] Config file overrides default
 - [ ] Same for voice, speed, timeout
 
@@ -93,6 +98,24 @@ Check each item after verifying. Run `make test` for unit tests, `make test-live
 - [ ] `ttsbuddy status <id> --watch` — polls until terminal
 - [ ] `ttsbuddy status <id> --json` — JSON output
 - [ ] `ttsbuddy status nonexistent-id` — 404 → exit 1
+- [ ] `ttsbuddy access plans` — public GET, no Authorization, plain output
+- [ ] `ttsbuddy access plans --json` — public GET, no Authorization, JSON output
+- [ ] `ttsbuddy access plans starter` — exit 2
+- [ ] `ttsbuddy access plans --wallet local` — exit 2
+- [ ] `ttsbuddy access buy starter --wallet local --max-price 5.00` — validates `TTSBUDDY_EVM_PRIVATE_KEY`, constructs only local signer, performs one purchase, saves pass
+- [ ] `ttsbuddy access buy starter --wallet cdp --max-price 5.00` — validates CDP env, constructs only CDP signer, performs one purchase, saves pass
+- [ ] `ttsbuddy access buy starter` without explicit `--wallet` or `--max-price` — exit 2 before signer/network
+- [ ] `ttsbuddy access buy plus --wallet local --max-price 5.00` — exit 2 before signer/network
+- [ ] `ttsbuddy access buy starter --wallet local --max-price 0` — exit 2 before signer/network
+- [ ] `ttsbuddy access buy starter --wallet local --max-price 5e0` — exit 2 before signer/network
+- [ ] `ttsbuddy access buy starter --wallet local --max-price 5.00 --key ttsb_...` — exit 2, does not read stored keys or passes before purchase
+- [ ] `ttsbuddy access buy` save failure after settlement — prints the full pass exactly once on stdout and a recovery warning on stderr
+- [ ] `ttsbuddy access buy --json` — emits one structured success object including the full pass
+- [ ] `ttsbuddy access status` — uses only `TTSBUDDY_ACCESS_PASS` or stored pass, calls server even when local expiry elapsed
+- [ ] `ttsbuddy access status --key ttsb_...` — exit 2, `--key` unsupported for access status
+- [ ] `ttsbuddy access forget` — local-only, idempotent, removes only the exact stored pass and preserves `api_key`
+- [ ] `ttsbuddy web <url>` with a prepaid access pass — rejects before webpage fetch/extraction and points to `speak -f` or stdin
+- [ ] `ttsbuddy speak` with pass insufficient balance — never auto-buys; tells user to run explicit `ttsbuddy access buy starter --wallet <local|cdp> --max-price <decimal>`
 - [ ] `ttsbuddy config` — shows all values (redacted key)
 - [ ] `ttsbuddy config get key` — redacted key
 - [ ] `ttsbuddy config set key ttsb_...` — saves + confirms
