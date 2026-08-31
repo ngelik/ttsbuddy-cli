@@ -47,6 +47,16 @@ ttsbuddy version
 ## Quick Start
 
 ```bash
+ttsbuddy auth login
+ttsbuddy speak "Hello from TTS Buddy"
+ttsbuddy auth status
+```
+
+Interactive login uses an email code and stores one seven-day `ttsc_` CLI
+session. A new login replaces the prior CLI session. There is no refresh;
+login again after expiry.
+
+```bash
 # 1. Set your API key (create one in Dashboard -> Settings)
 ttsbuddy config set key ttsb_your_key_here
 
@@ -70,6 +80,16 @@ Run the same constrained demo locally:
 The script builds `ttsbuddy` when needed and uses only the public demo key and allowlisted sample inputs. See [`demo/README.md`](demo/README.md) for the exact boundary and manual commands.
 
 ## Authentication
+
+Use `ttsbuddy auth login` for interactive terminal work. Use a permanent
+`ttsb_` key for CI and unattended automation. Login/logout store the CLI
+session separately and never overwrite `api_key`. Effective precedence is
+`--key` > `TTSBUDDY_API_KEY` > active CLI session > stored permanent key.
+
+`ttsbuddy auth logout` revokes the stored session before clearing it. A network
+or server failure retains the local session so the command can be retried.
+`--local-only` skips revocation and warns that server validity may continue
+until the absolute seven-day expiry.
 
 API keys are created in **Dashboard → Settings** at [ttsbuddy.com/dashboard](https://ttsbuddy.com/dashboard). The [API Keys guide](https://www.ttsbuddy.com/docs/developers/api-keys) covers creation, storage, and revocation. Keys use the format `ttsb_<public_id>_<secret>`.
 
@@ -243,6 +263,7 @@ ttsbuddy version --json
 | Setting | Env Variable | Flag | Default |
 |---------|-------------|------|---------|
 | API key | `TTSBUDDY_API_KEY` | `-k` | — |
+| CLI auth URL | `TTSBUDDY_CLI_AUTH_URL` | — | `https://www.ttsbuddy.com/v1/cli-auth` |
 | Voice | `TTSBUDDY_VOICE` | `-v` | `st_m1` |
 | Language | `TTSBUDDY_LANGUAGE` | `-l, --language` | `en` |
 | Speed | `TTSBUDDY_SPEED` | `-s` | `1.2` |
