@@ -101,7 +101,7 @@ func TestVersionWithBrokenHome(t *testing.T) {
 	assertExitCode(t, r, 0)
 }
 
-func TestMissingKeyErrorsPointToDashboardSettings(t *testing.T) {
+func TestMissingCredentialErrorsLeadWithAuthLoginAndKeepPermanentAlternative(t *testing.T) {
 	tests := []struct {
 		name string
 		args []string
@@ -115,7 +115,8 @@ func TestMissingKeyErrorsPointToDashboardSettings(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			r := runCLI(t, envForTest(t.TempDir(), "", ""), tt.args...)
 			assertExitCode(t, r, 2)
-			assertContains(t, r.Stderr, "Dashboard -> Settings", "stderr")
+			assertContains(t, r.Stderr, "ttsbuddy auth login", "stderr")
+			assertContains(t, r.Stderr, "ttsbuddy config set key", "stderr")
 			assertContains(t, r.Stderr, "https://ttsbuddy.com/dashboard", "stderr")
 		})
 	}
@@ -146,7 +147,7 @@ func TestRunCLIDoesNotInheritTTSBuddyCredentials(t *testing.T) {
 	home := t.TempDir()
 	r := runCLI(t, envForTest(home, "", ""), "speak", "hello")
 	assertExitCode(t, r, 2)
-	assertContains(t, r.Stderr, "no API key configured", "stderr")
+	assertContains(t, r.Stderr, "no credential configured", "stderr")
 	assertNotContains(t, r.Stderr, "ttsb_parent_secret", "stderr")
 	assertNotContains(t, r.Stdout, "ttsb_parent_secret", "stdout")
 	if called.Load() {

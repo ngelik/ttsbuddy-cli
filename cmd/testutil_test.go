@@ -52,6 +52,10 @@ type cliResult struct {
 // runCLI runs the CLI as a subprocess, capturing stdout, stderr, and exit code.
 // The subprocess re-enters via TestHelperProcess.
 func runCLI(t *testing.T, env []string, args ...string) cliResult {
+	return runCLIInput(t, "", env, args...)
+}
+
+func runCLIInput(t *testing.T, stdin string, env []string, args ...string) cliResult {
 	t.Helper()
 
 	// Build args: -test.run=TestHelperProcess -- <cli args>
@@ -64,6 +68,7 @@ func runCLI(t *testing.T, env []string, args ...string) cliResult {
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
+	cmd.Stdin = strings.NewReader(stdin)
 
 	err := cmd.Run()
 

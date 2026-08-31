@@ -650,9 +650,10 @@ func isMarkdownFile(path string) bool {
 // --- Error helpers ---
 
 type exitError struct {
-	code int
-	msg  string
-	err  error
+	code        int
+	msg         string
+	err         error
+	jsonPayload any
 }
 
 func (e *exitError) Error() string { return e.msg }
@@ -665,7 +666,7 @@ func handleAPIError(err error, status int) error {
 		code := apiErr.ErrorCode()
 		switch code {
 		case api.ErrInvalidKey:
-			return &exitError{code: 1, msg: "invalid API key. Run: ttsbuddy config set key <your-key>"}
+			return &exitError{code: 1, msg: "invalid credential. Run: ttsbuddy auth login. For automation with a permanent API key, use: ttsbuddy config set key <your-key>"}
 		case api.ErrInactiveSubscription:
 			return &exitError{code: 1, msg: "subscription inactive. Reactivate at https://ttsbuddy.com/billing"}
 		case api.ErrNoAPIAccess:

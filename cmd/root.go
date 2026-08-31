@@ -18,7 +18,7 @@ var (
 	Date    = "unknown"
 )
 
-const missingAPIKeyMessage = "no API key configured. Create one in Dashboard -> Settings: https://ttsbuddy.com/dashboard. Then run: ttsbuddy config set key <your-key>"
+const missingAPIKeyMessage = "no credential configured. Run: ttsbuddy auth login. For CI or automation, create a permanent key at https://ttsbuddy.com/dashboard and run: ttsbuddy config set key <your-key>"
 
 // Global flag values.
 var (
@@ -79,13 +79,12 @@ var rootCmd = &cobra.Command{
 }
 
 func commandUsesCredentialedAPI(cmd *cobra.Command) bool {
-	for c := cmd; c != nil; c = c.Parent() {
-		switch c.Name() {
-		case "speak", "web", "status":
-			return true
-		}
+	switch cmd.CommandPath() {
+	case "ttsbuddy speak", "ttsbuddy web", "ttsbuddy status":
+		return true
+	default:
+		return false
 	}
-	return false
 }
 
 func init() {
@@ -116,8 +115,11 @@ func Execute() error {
 		}
 
 		if flagJSON {
-			cliErr := api.NewCLIError("CLI_ERROR", err.Error())
-			data, _ := json.MarshalIndent(cliErr, "", "  ")
+			var payload any = api.NewCLIError("CLI_ERROR", err.Error())
+			if exitErr, ok := err.(*exitError); ok && exitErr.jsonPayload != nil {
+				payload = exitErr.jsonPayload
+			}
+			data, _ := json.MarshalIndent(payload, "", "  ")
 			_, _ = fmt.Fprintln(os.Stdout, string(data))
 		} else if !helpShown {
 			fmt.Fprintln(os.Stderr, "Error:", err)
