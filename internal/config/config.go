@@ -19,19 +19,28 @@ const (
 	DefaultSpeed         = 1.2
 	DefaultOutputDir     = "."
 	DefaultPollTimeout   = "10m"
+	DefaultCLIAuthURL    = "https://www.ttsbuddy.com/v1/cli-auth"
+	DefaultClerkFAPIURL  = "https://clerk.ttsbuddy.com"
 )
 
 // Config represents the persisted configuration file.
 type Config struct {
-	APIKey            string  `json:"api_key,omitempty"`
-	APIURL            string  `json:"api_url,omitempty"`
-	TTSAPIBaseURL     string  `json:"tts_api_base_url,omitempty"`
-	AllowCustomAPIURL bool    `json:"allow_custom_api_url,omitempty"`
-	DefaultVoice      string  `json:"default_voice,omitempty"`
-	DefaultLanguage   string  `json:"default_language,omitempty"`
-	DefaultSpeed      float64 `json:"default_speed,omitempty"`
-	OutputDir         string  `json:"output_dir,omitempty"`
-	PollTimeout       string  `json:"poll_timeout,omitempty"`
+	APIKey            string            `json:"api_key,omitempty"`
+	CLISession        *StoredCLISession `json:"cli_session,omitempty"`
+	CLIAuthURL        string            `json:"cli_auth_url,omitempty"`
+	APIURL            string            `json:"api_url,omitempty"`
+	TTSAPIBaseURL     string            `json:"tts_api_base_url,omitempty"`
+	AllowCustomAPIURL bool              `json:"allow_custom_api_url,omitempty"`
+	DefaultVoice      string            `json:"default_voice,omitempty"`
+	DefaultLanguage   string            `json:"default_language,omitempty"`
+	DefaultSpeed      float64           `json:"default_speed,omitempty"`
+	OutputDir         string            `json:"output_dir,omitempty"`
+	PollTimeout       string            `json:"poll_timeout,omitempty"`
+}
+
+type StoredCLISession struct {
+	Credential string `json:"credential"`
+	ExpiresAt  string `json:"expires_at"`
 }
 
 // validKeys maps user-facing key names to Config field setters.
@@ -45,6 +54,7 @@ var validKeys = map[string]bool{
 	"timeout":              true,
 	"output_dir":           true,
 	"api_url":              true,
+	"cli_auth_url":         true,
 	"tts_api_base_url":     true,
 	"allow_custom_api_url": true,
 }
@@ -204,6 +214,8 @@ func Get(cfg *Config, key string) (string, error) {
 		return cfg.OutputDir, nil
 	case "api_url":
 		return cfg.APIURL, nil
+	case "cli_auth_url":
+		return cfg.CLIAuthURL, nil
 	case "tts_api_base_url":
 		return cfg.TTSAPIBaseURL, nil
 	case "allow_custom_api_url":
@@ -248,6 +260,8 @@ func Set(key, value string) error {
 		cfg.OutputDir = value
 	case "api_url":
 		cfg.APIURL = value
+	case "cli_auth_url":
+		cfg.CLIAuthURL = value
 	case "tts_api_base_url":
 		cfg.TTSAPIBaseURL = value
 	case "allow_custom_api_url":
@@ -303,7 +317,7 @@ func CheckCredentialedAPIURL(rawURL string, allowCustom bool) error {
 }
 
 func isOfficialAPIHost(host string) bool {
-	return host == "ttsbuddy.com" || host == "www.ttsbuddy.com"
+	return host == "ttsbuddy.com" || host == "www.ttsbuddy.com" || host == "clerk.ttsbuddy.com"
 }
 
 func isLocalAPIHost(host string) bool {
@@ -322,7 +336,7 @@ func RedactKey(key string) string {
 	if key == "" {
 		return ""
 	}
-	if !strings.HasPrefix(key, "ttsb_") {
+	if !strings.HasPrefix(key, "ttsb_") && !strings.HasPrefix(key, "ttsc_") {
 		return "***"
 	}
 	// ttsb_<public_id>_<secret>
@@ -330,5 +344,78 @@ func RedactKey(key string) string {
 	if len(parts) < 3 {
 		return "***"
 	}
-	return fmt.Sprintf("ttsb_%s_...", parts[1])
+	return fmt.Sprintf("%s_%s_...", parts[0], parts[1])
+}
+
+func validCredential(value, prefix string) bool {
+	parts := strings.Split(value, "_")
+	if len(parts) != 3 || parts[0] != prefix || len(parts[1]) != 8 || len(parts[2]) != 48 {
+		return false
+	}
+	for _, part := range parts[1:] {
+		for _, r := range part {
+			if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f')) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func validPermanentCredential(value string) bool { return validCredential(value, "ttsb") }
+func validCLICredential(value string) bool       { return validCredential(value, "ttsc") }
+
+// ActiveCLISession validates the stored credential and absolute server expiry.
+func ActiveCLISession(cfg *Config, now time.Time) (*StoredCLISession, string) {
+	if cfg == nil || cfg.CLISession == nil {
+		return nil, ""
+	}
+	if !validCLICredential(cfg.CLISession.Credential) {
+		return nil, "stored CLI session is malformed; ignoring it"
+	}
+	expires, err := time.Parse(time.RFC3339, cfg.CLISession.ExpiresAt)
+	if err != nil {
+		return nil, "stored CLI session expiry is malformed; ignoring it"
+	}
+	if !expires.After(now) {
+		return nil, "stored CLI session has expired; run: ttsbuddy auth login"
+	}
+	copy := *cfg.CLISession
+	return &copy, ""
+}
+
+func sessionCredential(cfg *Config) string {
+	if cfg == nil || cfg.CLISession == nil {
+		return ""
+	}
+	return cfg.CLISession.Credential
+}
+
+// StoreCLISession atomically replaces only the expected prior CLI session.
+func StoreCLISession(expectedPrior string, next StoredCLISession) error {
+	if session, warning := ActiveCLISession(&Config{CLISession: &next}, time.Now()); session == nil || warning != "" {
+		return &ValidationError{Msg: "invalid CLI session"}
+	}
+	cfg, err := Load()
+	if err != nil {
+		return err
+	}
+	if sessionCredential(cfg) != expectedPrior {
+		return fmt.Errorf("CLI session changed concurrently")
+	}
+	cfg.CLISession = &next
+	return Save(cfg)
+}
+
+// ClearCLISession removes only the exact stored CLI session that was used.
+func ClearCLISession(expectedCredential string) error {
+	cfg, err := Load()
+	if err != nil {
+		return err
+	}
+	if sessionCredential(cfg) != expectedCredential {
+		return fmt.Errorf("CLI session changed concurrently")
+	}
+	cfg.CLISession = nil
+	return Save(cfg)
 }

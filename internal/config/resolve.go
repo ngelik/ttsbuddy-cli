@@ -19,15 +19,17 @@ type FlagValues struct {
 
 // ResolvedConfig contains fully resolved values with all defaults applied.
 type ResolvedConfig struct {
-	APIKey            string
-	APIURL            string
-	TTSAPIBaseURL     string
-	AllowCustomAPIURL bool
-	Voice             string
-	Language          string
-	Speed             float64
-	OutputDir         string
-	PollTimeout       string
+	APIKey              string
+	APIURL              string
+	CLIAuthURL          string
+	ClerkFrontendAPIURL string
+	TTSAPIBaseURL       string
+	AllowCustomAPIURL   bool
+	Voice               string
+	Language            string
+	Speed               float64
+	OutputDir           string
+	PollTimeout         string
 }
 
 // Resolve applies precedence: flags > env vars > config file > defaults.
@@ -37,19 +39,26 @@ type ResolvedConfig struct {
 func Resolve(cfg *Config, flags FlagValues) (*ResolvedConfig, []string) {
 	var warnings []string
 	r := &ResolvedConfig{
-		APIKey:            cfg.APIKey,
-		APIURL:            or(cfg.APIURL, DefaultAPIURL),
-		TTSAPIBaseURL:     or(cfg.TTSAPIBaseURL, DefaultTTSAPIBaseURL),
-		AllowCustomAPIURL: cfg.AllowCustomAPIURL,
-		Voice:             or(cfg.DefaultVoice, DefaultVoice),
-		Language:          or(cfg.DefaultLanguage, DefaultLanguage),
-		Speed:             orFloat(cfg.DefaultSpeed, DefaultSpeed),
-		OutputDir:         or(cfg.OutputDir, DefaultOutputDir),
-		PollTimeout:       or(cfg.PollTimeout, DefaultPollTimeout),
+		APIKey:              cfg.APIKey,
+		APIURL:              or(cfg.APIURL, DefaultAPIURL),
+		CLIAuthURL:          or(cfg.CLIAuthURL, DefaultCLIAuthURL),
+		ClerkFrontendAPIURL: DefaultClerkFAPIURL,
+		TTSAPIBaseURL:       or(cfg.TTSAPIBaseURL, DefaultTTSAPIBaseURL),
+		AllowCustomAPIURL:   cfg.AllowCustomAPIURL,
+		Voice:               or(cfg.DefaultVoice, DefaultVoice),
+		Language:            or(cfg.DefaultLanguage, DefaultLanguage),
+		Speed:               orFloat(cfg.DefaultSpeed, DefaultSpeed),
+		OutputDir:           or(cfg.OutputDir, DefaultOutputDir),
+		PollTimeout:         or(cfg.PollTimeout, DefaultPollTimeout),
+	}
+	if session, warning := ActiveCLISession(cfg, time.Now()); session != nil {
+		r.APIKey = session.Credential
+	} else if warning != "" {
+		warnings = append(warnings, warning)
 	}
 
 	// Layer 2: environment variables override config file.
-	warnings = applyEnv(r)
+	warnings = append(warnings, applyEnv(r)...)
 
 	// Layer 3: flags override everything.
 	applyFlags(r, flags)
@@ -64,6 +73,16 @@ func applyEnv(r *ResolvedConfig) []string {
 	}
 	if v := os.Getenv("TTSBUDDY_API_URL"); v != "" {
 		r.APIURL = v
+	}
+	if v := os.Getenv("TTSBUDDY_CLI_AUTH_URL"); v != "" {
+		r.CLIAuthURL = v
+	}
+	if v := os.Getenv("TTSBUDDY_CLERK_FRONTEND_API_URL"); v != "" {
+		if r.AllowCustomAPIURL || os.Getenv("TTSBUDDY_ALLOW_CUSTOM_API_URL") == "true" {
+			r.ClerkFrontendAPIURL = v
+		} else {
+			warnings = append(warnings, "ignoring TTSBUDDY_CLERK_FRONTEND_API_URL without custom API URL opt-in")
+		}
 	}
 	if v := os.Getenv("TTSBUDDY_TTS_API_BASE_URL"); v != "" {
 		r.TTSAPIBaseURL = v

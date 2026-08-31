@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestLoadMissingFile(t *testing.T) {
@@ -130,6 +131,70 @@ func TestRedactKey(t *testing.T) {
 	}
 }
 
+func fixtureCredential(prefix string, public, secret byte) string {
+	return prefix + "_" + strings.Repeat(string(public), 8) + "_" + strings.Repeat(string(secret), 48)
+}
+
+func TestCLISessionStoragePreservesUnrelatedConfigAndCompares(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	permanent := fixtureCredential("ttsb", 'a', 'b')
+	first := fixtureCredential("ttsc", 'c', 'd')
+	second := fixtureCredential("ttsc", 'e', 'f')
+	if err := Save(&Config{APIKey: permanent, DefaultVoice: "voice", CLIAuthURL: "https://example.test/auth"}); err != nil {
+		t.Fatal(err)
+	}
+	expires := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
+	if err := StoreCLISession("", StoredCLISession{Credential: first, ExpiresAt: expires}); err != nil {
+		t.Fatal(err)
+	}
+	if err := StoreCLISession("", StoredCLISession{Credential: second, ExpiresAt: expires}); err == nil {
+		t.Fatal("expected compare conflict")
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.APIKey != permanent || cfg.DefaultVoice != "voice" || cfg.CLISession.Credential != first {
+		t.Fatalf("config not preserved: %#v", cfg)
+	}
+	if err := ClearCLISession(first); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _ = Load()
+	if cfg.CLISession != nil || cfg.APIKey != permanent {
+		t.Fatalf("clear changed unrelated config: %#v", cfg)
+	}
+	path, _ := ConfigPath()
+	stat, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stat.Mode().Perm() != 0600 {
+		t.Fatalf("mode = %o", stat.Mode().Perm())
+	}
+}
+
+func TestActiveCLISessionValidation(t *testing.T) {
+	now := time.Now().UTC()
+	valid := fixtureCredential("ttsc", 'a', 'b')
+	for name, cfg := range map[string]*Config{
+		"malformed token":  {CLISession: &StoredCLISession{Credential: "bad", ExpiresAt: now.Add(time.Hour).Format(time.RFC3339)}},
+		"malformed expiry": {CLISession: &StoredCLISession{Credential: valid, ExpiresAt: "bad"}},
+		"expired":          {CLISession: &StoredCLISession{Credential: valid, ExpiresAt: now.Add(-time.Second).Format(time.RFC3339)}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			session, warning := ActiveCLISession(cfg, now)
+			if session != nil || warning == "" {
+				t.Fatalf("session=%v warning=%q", session, warning)
+			}
+		})
+	}
+	session, warning := ActiveCLISession(&Config{CLISession: &StoredCLISession{Credential: valid, ExpiresAt: now.Add(time.Hour).Format(time.RFC3339)}}, now)
+	if session == nil || warning != "" {
+		t.Fatalf("session=%v warning=%q", session, warning)
+	}
+}
+
 func TestResolvePrecedence(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
@@ -150,6 +215,28 @@ func TestResolvePrecedence(t *testing.T) {
 	resolved, _ = Resolve(cfg, FlagValues{Voice: &flagVoice})
 	if resolved.Voice != "am_adam" {
 		t.Errorf("flag should override env: got %q", resolved.Voice)
+	}
+}
+
+func TestResolveCredentialPrecedenceIncludesActiveCLISession(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	permanent := fixtureCredential("ttsb", 'a', 'b')
+	cli := fixtureCredential("ttsc", 'c', 'd')
+	environment := fixtureCredential("ttsb", 'e', 'f')
+	flag := fixtureCredential("ttsb", '1', '2')
+	cfg := &Config{APIKey: permanent, CLISession: &StoredCLISession{Credential: cli, ExpiresAt: time.Now().Add(time.Hour).UTC().Format(time.RFC3339)}}
+	resolved, _ := Resolve(cfg, FlagValues{})
+	if resolved.APIKey != cli {
+		t.Fatalf("CLI = %q", resolved.APIKey)
+	}
+	t.Setenv("TTSBUDDY_API_KEY", environment)
+	resolved, _ = Resolve(cfg, FlagValues{})
+	if resolved.APIKey != environment {
+		t.Fatalf("env = %q", resolved.APIKey)
+	}
+	resolved, _ = Resolve(cfg, FlagValues{APIKey: &flag})
+	if resolved.APIKey != flag {
+		t.Fatalf("flag = %q", resolved.APIKey)
 	}
 }
 
