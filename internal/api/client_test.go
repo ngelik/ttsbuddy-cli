@@ -404,6 +404,47 @@ func TestCompletedMissingAudio(t *testing.T) {
 	}
 }
 
+func TestParseResponsePreservesAccessPassBillingFields(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(TTSResponse{
+			Success: true,
+			Status:  "completed",
+			JobID:   "job-pass",
+			Billing: &Billing{
+				Mode:                     "access_pass",
+				EstimatedCostCents:       0,
+				AccessPassAllowanceUnits: ptrInt64(500_000),
+				AccessPassConsumedUnits:  ptrInt64(100),
+				AccessPassReservedUnits:  ptrInt64(0),
+				AccessPassRemainingUnits: ptrInt64(499_900),
+				AccessPassRequestLimit:   ptrInt64(100_000),
+			},
+			Meta: &Meta{RequestID: "req-pass", APIVersion: "2026-04"},
+		})
+	}))
+	defer srv.Close()
+
+	client := NewClient(srv.URL, fixtureCredential("ttsp", 'a', 'b'), "test")
+	resp, _, err := client.Speak(context.Background(), SpeakRequest{Text: "hello"}, "idem-pass")
+	if err != nil {
+		t.Fatalf("Speak error: %v", err)
+	}
+	if resp.Billing == nil || resp.Billing.Mode != "access_pass" {
+		t.Fatalf("missing pass billing: %#v", resp.Billing)
+	}
+	if resp.Billing.AccessPassRemainingUnits == nil || *resp.Billing.AccessPassRemainingUnits != 499_900 {
+		t.Fatalf("remaining units not preserved: %#v", resp.Billing)
+	}
+}
+
+func ptrInt64(v int64) *int64 {
+	return &v
+}
+
+func fixtureCredential(prefix string, public, secret byte) string {
+	return prefix + "_" + strings.Repeat(string(public), 8) + "_" + strings.Repeat(string(secret), 48)
+}
+
 func TestResolveStatusURL(t *testing.T) {
 	client := NewClient("https://www.ttsbuddy.com/v1/agent-tts", "key", "test")
 
@@ -832,6 +873,31 @@ func TestSpeakNonJSON403(t *testing.T) {
 	}
 	if apiErr.ErrorCode() != ErrForbidden {
 		t.Errorf("code: got %q, want %q (should be generic FORBIDDEN, not INACTIVE_SUBSCRIPTION)", apiErr.ErrorCode(), ErrForbidden)
+	}
+}
+
+func TestSpeak402DoesNotAttemptAccessPassPurchase(t *testing.T) {
+	var paymentHeaders []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paymentHeaders = append(paymentHeaders, r.Header.Get("PAYMENT-SIGNATURE"))
+		w.WriteHeader(http.StatusPaymentRequired)
+		_ = json.NewEncoder(w).Encode(TTSResponse{
+			Success: false,
+			Error:   &APIError{Code: "PASS_BALANCE_INSUFFICIENT", Message: "buy another pass explicitly"},
+		})
+	}))
+	defer srv.Close()
+
+	client := NewClient(srv.URL, fixtureCredential("ttsp", 'a', 'b'), "test")
+	_, status, err := client.Speak(context.Background(), SpeakRequest{Text: "hello"}, "idem-402")
+	if err == nil {
+		t.Fatal("expected 402 to remain an API error")
+	}
+	if status != http.StatusPaymentRequired {
+		t.Fatalf("status = %d, want 402", status)
+	}
+	if len(paymentHeaders) != 1 || paymentHeaders[0] != "" {
+		t.Fatalf("Speak attempted payment headers: %#v", paymentHeaders)
 	}
 }
 
