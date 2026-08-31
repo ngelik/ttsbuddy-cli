@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"strconv"
-	"strings"
 	"time"
 )
 
@@ -105,7 +104,7 @@ func applyEnv(r *ResolvedConfig) []string {
 		}
 	}
 	if v := os.Getenv("TTSBUDDY_API_KEY"); v != "" {
-		if IsSubscriptionCredential(v) || strings.HasPrefix(v, "ttsb_") {
+		if IsSubscriptionCredential(v) {
 			setCredential(r, v, CredentialKindSubscription)
 		} else {
 			warnings = append(warnings, "invalid TTSBUDDY_API_KEY; ignoring it")

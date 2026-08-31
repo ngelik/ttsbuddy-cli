@@ -21,8 +21,8 @@ func TestConfigShowResolved(t *testing.T) {
 	// Should show resolved value from env
 	assertContains(t, r.Stdout, "bf_emma", "stdout")
 	// Key should be redacted
-	assertContains(t, r.Stdout, "ttsb_test_...", "stdout")
-	assertNotContains(t, r.Stdout, "abc", "stdout should not contain secret")
+	assertContains(t, r.Stdout, "ttsb_aaaaaaaa_...", "stdout")
+	assertNotContains(t, r.Stdout, strings.Repeat("b", 48), "stdout should not contain secret")
 }
 
 func TestConfigJSON(t *testing.T) {
@@ -78,10 +78,11 @@ func TestConfigGetVoice(t *testing.T) {
 
 func TestConfigGetKeyRedacted(t *testing.T) {
 	home := t.TempDir()
-	r := runCLI(t, envForTest(home, "", "ttsb_myid_mysecret"), "config", "get", "key")
+	key := "ttsb_" + strings.Repeat("c", 8) + "_" + strings.Repeat("d", 48)
+	r := runCLI(t, envForTest(home, "", key), "config", "get", "key")
 	assertExitCode(t, r, 0)
-	assertContains(t, r.Stdout, "ttsb_myid_...", "stdout")
-	assertNotContains(t, r.Stdout, "mysecret", "stdout should not contain secret")
+	assertContains(t, r.Stdout, "ttsb_cccccccc_...", "stdout")
+	assertNotContains(t, r.Stdout, strings.Repeat("d", 48), "stdout should not contain secret")
 }
 
 func TestConfigSetKey(t *testing.T) {

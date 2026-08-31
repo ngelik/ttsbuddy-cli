@@ -520,6 +520,18 @@ func TestResolveMalformedEnvironmentAccessPassIgnored(t *testing.T) {
 	}
 }
 
+func TestResolveMalformedEnvironmentAPIKeyIgnored(t *testing.T) {
+	t.Setenv("TTSBUDDY_API_KEY", "ttsb_abcd1234_secret")
+	storedPass := fixtureAccessPass('c', 'd')
+	resolved, warnings := Resolve(&Config{AccessPass: &storedPass}, FlagValues{})
+	if resolved.APIKey != storedPass.Credential || resolved.CredentialKind != CredentialKindAccessPass {
+		t.Fatalf("malformed env API key should not win, got %q kind %q", resolved.APIKey, resolved.CredentialKind)
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "invalid TTSBUDDY_API_KEY") {
+		t.Fatalf("warnings = %v", warnings)
+	}
+}
+
 func TestResolveMalformedStoredAPIKeyIgnored(t *testing.T) {
 	resolved, warnings := Resolve(&Config{APIKey: "ttsb_abcd1234_secret"}, FlagValues{})
 	if resolved.APIKey != "" || resolved.CredentialKind != CredentialKindNone {
