@@ -2,10 +2,22 @@ package prompt
 
 import (
 	"bytes"
+	"io"
 	"os"
 	"strings"
 	"testing"
 )
+
+type countingReader struct {
+	reader io.Reader
+	bytes  int
+}
+
+func (r *countingReader) Read(p []byte) (int, error) {
+	n, err := r.reader.Read(p)
+	r.bytes += n
+	return n, err
+}
 
 func TestRequiredLineAndNonTTYSecret(t *testing.T) {
 	var out bytes.Buffer
@@ -51,5 +63,16 @@ func TestPromptsRejectEOFWhitespaceAndByteOverflow(t *testing.T) {
 				t.Fatal("expected error")
 			}
 		})
+	}
+}
+
+func TestPromptsRejectLargeUnterminatedInputWithoutAccumulatingIt(t *testing.T) {
+	input := &countingReader{reader: strings.NewReader(strings.Repeat("x", 1<<20))}
+	p := New(input, &bytes.Buffer{})
+	if _, err := p.RequiredLine("", 4); err == nil {
+		t.Fatal("expected input-too-long error")
+	}
+	if input.bytes > 16*1024 {
+		t.Fatalf("read %d bytes before rejecting bounded input", input.bytes)
 	}
 }

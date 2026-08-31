@@ -549,6 +549,32 @@ func TestResolveAllowCustomAPIURLWarning(t *testing.T) {
 	}
 }
 
+func TestResolveClerkFrontendAPIURLUsesEnvironmentOptIn(t *testing.T) {
+	t.Setenv("TTSBUDDY_CLERK_FRONTEND_API_URL", "https://clerk.example.test")
+	t.Setenv("TTSBUDDY_ALLOW_CUSTOM_API_URL", "true")
+
+	resolved, warnings := Resolve(&Config{}, FlagValues{})
+	if len(warnings) != 0 {
+		t.Fatalf("unexpected warnings: %v", warnings)
+	}
+	if resolved.ClerkFrontendAPIURL != "https://clerk.example.test" {
+		t.Fatalf("ClerkFrontendAPIURL = %q, want environment override", resolved.ClerkFrontendAPIURL)
+	}
+}
+
+func TestResolveClerkFrontendAPIURLRejectsWithoutEnvironmentOptIn(t *testing.T) {
+	t.Setenv("TTSBUDDY_CLERK_FRONTEND_API_URL", "https://clerk.example.test")
+	t.Setenv("TTSBUDDY_ALLOW_CUSTOM_API_URL", "false")
+
+	resolved, warnings := Resolve(&Config{}, FlagValues{})
+	if resolved.ClerkFrontendAPIURL != DefaultClerkFAPIURL {
+		t.Fatalf("ClerkFrontendAPIURL = %q, want shipped default", resolved.ClerkFrontendAPIURL)
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "ignoring TTSBUDDY_CLERK_FRONTEND_API_URL") {
+		t.Fatalf("warnings = %v, want one opt-in warning", warnings)
+	}
+}
+
 func TestFormatSpeed(t *testing.T) {
 	cases := []struct {
 		input float64

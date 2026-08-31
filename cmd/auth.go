@@ -84,11 +84,11 @@ func runAuthLogin(cmd *cobra.Command, _ []string) error {
 		clerk.Close()
 	}()
 	ctx := cmd.Context()
+	fmt.Fprintln(os.Stderr, "If this address belongs to an eligible TTS Buddy account, check your email for a code.")
 	challenge, err := clerk.StartEmailCode(ctx, email)
 	if err != nil {
 		return err
 	}
-	fmt.Fprintln(os.Stderr, "If this address belongs to an eligible TTS Buddy account, check your email for a code.")
 	code, err := p.Secret("Code: ", 6)
 	if err != nil {
 		return &exitError{code: 2, msg: err.Error()}

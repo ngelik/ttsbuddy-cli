@@ -33,7 +33,6 @@ type ResolvedConfig struct {
 }
 
 // Resolve applies precedence: flags > env vars > config file > defaults.
-// Resolve applies precedence: flags > env vars > config file > defaults.
 // Returns the resolved config and any warnings (e.g., invalid env var values).
 // Callers should decide whether to print warnings based on output mode.
 func Resolve(cfg *Config, flags FlagValues) (*ResolvedConfig, []string) {
@@ -68,6 +67,14 @@ func Resolve(cfg *Config, flags FlagValues) (*ResolvedConfig, []string) {
 
 func applyEnv(r *ResolvedConfig) []string {
 	var warnings []string
+	if v := os.Getenv("TTSBUDDY_ALLOW_CUSTOM_API_URL"); v != "" {
+		allow, err := strconv.ParseBool(v)
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("invalid TTSBUDDY_ALLOW_CUSTOM_API_URL=%q, using default %v", v, r.AllowCustomAPIURL))
+		} else {
+			r.AllowCustomAPIURL = allow
+		}
+	}
 	if v := os.Getenv("TTSBUDDY_API_KEY"); v != "" {
 		r.APIKey = v
 	}
@@ -86,14 +93,6 @@ func applyEnv(r *ResolvedConfig) []string {
 	}
 	if v := os.Getenv("TTSBUDDY_TTS_API_BASE_URL"); v != "" {
 		r.TTSAPIBaseURL = v
-	}
-	if v := os.Getenv("TTSBUDDY_ALLOW_CUSTOM_API_URL"); v != "" {
-		allow, err := strconv.ParseBool(v)
-		if err != nil {
-			warnings = append(warnings, fmt.Sprintf("invalid TTSBUDDY_ALLOW_CUSTOM_API_URL=%q, using default %v", v, r.AllowCustomAPIURL))
-		} else {
-			r.AllowCustomAPIURL = allow
-		}
 	}
 	if v := os.Getenv("TTSBUDDY_VOICE"); v != "" {
 		r.Voice = v

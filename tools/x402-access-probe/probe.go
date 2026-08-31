@@ -213,7 +213,7 @@ func executeSubmission(ctx context.Context, config submitConfig, deps dependenci
 	if err != nil {
 		return result, errors.New("unpaid probe request failed")
 	}
-	defer unpaid.Body.Close()
+	defer func() { _ = unpaid.Body.Close() }()
 	body, err := readBounded(unpaid.Body)
 	if err != nil || unpaid.StatusCode != http.StatusPaymentRequired {
 		return result, errors.New("resource did not return a bounded 402 challenge")
@@ -248,19 +248,19 @@ func executeSubmission(ctx context.Context, config submitConfig, deps dependenci
 	if err != nil {
 		if paid != nil {
 			result.FacilitatorRequestIDs = mergeRequestIDs(result.FacilitatorRequestIDs, collectRequestIDs(paid.Header))
-			paid.Body.Close()
+			_ = paid.Body.Close()
 			return result, errors.New("paid request rejected")
 		}
 		paid, err = sendProbeRequest(ctx, client, config.ResourceURL, paymentHeader)
 		if err != nil {
 			if paid != nil {
 				result.FacilitatorRequestIDs = mergeRequestIDs(result.FacilitatorRequestIDs, collectRequestIDs(paid.Header))
-				paid.Body.Close()
+				_ = paid.Body.Close()
 			}
 			return result, errors.New("paid request outcome is ambiguous")
 		}
 	}
-	defer paid.Body.Close()
+	defer func() { _ = paid.Body.Close() }()
 	result.FacilitatorRequestIDs = mergeRequestIDs(result.FacilitatorRequestIDs, collectRequestIDs(paid.Header))
 	if _, err := readBounded(paid.Body); err != nil {
 		return result, errors.New("paid response exceeded bound")
@@ -432,7 +432,7 @@ func checkOfficialFacilitatorSupport(ctx context.Context, client *http.Client) e
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	data, err := readBounded(resp.Body)
 	if err != nil || resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return errors.New("facilitator support unavailable")
@@ -485,7 +485,7 @@ func sanitizeIdentifier(value string) string {
 		return ""
 	}
 	for _, char := range value {
-		if !(char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z' || char >= '0' && char <= '9' || strings.ContainsRune("._:-", char)) {
+		if (char < 'a' || char > 'z') && (char < 'A' || char > 'Z') && (char < '0' || char > '9') && !strings.ContainsRune("._:-", char) {
 			return ""
 		}
 	}
