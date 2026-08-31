@@ -295,7 +295,7 @@ type purchaseResultForDecode struct {
 }
 
 func (p *purchaseResultForDecode) validate() error {
-	return p.PurchaseResult.validateSuccess(p.plan, p.network, p.transaction, p.amount, p.payer, p.now)
+	return p.validateSuccess(p.plan, p.network, p.transaction, p.amount, p.payer, p.now)
 }
 
 type purchaseSendResult struct {
@@ -386,12 +386,12 @@ func parseTrustedAgentURL(raw string, allowCustom bool) (*url.URL, error) {
 		return nil, errors.New("invalid Agent API URL")
 	}
 	if parsed.User != nil || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" || parsed.RawPath != "" {
-		return nil, errors.New("Agent API URL must not include credentials, query, or fragment")
+		return nil, errors.New("agent API URL must not include credentials, query, or fragment")
 	}
 	parsed.Scheme = strings.ToLower(parsed.Scheme)
 	host := strings.ToLower(parsed.Hostname())
 	if host == "" {
-		return nil, errors.New("Agent API URL host is required")
+		return nil, errors.New("agent API URL host is required")
 	}
 	switch parsed.Scheme {
 	case "http":

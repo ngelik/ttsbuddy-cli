@@ -374,6 +374,46 @@ func TestCLISessionStoragePreservesUnrelatedConfigAndCompares(t *testing.T) {
 	}
 }
 
+func TestCLISessionAndAccessPassMutationsPreserveEachOther(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	pass := fixtureAccessPass('a', 'b')
+	cli := fixtureCredential("ttsc", 'c', 'd')
+	expires := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
+
+	if err := Save(&Config{AccessPass: &pass}); err != nil {
+		t.Fatal(err)
+	}
+	if err := StoreCLISession("", StoredCLISession{Credential: cli, ExpiresAt: expires}); err != nil {
+		t.Fatal(err)
+	}
+
+	updatedPass := fixtureAccessPass('e', 'f')
+	if err := SaveAccessPass(updatedPass); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.CLISession == nil || cfg.CLISession.Credential != cli {
+		t.Fatalf("access-pass save changed CLI session: %#v", cfg.CLISession)
+	}
+	if cfg.AccessPass == nil || cfg.AccessPass.Credential != updatedPass.Credential {
+		t.Fatalf("CLI-session save lost access pass: %#v", cfg.AccessPass)
+	}
+
+	if err := ClearCLISession(cli); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.CLISession != nil || cfg.AccessPass == nil || cfg.AccessPass.Credential != updatedPass.Credential {
+		t.Fatalf("CLI-session clear changed access pass: session=%#v pass=%#v", cfg.CLISession, cfg.AccessPass)
+	}
+}
+
 func TestActiveCLISessionValidation(t *testing.T) {
 	now := time.Now().UTC()
 	valid := fixtureCredential("ttsc", 'a', 'b')

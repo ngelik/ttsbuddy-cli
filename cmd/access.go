@@ -147,8 +147,7 @@ func runAccessPlans(cmd *cobra.Command) error {
 	if flagJSON {
 		return writeAccessJSON(plans)
 	}
-	renderAccessPlans(plans)
-	return nil
+	return renderAccessPlans(plans)
 }
 
 func runAccessBuy(cmd *cobra.Command, args []string) error {
@@ -203,13 +202,16 @@ func runAccessBuy(cmd *cobra.Command, args []string) error {
 		return writeAccessJSON(accessBuyJSONFromResult(*result, saveErr))
 	}
 	if saveErr != nil {
-		fmt.Fprintln(accessStdout, result.Pass)
-		fmt.Fprintf(accessStderr, "Warning: access pass purchase settled, but the pass could not be saved locally. Store the one-time pass printed on stdout in TTSBUDDY_ACCESS_PASS. Save error: %s\n", sanitizeAccessMessage(saveErr.Error()))
+		if _, err := fmt.Fprintln(accessStdout, result.Pass); err != nil {
+			return &exitError{code: 1, msg: "access pass purchase settled, but writing the pass failed"}
+		}
+		if _, err := fmt.Fprintf(accessStderr, "Warning: access pass purchase settled, but the pass could not be saved locally. Store the one-time pass printed on stdout in TTSBUDDY_ACCESS_PASS. Save error: %s\n", sanitizeAccessMessage(saveErr.Error())); err != nil {
+			return &exitError{code: 1, msg: "access pass purchase settled, but writing the save warning failed"}
+		}
 		return nil
 	}
 
-	renderAccessBuySuccess(*result)
-	return nil
+	return renderAccessBuySuccess(*result)
 }
 
 func runAccessStatus(cmd *cobra.Command) error {
@@ -233,8 +235,7 @@ func runAccessStatus(cmd *cobra.Command) error {
 	if flagJSON {
 		return writeAccessJSON(status)
 	}
-	renderAccessStatus(status)
-	return nil
+	return renderAccessStatus(status)
 }
 
 func runAccessForget(cmd *cobra.Command) error {
@@ -296,8 +297,10 @@ func accessBuyJSONFromResult(result access.PurchaseResult, saveErr error) access
 	return out
 }
 
-func renderAccessPlans(plans *access.PlansResponse) {
-	fmt.Fprintf(accessStdout, "%-12s %-15s %-14s %-14s %-14s %s\n", "SKU", "PRICE", "NETWORK", "ALLOWANCE", "REQUEST", "VALID")
+func renderAccessPlans(plans *access.PlansResponse) error {
+	if _, err := fmt.Fprintf(accessStdout, "%-12s %-15s %-14s %-14s %-14s %s\n", "SKU", "PRICE", "NETWORK", "ALLOWANCE", "REQUEST", "VALID"); err != nil {
+		return err
+	}
 	for _, plan := range plans.Plans {
 		price := strings.TrimSpace(plan.Price.Display)
 		if price == "" {
@@ -306,35 +309,46 @@ func renderAccessPlans(plans *access.PlansResponse) {
 		if plan.Price.Asset != "" && !strings.Contains(price, plan.Price.Asset) {
 			price += " " + plan.Price.Asset
 		}
-		fmt.Fprintf(accessStdout, "%-12s %-15s %-14s %-14s %-14s %s\n",
+		if _, err := fmt.Fprintf(accessStdout, "%-12s %-15s %-14s %-14s %-14s %s\n",
 			plan.SKU,
 			price,
 			plan.Price.Network,
 			formatUnits(plan.AllowanceUnits),
 			formatUnits(plan.RequestLimitUnits),
 			formatAccessValidity(plan.ValidForSeconds),
-		)
+		); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
-func renderAccessBuySuccess(result access.PurchaseResult) {
-	fmt.Fprintf(accessStdout, "Access pass saved: %s\n", config.RedactCredential(result.Pass))
-	fmt.Fprintf(accessStdout, "Status: %s\n", result.Status)
-	fmt.Fprintf(accessStdout, "Remaining units: %s / %s\n", formatUnits(result.RemainingUnits), formatUnits(result.AllowanceUnits))
-	fmt.Fprintf(accessStdout, "Per-request limit: %s\n", formatUnits(result.RequestLimitUnits))
-	fmt.Fprintf(accessStdout, "Expires: %s\n", result.ExpiresAt.UTC().Format(time.RFC3339))
-	fmt.Fprintf(accessStdout, "Purchase ID: %s\n", result.Receipt.PurchaseID)
+func renderAccessBuySuccess(result access.PurchaseResult) error {
+	_, err := fmt.Fprintf(accessStdout, "Access pass saved: %s\nStatus: %s\nRemaining units: %s / %s\nPer-request limit: %s\nExpires: %s\nPurchase ID: %s\n",
+		config.RedactCredential(result.Pass),
+		result.Status,
+		formatUnits(result.RemainingUnits),
+		formatUnits(result.AllowanceUnits),
+		formatUnits(result.RequestLimitUnits),
+		result.ExpiresAt.UTC().Format(time.RFC3339),
+		result.Receipt.PurchaseID,
+	)
+	return err
 }
 
-func renderAccessStatus(status *access.StatusResult) {
-	fmt.Fprintf(accessStdout, "Status: %s\n", status.Status)
-	fmt.Fprintf(accessStdout, "Remaining units: %s / %s\n", formatUnits(status.RemainingUnits), formatUnits(status.AllowanceUnits))
-	fmt.Fprintf(accessStdout, "Reserved units: %s\n", formatUnits(status.ReservedUnits))
-	fmt.Fprintf(accessStdout, "Consumed units: %s\n", formatUnits(status.ConsumedUnits))
-	fmt.Fprintf(accessStdout, "Per-request limit: %s\n", formatUnits(status.RequestLimitUnits))
-	fmt.Fprintf(accessStdout, "Expires: %s\n", status.ExpiresAt.UTC().Format(time.RFC3339))
-	fmt.Fprintf(accessStdout, "Plan: %s\n", status.Plan.SKU)
-	fmt.Fprintf(accessStdout, "Purchase ID: %s\n", status.Receipt.PurchaseID)
+func renderAccessStatus(status *access.StatusResult) error {
+	_, err := fmt.Fprintf(accessStdout, "Status: %s\nRemaining units: %s / %s\nReserved units: %s\nConsumed units: %s\nPer-request limit: %s\nExpires: %s\nPlan: %s\nPurchase ID: %s\n",
+		status.Status,
+		formatUnits(status.RemainingUnits),
+		formatUnits(status.AllowanceUnits),
+		formatUnits(status.ReservedUnits),
+		formatUnits(status.ConsumedUnits),
+		formatUnits(status.RequestLimitUnits),
+		status.ExpiresAt.UTC().Format(time.RFC3339),
+		status.Plan.SKU,
+		status.Receipt.PurchaseID,
+	)
+	return err
 }
 
 func renderAccessForget(removed bool) error {
@@ -342,11 +356,12 @@ func renderAccessForget(removed bool) error {
 		return writeAccessJSON(accessForgetJSON{Success: true, Forgotten: removed})
 	}
 	if removed {
-		fmt.Fprintln(accessStdout, "Access pass removed from local config.")
+		_, err := fmt.Fprintln(accessStdout, "Access pass removed from local config.")
+		return err
 	} else {
-		fmt.Fprintln(accessStdout, "No stored access pass to forget.")
+		_, err := fmt.Fprintln(accessStdout, "No stored access pass to forget.")
+		return err
 	}
-	return nil
 }
 
 func writeAccessJSON(value any) error {
