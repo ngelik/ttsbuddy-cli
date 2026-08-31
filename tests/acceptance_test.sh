@@ -1,9 +1,16 @@
 #!/usr/bin/env bash
 # Acceptance tests for ttsbuddy CLI.
-# Runs against the live API using the installed or dev-built binary.
+# Runs against the live API, or the explicitly gated local prepaid acceptance
+# path, using the installed or dev-built binary.
 #
 # Usage:
 #   AUTH_ONLY=1 BINARY=bin/ttsbuddy ./tests/acceptance_test.sh
+#   PREPAID_ACCEPTANCE=1 PREPAID_PAYMENT_OPT_IN=BASE_SEPOLIA_TEST_USDC_ONLY \
+#     PREPAID_LOCAL_STACK_ACK=CLEAN_LOCAL_SUPABASE_ONLY PREPAID_WALLET=local \
+#     PREPAID_MAX_PRICE=5.00 PREPAID_EXPECTED_PAYEE_ADDRESS=0x... \
+#     PREPAID_EXPECTED_CLI_REVISION=<40-hex> PREPAID_RECEIPT_DIR=/tmp/... \
+#     TTSBUDDY_API_URL=http://127.0.0.1:54321/functions/v1/agent-tts \
+#     TTSBUDDY_ALLOW_CUSTOM_API_URL=true BINARY=bin/ttsbuddy ./tests/acceptance_test.sh
 #   TTSBUDDY_API_KEY=ttsb_... ./tests/acceptance_test.sh
 #   BINARY=bin/ttsbuddy TTSBUDDY_API_KEY=ttsb_... ./tests/acceptance_test.sh
 #
@@ -13,6 +20,7 @@ set -uo pipefail
 
 BINARY="${BINARY:-ttsbuddy}"
 AUTH_ONLY="${AUTH_ONLY:-0}"
+PREPAID_ACCEPTANCE="${PREPAID_ACCEPTANCE:-0}"
 POST_DELAY="${POST_DELAY:-65}"
 PASS=0
 FAIL=0
@@ -46,7 +54,7 @@ echo ""
 echo "=== TTSBuddy CLI Acceptance Tests ==="
 echo "Binary:     $BINARY ($(command -v "$BINARY" 2>/dev/null || echo "$BINARY"))"
 if [ -n "${TTSBUDDY_API_KEY:-}" ]; then
-    echo "API Key:    ${TTSBUDDY_API_KEY:0:15}..."
+    echo "API Key:    set (redacted)"
 else
     echo "API Key:    not set"
 fi
@@ -212,9 +220,266 @@ post_test() {
     fi
 }
 
+# --- Explicitly gated prepaid acceptance helpers ---
+
+prepaid_die() {
+    echo "❌ Prepaid acceptance stopped: $1"
+    exit 2
+}
+
+prepaid_require_env() {
+    local name="$1"
+    if [ -z "${!name:-}" ]; then
+        prepaid_die "$name is required"
+    fi
+}
+
+prepaid_lower() {
+    printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
+}
+
+# Capture transient command output under TB_OUT. On failure, do not echo the
+# captured response: payment responses and URLs are not safe receipt material.
+prepaid_capture() {
+    local id="$1" stdout_path="$2" stderr_path="$3"
+    shift 3
+    set +e
+    "$@" >"$stdout_path" 2>"$stderr_path"
+    local actual=$?
+    set -e
+    if [ "$actual" -ne 0 ]; then
+        fail "$id" "exit $actual (captured output withheld)"
+        return 1
+    fi
+    pass "$id"
+}
+
+prepaid_write_tts_receipt() {
+    local input="$1" output="$2"
+    jq '{
+        success, status, job_id,
+        audio: (.audio // null | if . == null then null else {
+            duration_seconds, file_size_bytes, format, voice, speed, expires_at
+        } end),
+        billing: (.billing // null | if . == null then null else {
+            mode, units, request_units, allowance_units, reserved_units,
+            consumed_units, remaining_units
+        } end),
+        stats: (.stats // null | if . == null then null else {
+            characters_count, speech_length_seconds, file_size_bytes,
+            generation_seconds, generation_chars_per_second
+        } end),
+        meta: (.meta // null | if . == null then null else {
+            request_id, api_version
+        } end)
+    }' "$input" >"$output"
+}
+
+prepaid_finalize_receipts() {
+    local receipt_dir="$1"
+    local secret name
+
+    # Reject credential-shaped values and forbidden header/secret names without
+    # printing the matching content.
+    if grep -ERq '\bttsp_[a-z0-9-]{8,128}_[a-zA-Z0-9_-]{32,128}\b|\bttsb_[^[:space:]]+|\bttsc_[^[:space:]]+' "$receipt_dir"; then
+        prepaid_die "receipt credential redaction check failed; quarantine the receipt directory"
+    fi
+    if grep -ERq 'PAYMENT-SIGNATURE|private[_ -]?key|CDP_API_KEY_SECRET|CDP_WALLET_SECRET' "$receipt_dir"; then
+        prepaid_die "receipt redaction check failed; quarantine the receipt directory"
+    fi
+    for name in TTSBUDDY_EVM_PRIVATE_KEY CDP_API_KEY_ID CDP_API_KEY_SECRET CDP_WALLET_SECRET; do
+        secret="${!name:-}"
+        if [ -n "$secret" ] && grep -FRq -- "$secret" "$receipt_dir"; then
+            prepaid_die "receipt contains a configured secret; quarantine the receipt directory"
+        fi
+    done
+
+    (
+        cd "$receipt_dir" || exit 1
+        for file in *.json; do
+            shasum -a 256 "$file"
+        done
+    ) >"$receipt_dir/SHA256SUMS"
+    chmod 400 "$receipt_dir"/*.json "$receipt_dir/SHA256SUMS"
+    chmod 500 "$receipt_dir"
+}
+
+run_prepaid_acceptance() {
+    local expected_api_url="http://127.0.0.1:54321/functions/v1/agent-tts"
+    local expected_asset="0x036cbd53842c5426634e7929541ec2318f3dcf7e"
+    local metadata revision modified starter_count
+    local expected_payee_lc
+    local plans_raw buy_raw before_raw speak_raw poll_raw after_raw
+    local job_id prepaid_text initial_consumed initial_remaining expected_consumed expected_remaining
+
+    [ "$AUTH_ONLY" = "0" ] || prepaid_die "AUTH_ONLY and PREPAID_ACCEPTANCE are mutually exclusive"
+    [ "$PREPAID_ACCEPTANCE" = "1" ] || prepaid_die "PREPAID_ACCEPTANCE must be 0 or 1"
+    [ "${PREPAID_PAYMENT_OPT_IN:-}" = "BASE_SEPOLIA_TEST_USDC_ONLY" ] || \
+        prepaid_die "set PREPAID_PAYMENT_OPT_IN=BASE_SEPOLIA_TEST_USDC_ONLY to authorize the testnet payment"
+    [ "${PREPAID_LOCAL_STACK_ACK:-}" = "CLEAN_LOCAL_SUPABASE_ONLY" ] || \
+        prepaid_die "set PREPAID_LOCAL_STACK_ACK=CLEAN_LOCAL_SUPABASE_ONLY after verifying the clean local stack"
+    [ "${TTSBUDDY_API_URL:-}" = "$expected_api_url" ] || \
+        prepaid_die "TTSBUDDY_API_URL must be exactly $expected_api_url"
+    [ "${TTSBUDDY_ALLOW_CUSTOM_API_URL:-}" = "true" ] || \
+        prepaid_die "TTSBUDDY_ALLOW_CUSTOM_API_URL must be exactly true"
+    [ -z "${TTSBUDDY_API_KEY:-}" ] || prepaid_die "TTSBUDDY_API_KEY must be unset"
+    [ -z "${TTSBUDDY_ACCESS_PASS:-}" ] || prepaid_die "TTSBUDDY_ACCESS_PASS must be unset so the purchased pass is used"
+
+    prepaid_require_env PREPAID_WALLET
+    prepaid_require_env PREPAID_MAX_PRICE
+    prepaid_require_env PREPAID_EXPECTED_PAYEE_ADDRESS
+    prepaid_require_env PREPAID_EXPECTED_CLI_REVISION
+    prepaid_require_env PREPAID_RECEIPT_DIR
+    [ "$PREPAID_MAX_PRICE" = "5.00" ] || prepaid_die "PREPAID_MAX_PRICE must be exactly 5.00 for the frozen starter plan"
+    [[ "$PREPAID_EXPECTED_PAYEE_ADDRESS" =~ ^0x[0-9a-fA-F]{40}$ ]] || prepaid_die "PREPAID_EXPECTED_PAYEE_ADDRESS is invalid"
+    expected_payee_lc="$(prepaid_lower "$PREPAID_EXPECTED_PAYEE_ADDRESS")"
+    [ "$expected_payee_lc" != "0x0000000000000000000000000000000000000000" ] || prepaid_die "payee must be nonzero"
+    [[ "$PREPAID_EXPECTED_CLI_REVISION" =~ ^[0-9a-f]{40}$ ]] || prepaid_die "PREPAID_EXPECTED_CLI_REVISION must be a full lowercase commit"
+
+    case "$PREPAID_WALLET" in
+        local)
+            [ "${PREPAID_LOCAL_WALLET_OPT_IN:-}" = "1" ] || prepaid_die "set PREPAID_LOCAL_WALLET_OPT_IN=1"
+            prepaid_require_env TTSBUDDY_EVM_PRIVATE_KEY
+            ;;
+        cdp)
+            [ "${PREPAID_CDP_WALLET_OPT_IN:-}" = "1" ] || prepaid_die "set PREPAID_CDP_WALLET_OPT_IN=1"
+            prepaid_require_env CDP_API_KEY_ID
+            prepaid_require_env CDP_API_KEY_SECRET
+            prepaid_require_env CDP_WALLET_SECRET
+            prepaid_require_env TTSBUDDY_CDP_EVM_ACCOUNT_ADDRESS
+            ;;
+        *) prepaid_die "PREPAID_WALLET must be local or cdp" ;;
+    esac
+
+    command -v go >/dev/null 2>&1 || prepaid_die "go is required to inspect binary build metadata"
+    command -v shasum >/dev/null 2>&1 || prepaid_die "shasum is required for the receipt manifest"
+    [ -d "$PREPAID_RECEIPT_DIR" ] || prepaid_die "PREPAID_RECEIPT_DIR must be an existing mktemp directory"
+    [ ! -L "$PREPAID_RECEIPT_DIR" ] || prepaid_die "PREPAID_RECEIPT_DIR must not be a symlink"
+    [ -z "$(find "$PREPAID_RECEIPT_DIR" -mindepth 1 -maxdepth 1 -print -quit)" ] || prepaid_die "PREPAID_RECEIPT_DIR must be empty"
+    chmod 700 "$PREPAID_RECEIPT_DIR"
+
+    metadata=$(go version -m "$BINARY" 2>/dev/null) || prepaid_die "cannot read Go build metadata from $BINARY"
+    revision=$(printf '%s\n' "$metadata" | sed -n 's/^[[:space:]]*build[[:space:]]*vcs\.revision=//p' | tail -1)
+    modified=$(printf '%s\n' "$metadata" | sed -n 's/^[[:space:]]*build[[:space:]]*vcs\.modified=//p' | tail -1)
+    [ "$revision" = "$PREPAID_EXPECTED_CLI_REVISION" ] || prepaid_die "binary VCS revision does not match PREPAID_EXPECTED_CLI_REVISION"
+    [ "$modified" = "false" ] || prepaid_die "binary must report vcs.modified=false"
+
+    plans_raw="$TB_OUT/_prepaid_plans.json"
+    buy_raw="$TB_OUT/_prepaid_buy.json"
+    before_raw="$TB_OUT/_prepaid_before.json"
+    speak_raw="$TB_OUT/_prepaid_speak.json"
+    poll_raw="$TB_OUT/_prepaid_poll.json"
+    after_raw="$TB_OUT/_prepaid_after.json"
+
+    jq -n \
+        --arg run_id "$ACCEPTANCE_RUN_ID" \
+        --arg revision "$revision" \
+        --arg binary "$BINARY" \
+        --arg wallet "$PREPAID_WALLET" \
+        --arg api_url "$expected_api_url" \
+        '{schema_version: 1, run_id: $run_id, cli_revision: $revision,
+          binary: $binary, wallet_backend: $wallet, api_url: $api_url,
+          network: "eip155:84532", asset: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+          payment_environment: "Base Sepolia test USDC", local_home: true}' \
+        >"$PREPAID_RECEIPT_DIR/00-run.json"
+
+    echo "📋 PREPAID. Explicit Base Sepolia private-beta smoke"
+    prepaid_capture "PREPAID.1 access plans" "$plans_raw" "$TB_OUT/_prepaid_plans.stderr" tb --json access plans || exit 1
+    starter_count=$(jq '[.plans[] | select(.sku == "starter")] | length' "$plans_raw" 2>/dev/null) || prepaid_die "plans response is not valid JSON"
+    [ "$starter_count" -eq 1 ] || prepaid_die "expected exactly one starter plan"
+    jq -e --arg asset "$expected_asset" --arg payee "$expected_payee_lc" '
+        .plans[] | select(.sku == "starter") |
+        .version == 1 and .price.atomic == "5000000" and
+        (.price.asset | ascii_downcase) == $asset and .price.asset_decimals == 6 and
+        .price.network == "eip155:84532" and (.price.pay_to | ascii_downcase) == $payee and
+        .allowance_units == 500000 and .request_limit_units == 100000 and
+        .valid_for_seconds > 0
+    ' "$plans_raw" >/dev/null || prepaid_die "starter plan does not match the frozen network, asset, payee, price, or limits"
+    jq '{plans: [.plans[] | select(.sku == "starter") | {
+        sku, version, price: {display, atomic, asset, asset_decimals, network, pay_to},
+        allowance_units, request_limit_units, valid_for_seconds, voice_policy
+    }]}' "$plans_raw" >"$PREPAID_RECEIPT_DIR/01-plans.json"
+
+    prepaid_capture "PREPAID.2 buy starter" "$buy_raw" "$TB_OUT/_prepaid_buy.stderr" \
+        tb --json access buy starter --wallet "$PREPAID_WALLET" --max-price "$PREPAID_MAX_PRICE" || exit 1
+    jq -e '
+        .success == true and .saved == true and .status == "active" and
+        .allowance_units == 500000 and .reserved_units == 0 and
+        .consumed_units == 0 and .remaining_units == 500000 and
+        .request_limit_units == 100000 and (.pass | endswith("_...")) and
+        .receipt.network == "eip155:84532" and .receipt.amount == "5000000" and
+        (.receipt.purchase_id | type == "string" and length > 0) and
+        (.receipt.transaction | test("^0x[0-9a-fA-F]{64}$"))
+    ' "$buy_raw" >/dev/null || prepaid_die "purchase response failed the settled-pass invariants"
+    jq '{success, saved, status, allowance_units, reserved_units, consumed_units,
+        remaining_units, request_limit_units, expires_at,
+        receipt: {purchase_id: .receipt.purchase_id, network: .receipt.network,
+          transaction: .receipt.transaction, asset: .receipt.asset, amount: .receipt.amount}}' \
+        "$buy_raw" >"$PREPAID_RECEIPT_DIR/02-buy.json"
+
+    prepaid_capture "PREPAID.3 initial access status" "$before_raw" "$TB_OUT/_prepaid_before.stderr" tb --json access status || exit 1
+    jq -e '.status == "active" and .allowance_units == 500000 and
+        .reserved_units == 0 and .consumed_units == 0 and .remaining_units == 500000 and
+        .request_limit_units == 100000' "$before_raw" >/dev/null || prepaid_die "initial pass status is inconsistent"
+    initial_consumed=$(jq -r '.consumed_units' "$before_raw")
+    initial_remaining=$(jq -r '.remaining_units' "$before_raw")
+    jq '{status, allowance_units, reserved_units, consumed_units, remaining_units,
+        request_limit_units, expires_at, plan: {sku: .plan.sku, version: .plan.version},
+        receipt: {purchase_id: .receipt.purchase_id, network: .receipt.network,
+          transaction: .receipt.transaction, asset: .receipt.asset, amount: .receipt.amount}}' \
+        "$before_raw" >"$PREPAID_RECEIPT_DIR/03-status-before.json"
+
+    prepaid_text="Prepaid access pass acceptance."
+    prepaid_capture "PREPAID.4 direct speak, poll, and download" "$speak_raw" "$TB_OUT/_prepaid_speak.stderr" \
+        tb --json speak "$prepaid_text" --idempotency-key "prepaid-${ACCEPTANCE_RUN_ID}-direct" \
+        --output "$TB_OUT/prepaid-direct.mp3" --timeout 10m || exit 1
+    job_id=$(jq -r '.job_id // empty' "$speak_raw")
+    [ -n "$job_id" ] || prepaid_die "speak response did not include a job_id"
+    [ -s "$TB_OUT/prepaid-direct.mp3" ] || prepaid_die "speak did not download a non-empty audio file"
+    is_audio_file "$TB_OUT/prepaid-direct.mp3" || prepaid_die "downloaded file was not recognized as audio"
+    prepaid_write_tts_receipt "$speak_raw" "$PREPAID_RECEIPT_DIR/04-speak.json"
+
+    prepaid_capture "PREPAID.5 terminal job status" "$poll_raw" "$TB_OUT/_prepaid_poll.stderr" \
+        tb --json status "$job_id" --watch --timeout 30s || exit 1
+    jq -e --arg job_id "$job_id" '.job_id == $job_id and .status == "completed"' "$poll_raw" >/dev/null || \
+        prepaid_die "job status did not confirm the same completed job"
+    prepaid_write_tts_receipt "$poll_raw" "$PREPAID_RECEIPT_DIR/05-job-status.json"
+
+    prepaid_capture "PREPAID.6 final access status" "$after_raw" "$TB_OUT/_prepaid_after.stderr" tb --json access status || exit 1
+    expected_consumed=$((initial_consumed + ${#prepaid_text}))
+    expected_remaining=$((initial_remaining - ${#prepaid_text}))
+    jq -e --argjson consumed "$expected_consumed" --argjson remaining "$expected_remaining" '
+        .status == "active" and .reserved_units == 0 and
+        .consumed_units == $consumed and .remaining_units == $remaining
+    ' "$after_raw" >/dev/null || prepaid_die "final pass counters do not match the direct-text UTF-16 reservation"
+    jq '{status, allowance_units, reserved_units, consumed_units, remaining_units,
+        request_limit_units, expires_at, plan: {sku: .plan.sku, version: .plan.version},
+        receipt: {purchase_id: .receipt.purchase_id, network: .receipt.network,
+          transaction: .receipt.transaction, asset: .receipt.asset, amount: .receipt.amount}}' \
+        "$after_raw" >"$PREPAID_RECEIPT_DIR/06-status-after.json"
+
+    run_test "PREPAID.7 access forget" 0 tb access forget
+    run_test "PREPAID.8 status after forget" 1 tb access status
+
+    prepaid_finalize_receipts "$PREPAID_RECEIPT_DIR"
+    echo "  🔒 Redacted receipt set: $PREPAID_RECEIPT_DIR"
+    echo ""
+    print_summary
+}
+
 # ============================================================
 # AUTH. Safe signed-out lifecycle (never calls a live service)
 # ============================================================
+
+if [ "$PREPAID_ACCEPTANCE" = "1" ]; then
+    run_prepaid_acceptance
+    exit $?
+fi
+
+if [ "$PREPAID_ACCEPTANCE" != "0" ]; then
+    echo "❌ PREPAID_ACCEPTANCE must be 0 or 1."
+    exit 2
+fi
 
 echo "📋 AUTH. Signed-out and local-only lifecycle"
 run_test_stdout "AUTH.1 auth --help" 0 "login" tb auth --help
@@ -266,9 +531,10 @@ echo "📋 A. Command Surface"
 run_test_stdout "A.1 version" 0 "ttsbuddy" tb version
 run_test_json   "A.2 version --json" tb version --json
 run_test_stdout "A.3 --version" 0 "ttsbuddy" tb --version
-run_test_stdout "A.4 --help" 0 "completion" tb --help
+run_test_stdout "A.4 --help" 0 "access" tb --help
 run_test_stdout "A.5 speak --help" 0 "idempotency-key" tb speak --help
 run_test_stdout "A.5b web --help" 0 "webpage" tb web --help
+run_test_stdout "A.5c access --help" 0 "buy" tb access --help
 run_test "A.6a status --help" 0 tb status --help
 run_test "A.6b voices --help" 0 tb voices --help
 run_test "A.6c config --help" 0 tb config --help
