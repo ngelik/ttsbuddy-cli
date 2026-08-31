@@ -402,6 +402,25 @@ func TestCLISessionAndAccessPassMutationsPreserveEachOther(t *testing.T) {
 		t.Fatalf("CLI-session save lost access pass: %#v", cfg.AccessPass)
 	}
 
+	removed, err := ForgetAccessPass(updatedPass.Credential)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !removed {
+		t.Fatal("exact access pass was not removed")
+	}
+	cfg, err = Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.AccessPass != nil || cfg.CLISession == nil || cfg.CLISession.Credential != cli {
+		t.Fatalf("access-pass clear changed CLI session: pass=%#v session=%#v", cfg.AccessPass, cfg.CLISession)
+	}
+
+	if err := SaveAccessPass(updatedPass); err != nil {
+		t.Fatal(err)
+	}
+
 	if err := ClearCLISession(cli); err != nil {
 		t.Fatal(err)
 	}
