@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"regexp"
 	"time"
@@ -138,7 +139,11 @@ func runAuthLogin(cmd *cobra.Command, _ []string) error {
 }
 
 func shouldWarnClerkCleanup(exchangeSucceeded bool, cleanupErr error) bool {
-	return cleanupErr != nil && !exchangeSucceeded
+	if cleanupErr == nil {
+		return false
+	}
+	var requestErr *clerkfapi.RequestError
+	return !exchangeSucceeded || !errors.As(cleanupErr, &requestErr) || requestErr.StatusCode != http.StatusNotFound
 }
 
 func validateLoginCredential(response *api.CLIAuthResponse) (*api.CLIAuthCredential, error) {

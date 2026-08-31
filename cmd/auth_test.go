@@ -12,15 +12,22 @@ import (
 	"time"
 
 	"github.com/ngelik/ttsbuddy-cli/internal/api"
+	"github.com/ngelik/ttsbuddy-cli/internal/clerkfapi"
 )
 
 func TestClerkCleanupWarningUsesBackendExchangeAsRevocationAuthority(t *testing.T) {
-	cleanupErr := errors.New("terminal Clerk cleanup could not confirm an already-revoked session")
-	if shouldWarnClerkCleanup(true, cleanupErr) {
-		t.Fatal("successful backend exchange should make terminal Clerk cleanup idempotent")
+	alreadyRevoked := &clerkfapi.RequestError{StatusCode: http.StatusNotFound}
+	if shouldWarnClerkCleanup(true, alreadyRevoked) {
+		t.Fatal("already-revoked cleanup after successful exchange should not warn")
 	}
-	if !shouldWarnClerkCleanup(false, cleanupErr) {
+	if !shouldWarnClerkCleanup(false, alreadyRevoked) {
 		t.Fatal("pre-exchange cleanup failure should warn")
+	}
+	if !shouldWarnClerkCleanup(true, &clerkfapi.RequestError{StatusCode: http.StatusInternalServerError}) {
+		t.Fatal("post-exchange Clerk server failure should warn")
+	}
+	if !shouldWarnClerkCleanup(true, errors.New("network failure")) {
+		t.Fatal("post-exchange network failure should warn")
 	}
 	if shouldWarnClerkCleanup(false, nil) {
 		t.Fatal("successful cleanup should not warn")
