@@ -3,8 +3,11 @@ package cmd
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"sync/atomic"
 	"testing"
+
+	"github.com/spf13/cobra"
 )
 
 func TestVersion(t *testing.T) {
@@ -187,4 +190,56 @@ func TestInvalidAllowCustomAPIURLEnvWarningPrintsBeforeGate(t *testing.T) {
 	assertExitCode(t, r, 1)
 	assertContains(t, r.Stderr, "Warning: invalid TTSBUDDY_ALLOW_CUSTOM_API_URL", "stderr")
 	assertContains(t, r.Stderr, "custom API URL", "stderr")
+}
+
+func TestAccessPassEnvironmentSatisfiesCredentialRequirement(t *testing.T) {
+	home := t.TempDir()
+	env := append(envForTest(home, "", ""), "TTSBUDDY_ACCESS_PASS=ttsp_abcd1234_"+strings.Repeat("a", 48))
+	r := runCLI(t, env, "speak", "")
+	assertExitCode(t, r, 2)
+	assertContains(t, r.Stderr, "no text provided", "stderr")
+	assertNotContains(t, r.Stderr, "no credential configured", "stderr")
+}
+
+func TestMalformedAccessPassEnvironmentDoesNotSatisfyCredentialRequirement(t *testing.T) {
+	home := t.TempDir()
+	env := append(envForTest(home, "", ""), "TTSBUDDY_ACCESS_PASS=ttsp_abcd1234_secret")
+	r := runCLI(t, env, "speak", "")
+	assertExitCode(t, r, 2)
+	assertContains(t, r.Stderr, "no credential configured", "stderr")
+	assertNotContains(t, r.Stderr, "no text provided", "stderr")
+}
+
+func TestInvalidGlobalKeyFlagRejectedBeforeNetworkCommand(t *testing.T) {
+	home := t.TempDir()
+	r := runCLI(t, envForTest(home, "", ""), "speak", "--key", "wallet-secret", "hello")
+	assertExitCode(t, r, 2)
+	assertContains(t, r.Stderr, "--key must start with 'ttsb_' or 'ttsp_'", "stderr")
+}
+
+func TestMalformedAccessPassKeyFlagRejectedBeforeNetworkCommand(t *testing.T) {
+	home := t.TempDir()
+	r := runCLI(t, envForTest(home, "", ""), "speak", "--key", "ttsp_abcd1234_secret", "hello")
+	assertExitCode(t, r, 2)
+	assertContains(t, r.Stderr, "--key must start with 'ttsb_' or 'ttsp_'", "stderr")
+}
+
+func TestCommandUsesCredentialedAPIRoutes(t *testing.T) {
+	root := &cobra.Command{Use: "ttsbuddy"}
+	access := &cobra.Command{Use: "access"}
+	accessPlans := &cobra.Command{Use: "plans"}
+	accessBuy := &cobra.Command{Use: "buy"}
+	accessStatus := &cobra.Command{Use: "status"}
+	access.AddCommand(accessPlans, accessBuy, accessStatus)
+	root.AddCommand(access)
+
+	if commandUsesCredentialedAPI(accessPlans) {
+		t.Fatal("access plans should not use stored bearer credentials")
+	}
+	if commandUsesCredentialedAPI(accessBuy) {
+		t.Fatal("access buy should not use stored bearer credentials")
+	}
+	if !commandUsesCredentialedAPI(accessStatus) {
+		t.Fatal("access status should use the intended credential")
+	}
 }

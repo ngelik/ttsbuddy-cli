@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -20,6 +21,8 @@ type FlagValues struct {
 // ResolvedConfig contains fully resolved values with all defaults applied.
 type ResolvedConfig struct {
 	APIKey              string
+	CredentialKind      CredentialKind
+	AccessPass          *StoredAccessPass
 	APIURL              string
 	CLIAuthURL          string
 	ClerkFrontendAPIURL string
@@ -32,13 +35,15 @@ type ResolvedConfig struct {
 	PollTimeout         string
 }
 
-// Resolve applies precedence: flags > env vars > config file > defaults.
+// Resolve applies credential precedence:
+// --key > TTSBUDDY_ACCESS_PASS > TTSBUDDY_API_KEY > stored access pass >
+// active CLI session > stored permanent API key.
+// Non-credential values keep the existing flags > env vars > config > defaults order.
 // Returns the resolved config and any warnings (e.g., invalid env var values).
 // Callers should decide whether to print warnings based on output mode.
 func Resolve(cfg *Config, flags FlagValues) (*ResolvedConfig, []string) {
 	var warnings []string
 	r := &ResolvedConfig{
-		APIKey:              cfg.APIKey,
 		APIURL:              or(cfg.APIURL, DefaultAPIURL),
 		CLIAuthURL:          or(cfg.CLIAuthURL, DefaultCLIAuthURL),
 		ClerkFrontendAPIURL: DefaultClerkFAPIURL,
@@ -50,10 +55,26 @@ func Resolve(cfg *Config, flags FlagValues) (*ResolvedConfig, []string) {
 		OutputDir:           or(cfg.OutputDir, DefaultOutputDir),
 		PollTimeout:         or(cfg.PollTimeout, DefaultPollTimeout),
 	}
+	if cfg.APIKey != "" {
+		if IsSubscriptionCredential(cfg.APIKey) {
+			setCredential(r, cfg.APIKey, CredentialKindSubscription)
+		} else {
+			warnings = append(warnings, "stored API key is malformed; ignoring it")
+		}
+	}
 	if session, warning := ActiveCLISession(cfg, time.Now()); session != nil {
-		r.APIKey = session.Credential
+		setCredential(r, session.Credential, CredentialKindCLISession)
 	} else if warning != "" {
 		warnings = append(warnings, warning)
+	}
+	if cfg.AccessPass != nil {
+		pass := *cfg.AccessPass
+		r.AccessPass = &pass
+		if IsAccessPassCredential(pass.Credential) {
+			setCredential(r, pass.Credential, CredentialKindAccessPass)
+		} else {
+			warnings = append(warnings, "stored access pass is malformed; ignoring it")
+		}
 	}
 
 	// Layer 2: environment variables override config file.
@@ -63,6 +84,14 @@ func Resolve(cfg *Config, flags FlagValues) (*ResolvedConfig, []string) {
 	applyFlags(r, flags)
 
 	return r, warnings
+}
+
+func setCredential(r *ResolvedConfig, credential string, kind CredentialKind) {
+	if credential == "" {
+		return
+	}
+	r.APIKey = credential
+	r.CredentialKind = kind
 }
 
 func applyEnv(r *ResolvedConfig) []string {
@@ -76,7 +105,18 @@ func applyEnv(r *ResolvedConfig) []string {
 		}
 	}
 	if v := os.Getenv("TTSBUDDY_API_KEY"); v != "" {
-		r.APIKey = v
+		if IsSubscriptionCredential(v) || strings.HasPrefix(v, "ttsb_") {
+			setCredential(r, v, CredentialKindSubscription)
+		} else {
+			warnings = append(warnings, "invalid TTSBUDDY_API_KEY; ignoring it")
+		}
+	}
+	if v := os.Getenv("TTSBUDDY_ACCESS_PASS"); v != "" {
+		if IsAccessPassCredential(v) {
+			setCredential(r, v, CredentialKindAccessPass)
+		} else {
+			warnings = append(warnings, "invalid TTSBUDDY_ACCESS_PASS; ignoring it")
+		}
 	}
 	if v := os.Getenv("TTSBUDDY_API_URL"); v != "" {
 		r.APIURL = v
@@ -127,7 +167,11 @@ func applyEnv(r *ResolvedConfig) []string {
 
 func applyFlags(r *ResolvedConfig, f FlagValues) {
 	if f.APIKey != nil {
-		r.APIKey = *f.APIKey
+		if kind := CredentialKindFor(*f.APIKey); kind == CredentialKindSubscription || kind == CredentialKindAccessPass {
+			setCredential(r, *f.APIKey, kind)
+		} else {
+			setCredential(r, *f.APIKey, CredentialKindNone)
+		}
 	}
 	if f.Voice != nil {
 		r.Voice = *f.Voice

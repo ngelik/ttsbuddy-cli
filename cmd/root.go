@@ -59,6 +59,9 @@ var rootCmd = &cobra.Command{
 
 		var warnings []string
 		resolvedCfg, warnings = config.Resolve(cfg, flags)
+		if cmd.Flags().Changed("key") && !isAuthCommand(cmd) && !config.IsManualCredential(flagAPIKey) {
+			return &exitError{code: 2, msg: "--key must start with 'ttsb_' or 'ttsp_'"}
+		}
 
 		if !flagJSON {
 			for _, w := range warnings {
@@ -80,11 +83,17 @@ var rootCmd = &cobra.Command{
 
 func commandUsesCredentialedAPI(cmd *cobra.Command) bool {
 	switch cmd.CommandPath() {
-	case "ttsbuddy speak", "ttsbuddy web", "ttsbuddy status":
+	case "ttsbuddy speak", "ttsbuddy web", "ttsbuddy status", "ttsbuddy access status":
 		return true
 	default:
 		return false
 	}
+}
+
+func isAuthCommand(cmd *cobra.Command) bool {
+	return cmd.CommandPath() == "ttsbuddy auth login" ||
+		cmd.CommandPath() == "ttsbuddy auth status" ||
+		cmd.CommandPath() == "ttsbuddy auth logout"
 }
 
 func init() {
@@ -93,7 +102,7 @@ func init() {
 
 	rootCmd.CompletionOptions.DisableDefaultCmd = true
 	rootCmd.SetFlagErrorFunc(helpOnFlagError)
-	rootCmd.PersistentFlags().StringVarP(&flagAPIKey, "key", "k", "", "API key (overrides config/env)")
+	rootCmd.PersistentFlags().StringVarP(&flagAPIKey, "key", "k", "", "credential (ttsb_ or ttsp_, overrides config/env)")
 	rootCmd.PersistentFlags().BoolVar(&flagJSON, "json", false, "JSON output to stdout only")
 	rootCmd.PersistentFlags().BoolVar(&flagQuiet, "quiet", false, "suppress progress output")
 
