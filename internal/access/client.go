@@ -369,13 +369,9 @@ func validatePaymentChallenge(required x402.PaymentRequired, plan Plan, maxAtomi
 	case compareAtomic(req.Amount, maxAtomic) > 0:
 		return errors.New("x402 challenge exceeds max price")
 	}
-	if req.Extra != nil {
-		if flow, ok := req.Extra["paymentFlow"]; ok {
-			flowValue, ok := flow.(string)
-			if !ok || flowValue != "upfront" {
-				return errors.New("x402 challenge payment flow mismatch")
-			}
-		}
+	flow, ok := req.Extra["paymentFlow"].(string)
+	if !ok || flow != "upfront" {
+		return errors.New("x402 challenge payment flow mismatch")
 	}
 	method, ok := req.Extra["assetTransferMethod"].(string)
 	if !ok || method != "eip3009" {

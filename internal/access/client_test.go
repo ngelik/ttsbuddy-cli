@@ -372,6 +372,10 @@ func TestBuyRejectsTupleMismatchesBeforeSigning(t *testing.T) {
 			r.Accepts[0].Extra["paymentFlow"] = "authorization"
 			return r
 		}},
+		{"missing payment flow", func(r x402.PaymentRequired) x402.PaymentRequired {
+			delete(r.Accepts[0].Extra, "paymentFlow")
+			return r
+		}},
 		{"missing transfer method", func(r x402.PaymentRequired) x402.PaymentRequired {
 			delete(r.Accepts[0].Extra, "assetTransferMethod")
 			return r
