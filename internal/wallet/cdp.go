@@ -140,7 +140,7 @@ func (s *cdpSigner) SignTypedData(ctx context.Context, domain evm.TypedDataDomai
 	if err != nil {
 		return nil, errors.New("CDP signing request failed")
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, cdpResponseMax+1))
 	if err != nil || len(data) > cdpResponseMax || resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return nil, errors.New("CDP signing request failed")

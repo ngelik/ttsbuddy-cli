@@ -18,7 +18,6 @@ func NewLocalFromEnvironment() (Signer, error) {
 	}
 
 	signer, err := evmsigners.NewClientSignerFromPrivateKey(privateKey)
-	privateKey = ""
 	if err != nil {
 		return nil, errors.New("invalid local EVM private key")
 	}

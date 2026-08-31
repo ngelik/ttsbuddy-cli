@@ -120,7 +120,7 @@ func writeFailure(stage string, err error, client *clerkfapi.Client) {
 }
 
 func promptLine(label string) (string, error) {
-	fmt.Fprint(os.Stdout, label)
+	_, _ = fmt.Fprint(os.Stdout, label)
 	reader := bufio.NewReader(os.Stdin)
 	value, err := reader.ReadString('\n')
 	if err != nil {
@@ -130,9 +130,9 @@ func promptLine(label string) (string, error) {
 }
 
 func promptHidden(label string) (string, error) {
-	fmt.Fprint(os.Stdout, label)
+	_, _ = fmt.Fprint(os.Stdout, label)
 	value, err := term.ReadPassword(int(os.Stdin.Fd()))
-	fmt.Fprintln(os.Stdout)
+	_, _ = fmt.Fprintln(os.Stdout)
 	if err != nil {
 		return "", err
 	}

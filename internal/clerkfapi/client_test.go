@@ -79,7 +79,6 @@ func TestStartEmailCodeCreatesNativeClientAndPreparesChallenge(t *testing.T) {
 		{
 			validate: validateFormRequest(http.MethodPost, "/v1/client/sign_ins", "client-1", map[string]string{
 				"identifier": "person@example.com",
-				"strategy":   "email_code",
 			}),
 			cookies: []http.Cookie{{Name: "__client", Value: "client-2"}},
 			bodyJSON: map[string]any{
@@ -245,7 +244,6 @@ func TestStartEmailCodeRejectsPendingSignInTask(t *testing.T) {
 		{
 			validate: validateFormRequest(http.MethodPost, "/v1/client/sign_ins", "client-1", map[string]string{
 				"identifier": "person@example.com",
-				"strategy":   "email_code",
 			}),
 			cookies: []http.Cookie{{Name: "__client", Value: "client-2"}},
 			bodyJSON: map[string]any{"response": map[string]any{
@@ -276,7 +274,6 @@ func TestStartEmailCodeDoesNotRevealAccountStateWhenEmailFactorIsUnavailable(t *
 		{
 			validate: validateFormRequest(http.MethodPost, "/v1/client/sign_ins", "client-1", map[string]string{
 				"identifier": "unknown@example.com",
-				"strategy":   "email_code",
 			}),
 			cookies: []http.Cookie{{Name: "__client", Value: "client-2"}},
 			bodyJSON: map[string]any{"response": map[string]any{
@@ -316,7 +313,6 @@ func TestStartEmailCodeRejectsPreparedStateChanges(t *testing.T) {
 		{
 			validate: validateFormRequest(http.MethodPost, "/v1/client/sign_ins", "client-1", map[string]string{
 				"identifier": "person@example.com",
-				"strategy":   "email_code",
 			}),
 			cookies: []http.Cookie{{Name: "__client", Value: "client-2"}},
 			bodyJSON: map[string]any{"response": map[string]any{
@@ -496,7 +492,6 @@ func TestStartEmailCodeAllowsSameOriginRedirect(t *testing.T) {
 		case "/v1/client/sign_ins/final":
 			validateFormRequest(http.MethodPost, "/v1/client/sign_ins/final", "client-1", map[string]string{
 				"identifier": "person@example.com",
-				"strategy":   "email_code",
 			})(t, r)
 			http.SetCookie(w, &http.Cookie{Name: "__client", Value: "client-2"})
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -573,7 +568,6 @@ func TestVerifyEmailCodeMintsSessionProofAndRotatesToken(t *testing.T) {
 		{
 			validate: validateFormRequest(http.MethodPost, "/v1/client/sign_ins", "client-1", map[string]string{
 				"identifier": "person@example.com",
-				"strategy":   "email_code",
 			}),
 			cookies: []http.Cookie{{Name: "__client", Value: "client-2"}},
 			bodyJSON: map[string]any{

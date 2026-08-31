@@ -76,7 +76,7 @@ func TestLoginLockSubprocessHelper(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer lock.Release()
+	defer func() { _ = lock.Release() }()
 	fmt.Println("ready")
 	for {
 		time.Sleep(time.Hour)

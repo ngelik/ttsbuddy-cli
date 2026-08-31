@@ -354,7 +354,7 @@ func validCredential(value, prefix string) bool {
 	}
 	for _, part := range parts[1:] {
 		for _, r := range part {
-			if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f')) {
+			if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
 				return false
 			}
 		}
@@ -362,8 +362,7 @@ func validCredential(value, prefix string) bool {
 	return true
 }
 
-func validPermanentCredential(value string) bool { return validCredential(value, "ttsb") }
-func validCLICredential(value string) bool       { return validCredential(value, "ttsc") }
+func validCLICredential(value string) bool { return validCredential(value, "ttsc") }
 
 // ActiveCLISession validates the stored credential and absolute server expiry.
 func ActiveCLISession(cfg *Config, now time.Time) (*StoredCLISession, string) {

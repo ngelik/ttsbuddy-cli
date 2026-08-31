@@ -61,7 +61,7 @@ func NewCLIAuthClient(baseURL, bearerToken, version string, allowCustom bool) (*
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
 		return nil, errors.New("invalid CLI auth URL")
 	}
-	if parsed.Path != "/v1/cli-auth" && !(parsed.Path == "/functions/v1/cli-auth" && isLoopbackHost(parsed.Hostname())) {
+	if parsed.Path != "/v1/cli-auth" && (parsed.Path != "/functions/v1/cli-auth" || !isLoopbackHost(parsed.Hostname())) {
 		return nil, errors.New("CLI auth URL must end with /v1/cli-auth")
 	}
 	origin := &url.URL{Scheme: parsed.Scheme, Host: parsed.Host}

@@ -28,8 +28,8 @@ func TestSecretUsesInjectedHiddenTTYReader(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer read.Close()
-	defer write.Close()
+	defer func() { _ = read.Close() }()
+	defer func() { _ = write.Close() }()
 	var out bytes.Buffer
 	p := New(read, &out)
 	p.isTerminal = func(int) bool { return true }

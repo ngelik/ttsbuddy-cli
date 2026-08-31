@@ -77,8 +77,7 @@ func runAuthLogin(cmd *cobra.Command, _ []string) error {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
 		cleanupErr := clerk.Cleanup(ctx)
-		var requestErr *clerkfapi.RequestError
-		if cleanupErr != nil && !(exchanged && errors.As(cleanupErr, &requestErr) && requestErr.StatusCode == 404) {
+		if shouldWarnClerkCleanup(exchanged, cleanupErr) {
 			fmt.Fprintln(os.Stderr, "Warning: temporary sign-in cleanup could not be confirmed.")
 		}
 		clerk.Close()
@@ -138,8 +137,12 @@ func runAuthLogin(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
+func shouldWarnClerkCleanup(exchangeSucceeded bool, cleanupErr error) bool {
+	return cleanupErr != nil && !exchangeSucceeded
+}
+
 func validateLoginCredential(response *api.CLIAuthResponse) (*api.CLIAuthCredential, error) {
-	if response == nil || !response.Success || response.Credential == nil || response.Credential.Type != "cli_session" || response.Credential.Scope != "agent_tts" || response.Credential.Status != "active" || !response.Credential.Usable {
+	if response == nil || !response.Success || response.Credential == nil || response.Credential.Type != "cli_session" || response.Credential.Scope != "agent_tts" {
 		return nil, &exitError{code: 1, msg: "CLI login returned an invalid credential"}
 	}
 	expires, err := time.Parse(time.RFC3339, response.Credential.ExpiresAt)
@@ -189,7 +192,7 @@ func runAuthStatus(cmd *cobra.Command, _ []string) error {
 	if flagJSON {
 		return json.NewEncoder(os.Stdout).Encode(response)
 	}
-	fmt.Fprintf(os.Stdout, "Credential: %s\nUsable: %t\nExpires: %s\nEntitlement: %s\nAPI access: %t\n", response.Credential.Status, response.Credential.Usable, response.Credential.ExpiresAt, response.Entitlement.Status, response.Entitlement.APIAccess)
+	_, _ = fmt.Fprintf(os.Stdout, "Credential: %s\nUsable: %t\nExpires: %s\nEntitlement: %s\nAPI access: %t\n", response.Credential.Status, response.Credential.Usable, response.Credential.ExpiresAt, response.Entitlement.Status, response.Entitlement.APIAccess)
 	return nil
 }
 
@@ -251,9 +254,9 @@ func printAuthLogoutResult(status string, success bool) error {
 		return json.NewEncoder(os.Stdout).Encode(map[string]any{"success": success, "status": status})
 	}
 	if status == "signed_out" {
-		fmt.Fprintln(os.Stdout, "Already signed out.")
+		_, _ = fmt.Fprintln(os.Stdout, "Already signed out.")
 	} else {
-		fmt.Fprintln(os.Stdout, "Signed out.")
+		_, _ = fmt.Fprintln(os.Stdout, "Signed out.")
 	}
 	return nil
 }

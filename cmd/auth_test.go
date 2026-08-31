@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -12,6 +13,19 @@ import (
 
 	"github.com/ngelik/ttsbuddy-cli/internal/api"
 )
+
+func TestClerkCleanupWarningUsesBackendExchangeAsRevocationAuthority(t *testing.T) {
+	cleanupErr := errors.New("terminal Clerk cleanup could not confirm an already-revoked session")
+	if shouldWarnClerkCleanup(true, cleanupErr) {
+		t.Fatal("successful backend exchange should make terminal Clerk cleanup idempotent")
+	}
+	if !shouldWarnClerkCleanup(false, cleanupErr) {
+		t.Fatal("pre-exchange cleanup failure should warn")
+	}
+	if shouldWarnClerkCleanup(false, nil) {
+		t.Fatal("successful cleanup should not warn")
+	}
+}
 
 func authFixtureToken() string {
 	return "ttsc_" + strings.Repeat("a", 8) + "_" + strings.Repeat("b", 48)
@@ -132,17 +146,20 @@ func TestAuthStatusAndLogoutUseOnlyStoredCLISession(t *testing.T) {
 	}
 }
 
-func TestValidateLoginCredentialFailsClosed(t *testing.T) {
+func TestValidateLoginCredentialMatchesExchangeContract(t *testing.T) {
 	valid := &api.CLIAuthResponse{Success: true, Credential: &api.CLIAuthCredential{
-		Token: authFixtureToken(), Type: "cli_session", Scope: "agent_tts", Status: "active", Usable: true,
+		Token: authFixtureToken(), Type: "cli_session", Scope: "agent_tts",
 		ExpiresAt: time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
 	}}
 	if _, err := validateLoginCredential(valid); err != nil {
 		t.Fatalf("valid credential rejected: %v", err)
 	}
 	for name, mutate := range map[string]func(*api.CLIAuthResponse){
-		"unusable": func(response *api.CLIAuthResponse) { response.Credential.Usable = false },
-		"revoked":  func(response *api.CLIAuthResponse) { response.Credential.Status = "revoked" },
+		"wrong type":  func(response *api.CLIAuthResponse) { response.Credential.Type = "permanent" },
+		"wrong scope": func(response *api.CLIAuthResponse) { response.Credential.Scope = "other" },
+		"expired": func(response *api.CLIAuthResponse) {
+			response.Credential.ExpiresAt = time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			copyResponse := *valid

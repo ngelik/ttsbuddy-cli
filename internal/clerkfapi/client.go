@@ -21,7 +21,7 @@ const (
 	requestTimeout       = 20 * time.Second
 )
 
-var errMissingNativeClientToken = errors.New("Clerk native client token missing from response")
+var errMissingNativeClientToken = errors.New("clerk native client token missing from response")
 
 type Client struct {
 	httpClient        *http.Client
@@ -132,14 +132,14 @@ func (c *Client) VerifyEmailCode(ctx context.Context, challenge Challenge, code 
 		return nil, wrapFlowError("validate_sign_in", fmt.Errorf("unexpected sign-in state: %s", signIn.Status))
 	}
 	if signIn.ID != "" && signIn.ID != challenge.SignInID {
-		return nil, wrapFlowError("validate_sign_in", errors.New("Clerk sign-in response did not match challenge"))
+		return nil, wrapFlowError("validate_sign_in", errors.New("clerk sign-in response did not match challenge"))
 	}
 	if signIn.CurrentTask != nil || len(signIn.Tasks) > 0 {
 		return nil, wrapFlowError("validate_sign_in", errors.New("pending sign-in task blocks CLI login"))
 	}
 
 	if signIn.CreatedSessionID == "" {
-		return nil, wrapFlowError("validate_sign_in", errors.New("Clerk sign-in response missing created_session_id"))
+		return nil, wrapFlowError("validate_sign_in", errors.New("clerk sign-in response missing created_session_id"))
 	}
 	c.createdSessionID = signIn.CreatedSessionID
 
@@ -154,7 +154,7 @@ func (c *Client) VerifyEmailCode(ctx context.Context, challenge Challenge, code 
 		return nil, wrapFlowError("validate_session", errors.New("inactive session cannot be exchanged"))
 	}
 	if session.ID == "" || session.ID != signIn.CreatedSessionID {
-		return nil, wrapFlowError("validate_session", errors.New("Clerk session response did not match created session"))
+		return nil, wrapFlowError("validate_session", errors.New("clerk session response did not match created session"))
 	}
 
 	jwt, err := c.createSessionToken(ctx, session.ID)
@@ -208,7 +208,6 @@ func (c *Client) createNativeClient(ctx context.Context) error {
 func (c *Client) createSignIn(ctx context.Context, email string) (*signInResponse, error) {
 	env, err := c.doFormRequest(ctx, http.MethodPost, "/v1/client/sign_ins", url.Values{
 		"identifier": {email},
-		"strategy":   {"email_code"},
 	}, false)
 	if err != nil {
 		return nil, err
@@ -229,7 +228,7 @@ func (c *Client) prepareFirstFactor(ctx context.Context, challenge Challenge) er
 		return err
 	}
 	if signIn.ID != "" && signIn.ID != challenge.SignInID {
-		return errors.New("Clerk sign-in response did not match challenge")
+		return errors.New("clerk sign-in response did not match challenge")
 	}
 	if signIn.Status != "" && signIn.Status != SignInNeedsFirstFactor {
 		return errors.New("unable to start Clerk email sign-in")
@@ -280,7 +279,7 @@ func (c *Client) createSessionToken(ctx context.Context, sessionID string) (stri
 		return "", decodeErr
 	}
 	if token == "" {
-		return "", errors.New("Clerk session token response missing jwt")
+		return "", errors.New("clerk session token response missing jwt")
 	}
 	return token, nil
 }
@@ -318,7 +317,7 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body io.Rea
 		if errors.As(err, &urlErr) && urlErr.Err != nil {
 			return nil, urlErr.Err
 		}
-		return nil, errors.New("Clerk request failed")
+		return nil, errors.New("clerk request failed")
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -394,7 +393,7 @@ func parseEnvelope(resp *http.Response) (*clerkEnvelope, error) {
 		return nil, errors.New("unable to read Clerk response")
 	}
 	if len(data) > maxResponseBodyBytes {
-		return nil, errors.New("Clerk response too large")
+		return nil, errors.New("clerk response too large")
 	}
 	if len(bytes.TrimSpace(data)) == 0 {
 		return &clerkEnvelope{}, nil
@@ -423,7 +422,7 @@ func parseEnvelope(resp *http.Response) (*clerkEnvelope, error) {
 
 func decodeResponse[T any](env *clerkEnvelope) (*T, error) {
 	if env == nil || len(env.Response) == 0 {
-		return nil, errors.New("Clerk response missing payload")
+		return nil, errors.New("clerk response missing payload")
 	}
 	var out T
 	if err := json.Unmarshal(env.Response, &out); err != nil {
@@ -434,7 +433,7 @@ func decodeResponse[T any](env *clerkEnvelope) (*T, error) {
 
 func decodeToken(env *clerkEnvelope) (string, error) {
 	if env == nil {
-		return "", errors.New("Clerk response missing payload")
+		return "", errors.New("clerk response missing payload")
 	}
 	if env.JWT != "" {
 		return env.JWT, nil
