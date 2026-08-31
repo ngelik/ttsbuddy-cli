@@ -66,6 +66,43 @@ func TestCLIAuthClientRejectsUnsafeURLsAndCrossOriginRedirects(t *testing.T) {
 	}
 }
 
+func TestCLIAuthClientFollowsSameOriginRedirectWithoutDroppingBearer(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/cli-auth" {
+			http.Redirect(w, r, "/v1/cli-auth-final", http.StatusTemporaryRedirect)
+			return
+		}
+		if r.URL.Path != "/v1/cli-auth-final" || r.Header.Get("Authorization") != "Bearer bearer_fixture" {
+			t.Fatalf("redirect request = %s auth=%q", r.URL.Path, r.Header.Get("Authorization"))
+		}
+		_ = json.NewEncoder(w).Encode(CLIAuthResponse{Success: true})
+	}))
+	defer srv.Close()
+	client, err := NewCLIAuthClient(srv.URL+"/v1/cli-auth", "bearer_fixture", "test", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, _, err := client.Status(context.Background())
+	if err != nil || response == nil || !response.Success {
+		t.Fatalf("response=%#v err=%v", response, err)
+	}
+}
+
+func TestCLIAuthClientAllowsSupabaseFunctionPathOnlyOnLoopback(t *testing.T) {
+	for _, raw := range []string{
+		"http://127.0.0.1:54321/functions/v1/cli-auth",
+		"http://localhost:54321/functions/v1/cli-auth",
+		"http://[::1]:54321/functions/v1/cli-auth",
+	} {
+		if _, err := NewCLIAuthClient(raw, "secret", "test", true); err != nil {
+			t.Fatalf("rejected loopback local function URL %q: %v", raw, err)
+		}
+	}
+	if _, err := NewCLIAuthClient("https://example.com/functions/v1/cli-auth", "secret", "test", true); err == nil {
+		t.Fatal("accepted non-loopback Supabase function path")
+	}
+}
+
 func TestCLIAuthClientErrorsAreTypedBoundedAndBodyFree(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Retry-After", "23")
@@ -84,6 +121,40 @@ func TestCLIAuthClientErrorsAreTypedBoundedAndBodyFree(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "raw-secret") || strings.Contains(err.Error(), "bearer_fixture") {
 		t.Fatal("secret leaked")
+	}
+}
+
+func TestCLIAuthClientPreservesDistinctHTTPStatusClasses(t *testing.T) {
+	for _, status := range []int{401, 403, 409, 429, 500, 503} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(status) }))
+			defer srv.Close()
+			client, err := NewCLIAuthClient(srv.URL+"/v1/cli-auth", "bearer_fixture", "test", true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, got, requestErr := client.Status(context.Background())
+			var httpErr *CLIAuthHTTPError
+			if got != status || !errors.As(requestErr, &httpErr) || httpErr.StatusCode != status {
+				t.Fatalf("status=%d error=%#v", got, requestErr)
+			}
+		})
+	}
+}
+
+func TestCLIAuthClientHonorsCancellation(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+	client, err := NewCLIAuthClient(srv.URL+"/v1/cli-auth", "bearer_fixture", "test", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, _, err := client.Status(ctx); err == nil {
+		t.Fatal("canceled request succeeded")
 	}
 }
 

@@ -109,12 +109,9 @@ func runAuthLogin(cmd *cobra.Command, _ []string) error {
 		return &exitError{code: 1, msg: fmt.Sprintf("CLI login exchange failed (status %d)", status)}
 	}
 	exchanged = true
-	if response == nil || !response.Success || response.Credential == nil || response.Credential.Type != "cli_session" || response.Credential.Scope != "agent_tts" {
-		return &exitError{code: 1, msg: "CLI login returned an invalid credential"}
-	}
-	expires, err := time.Parse(time.RFC3339, response.Credential.ExpiresAt)
-	if err != nil || !expires.After(time.Now()) || len(response.Credential.Token) < 5 || response.Credential.Token[:5] != "ttsc_" {
-		return &exitError{code: 1, msg: "CLI login returned an invalid credential"}
+	credential, err := validateLoginCredential(response)
+	if err != nil {
+		return err
 	}
 	cfg, err := config.Load()
 	if err != nil {
@@ -124,8 +121,8 @@ func runAuthLogin(cmd *cobra.Command, _ []string) error {
 	if cfg.CLISession != nil {
 		expected = cfg.CLISession.Credential
 	}
-	if err := config.StoreCLISession(expected, config.StoredCLISession{Credential: response.Credential.Token, ExpiresAt: response.Credential.ExpiresAt}); err != nil {
-		cleanup, cleanupErr := api.NewCLIAuthClient(resolvedCfg.CLIAuthURL, response.Credential.Token, Version, resolvedCfg.AllowCustomAPIURL)
+	if err := config.StoreCLISession(expected, config.StoredCLISession{Credential: credential.Token, ExpiresAt: credential.ExpiresAt}); err != nil {
+		cleanup, cleanupErr := api.NewCLIAuthClient(resolvedCfg.CLIAuthURL, credential.Token, Version, resolvedCfg.AllowCustomAPIURL)
 		if cleanupErr == nil {
 			_, _, cleanupErr = cleanup.Revoke(ctx)
 		}
@@ -137,8 +134,19 @@ func runAuthLogin(cmd *cobra.Command, _ []string) error {
 	if response.Replaced {
 		fmt.Fprintln(os.Stderr, "Previous CLI session signed out.")
 	}
-	fmt.Fprintf(os.Stderr, "Signed in. CLI session expires at %s.\n", response.Credential.ExpiresAt)
+	fmt.Fprintf(os.Stderr, "Signed in. CLI session expires at %s.\n", credential.ExpiresAt)
 	return nil
+}
+
+func validateLoginCredential(response *api.CLIAuthResponse) (*api.CLIAuthCredential, error) {
+	if response == nil || !response.Success || response.Credential == nil || response.Credential.Type != "cli_session" || response.Credential.Scope != "agent_tts" || response.Credential.Status != "active" || !response.Credential.Usable {
+		return nil, &exitError{code: 1, msg: "CLI login returned an invalid credential"}
+	}
+	expires, err := time.Parse(time.RFC3339, response.Credential.ExpiresAt)
+	if err != nil || !expires.After(time.Now()) || !regexp.MustCompile(`^ttsc_[0-9a-f]{8}_[0-9a-f]{48}$`).MatchString(response.Credential.Token) {
+		return nil, &exitError{code: 1, msg: "CLI login returned an invalid credential"}
+	}
+	return response.Credential, nil
 }
 
 func storedSession() (*config.Config, *config.StoredCLISession, error) {
@@ -177,6 +185,7 @@ func runAuthStatus(cmd *cobra.Command, _ []string) error {
 	if response == nil || !response.Success || response.Credential == nil || response.Entitlement == nil {
 		return &exitError{code: 1, msg: "CLI session status returned an invalid response"}
 	}
+	response.Credential.Token = ""
 	if flagJSON {
 		return json.NewEncoder(os.Stdout).Encode(response)
 	}
@@ -221,6 +230,10 @@ func runAuthLogout(cmd *cobra.Command, _ []string) error {
 		if errors.As(revokeErr, &httpErr) && httpErr.RetryAfterSeconds > 0 {
 			payload["retry_after_seconds"] = httpErr.RetryAfterSeconds
 		}
+		return &exitError{code: 1, msg: "logout failed; local CLI session retained", jsonPayload: payload}
+	}
+	if revokeErr == nil && (response == nil || !response.Success || (response.Status != "revoked" && response.Status != "already_unusable")) {
+		payload := map[string]any{"success": false, "error": map[string]any{"code": "CLI_LOGOUT_FAILED", "message": "Logout failed; the local session was retained."}, "local_session_retained": true}
 		return &exitError{code: 1, msg: "logout failed; local CLI session retained", jsonPayload: payload}
 	}
 	if err := config.ClearCLISession(session.Credential); err != nil {
