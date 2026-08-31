@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -257,6 +258,105 @@ func TestBuyDoesNotRetryWithFreshSignatureAfterPaidHTTP402(t *testing.T) {
 	}
 }
 
+func TestBuyDoesNotRetryPaidResponseBodyErrors(t *testing.T) {
+	cases := []struct {
+		name    string
+		respond func(t *testing.T, w http.ResponseWriter, r *http.Request)
+		wantErr string
+	}{
+		{
+			name: "oversized body after paid response",
+			respond: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
+				t.Helper()
+				w.Header().Set("PAYMENT-RESPONSE", encodeSettlement(t, x402.SettleResponse{Success: true, Transaction: "0xabc123", Network: x402.Network("eip155:84532"), Amount: "5000000", Payer: testPayer}))
+				_, _ = w.Write([]byte(strings.Repeat("x", maxResponseBytes+1)))
+			},
+			wantErr: "too large",
+		},
+		{
+			name: "cross-origin redirect response",
+			respond: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
+				t.Helper()
+				http.Redirect(w, r, "https://evil.example/v1/access-passes", http.StatusTemporaryRedirect)
+			},
+			wantErr: "cross-origin",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			signer := &recordingSigner{}
+			var paidHits int
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if serveStarterPlans(t, w, r) {
+					return
+				}
+				captured := capturePurchase(t, r)
+				if captured.PaymentSignature == "" {
+					writePaymentRequired(t, w, challengeForServer(serverURL(r), "5000000", "eip155:84532", testAsset, testPayTo))
+					return
+				}
+				paidHits++
+				tc.respond(t, w, r)
+			}))
+			defer server.Close()
+
+			client := newServerAccessClient(t, server.URL, "")
+			_, err := client.Buy(context.Background(), BuyRequest{SKU: "starter", MaxPrice: "5.00", Signer: signer})
+			if err == nil || !strings.Contains(strings.ToLower(err.Error()), tc.wantErr) {
+				t.Fatalf("expected %q error, got %v", tc.wantErr, err)
+			}
+			if signer.Calls() != 1 || paidHits != 1 {
+				t.Fatalf("paid response error was retried or re-signed: signer=%d paidHits=%d", signer.Calls(), paidHits)
+			}
+		})
+	}
+}
+
+func TestBuyDoesNotRetryPaidReadErrorAfterResponse(t *testing.T) {
+	signer := &recordingSigner{}
+	var paidHits int
+	transport := &sequenceRoundTripper{handlers: []func(*http.Request) (*http.Response, error){
+		func(req *http.Request) (*http.Response, error) {
+			if req.Method != http.MethodGet || req.URL.Path != "/v1/access-pass-plans" {
+				t.Fatalf("unexpected plans request %s %s", req.Method, req.URL.Path)
+			}
+			return responseWithBody(http.StatusOK, http.Header{"Content-Type": {"application/json"}}, jsonBody(t, map[string]any{"plans": []any{starterPlanBody()}})), nil
+		},
+		func(req *http.Request) (*http.Response, error) {
+			if req.Method != http.MethodPost || req.URL.Path != "/v1/access-passes" {
+				t.Fatalf("unexpected unpaid request %s %s", req.Method, req.URL.Path)
+			}
+			return paymentRequiredResponse(t, challengeForServer("https://www.ttsbuddy.com/v1/access-passes", "5000000", "eip155:84532", testAsset, testPayTo)), nil
+		},
+		func(req *http.Request) (*http.Response, error) {
+			paidHits++
+			if req.Header.Get(paymentSignatureHeader) == "" {
+				t.Fatal("paid request omitted payment signature")
+			}
+			header := http.Header{paymentSignatureHeader: {encodeSettlement(t, x402.SettleResponse{Success: true, Transaction: "0xabc123", Network: x402.Network("eip155:84532"), Amount: "5000000", Payer: testPayer})}}
+			return responseWithBody(http.StatusOK, header, errReadCloser{err: errors.New("body stream failed after response")}), nil
+		},
+	}}
+	client, err := NewClient(ClientOptions{
+		AgentURL:          testAgentURL,
+		Version:           "test",
+		AllowCustomAPIURL: true,
+		HTTPClient:        &http.Client{Transport: transport},
+		NewIdempotencyKey: func() string { return "fixed-idempotency-key" },
+	})
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	_, err = client.Buy(context.Background(), BuyRequest{SKU: "starter", MaxPrice: "5.00", Signer: signer})
+	if err == nil || !strings.Contains(err.Error(), "body stream failed") {
+		t.Fatalf("expected paid body read error, got %v", err)
+	}
+	if signer.Calls() != 1 || paidHits != 1 || transport.Calls() != 3 {
+		t.Fatalf("read error was retried or re-signed: signer=%d paidHits=%d calls=%d", signer.Calls(), paidHits, transport.Calls())
+	}
+}
+
 func TestBuyRejectsTupleMismatchesBeforeSigning(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -270,6 +370,14 @@ func TestBuyRejectsTupleMismatchesBeforeSigning(t *testing.T) {
 		{"amount", func(r x402.PaymentRequired) x402.PaymentRequired { r.Accepts[0].Amount = "5000001"; return r }},
 		{"payment flow", func(r x402.PaymentRequired) x402.PaymentRequired {
 			r.Accepts[0].Extra["paymentFlow"] = "authorization"
+			return r
+		}},
+		{"missing transfer method", func(r x402.PaymentRequired) x402.PaymentRequired {
+			delete(r.Accepts[0].Extra, "assetTransferMethod")
+			return r
+		}},
+		{"permit2 transfer method", func(r x402.PaymentRequired) x402.PaymentRequired {
+			r.Accepts[0].Extra["assetTransferMethod"] = "permit2"
 			return r
 		}},
 		{"missing resource", func(r x402.PaymentRequired) x402.PaymentRequired { r.Resource = nil; return r }},
@@ -352,6 +460,13 @@ func TestBuyRejectsMissingSettlementHeaderOrInvalidSuccessShape(t *testing.T) {
 		{"wrong allowance", true, func(body map[string]any) { body["allowance_units"] = float64(499999) }, "allowance"},
 		{"reserved nonzero", true, func(body map[string]any) { body["reserved_units"] = float64(1) }, "reserved"},
 		{"expired pass", true, func(body map[string]any) { body["expires_at"] = time.Now().Add(-time.Hour).UTC().Format(time.RFC3339) }, "expires_at"},
+		{"missing settlement payer", true, nil, "payer"},
+		{"missing receipt payer", true, func(body map[string]any) {
+			body["receipt"].(map[string]any)["payer"] = ""
+		}, "payer"},
+		{"payer mismatch", true, func(body map[string]any) {
+			body["receipt"].(map[string]any)["payer"] = "0x0000000000000000000000000000000000000001"
+		}, "payer"},
 		{"unknown success field", true, func(body map[string]any) { body["secret_debug"] = "must not be accepted" }, "unknown field"},
 	}
 	for _, tc := range cases {
@@ -371,7 +486,11 @@ func TestBuyRejectsMissingSettlementHeaderOrInvalidSuccessShape(t *testing.T) {
 					if tc.name == "wrong network" {
 						network = x402.Network("eip155:8453")
 					}
-					w.Header().Set("PAYMENT-RESPONSE", encodeSettlement(t, x402.SettleResponse{Success: true, Transaction: "0xabc123", Network: network, Amount: "5000000", Payer: testPayer}))
+					payer := testPayer
+					if tc.name == "missing settlement payer" {
+						payer = ""
+					}
+					w.Header().Set("PAYMENT-RESPONSE", encodeSettlement(t, x402.SettleResponse{Success: true, Transaction: "0xabc123", Network: network, Amount: "5000000", Payer: payer}))
 				}
 				body := successPurchaseBody("0xabc123")
 				if tc.mutate != nil {
@@ -477,6 +596,35 @@ func (s *recordingSigner) SignTypedData(context.Context, evm.TypedDataDomain, ma
 
 func (s *recordingSigner) Calls() int {
 	return int(atomic.LoadInt32(&s.calls))
+}
+
+type sequenceRoundTripper struct {
+	calls    int32
+	handlers []func(*http.Request) (*http.Response, error)
+}
+
+func (s *sequenceRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	index := int(atomic.AddInt32(&s.calls, 1)) - 1
+	if index >= len(s.handlers) {
+		return nil, errors.New("unexpected extra request")
+	}
+	return s.handlers[index](req)
+}
+
+func (s *sequenceRoundTripper) Calls() int {
+	return int(atomic.LoadInt32(&s.calls))
+}
+
+type errReadCloser struct {
+	err error
+}
+
+func (e errReadCloser) Read([]byte) (int, error) {
+	return 0, e.err
+}
+
+func (e errReadCloser) Close() error {
+	return nil
 }
 
 type capturedPurchaseRequest struct {
@@ -609,20 +757,33 @@ func challengeForServer(resourceURL, amount, network, asset, payTo string) x402.
 			Amount:            amount,
 			PayTo:             payTo,
 			MaxTimeoutSeconds: 15,
-			Extra:             map[string]interface{}{"paymentFlow": "upfront"},
+			Extra:             map[string]interface{}{"paymentFlow": "upfront", "assetTransferMethod": "eip3009"},
 		}},
 	}
 }
 
+func paymentRequiredResponse(t *testing.T, required x402.PaymentRequired) *http.Response {
+	t.Helper()
+	return responseWithBody(http.StatusPaymentRequired, http.Header{
+		"PAYMENT-REQUIRED": {encodePaymentRequired(t, required)},
+		"Content-Type":     {"application/json"},
+	}, io.NopCloser(strings.NewReader(`{"error":"payment required"}`)))
+}
+
 func writePaymentRequired(t *testing.T, w http.ResponseWriter, required x402.PaymentRequired) {
+	t.Helper()
+	w.Header().Set("PAYMENT-REQUIRED", encodePaymentRequired(t, required))
+	w.WriteHeader(http.StatusPaymentRequired)
+	_, _ = w.Write([]byte(`{"error":"payment required"}`))
+}
+
+func encodePaymentRequired(t *testing.T, required x402.PaymentRequired) string {
 	t.Helper()
 	raw, err := json.Marshal(required)
 	if err != nil {
 		t.Fatal(err)
 	}
-	w.Header().Set("PAYMENT-REQUIRED", base64.StdEncoding.EncodeToString(raw))
-	w.WriteHeader(http.StatusPaymentRequired)
-	_, _ = w.Write([]byte(`{"error":"payment required"}`))
+	return base64.StdEncoding.EncodeToString(raw)
 }
 
 func encodeSettlement(t *testing.T, settlement x402.SettleResponse) string {
@@ -632,6 +793,23 @@ func encodeSettlement(t *testing.T, settlement x402.SettleResponse) string {
 		t.Fatal(err)
 	}
 	return base64.StdEncoding.EncodeToString(raw)
+}
+
+func responseWithBody(status int, header http.Header, body io.ReadCloser) *http.Response {
+	return &http.Response{
+		StatusCode: status,
+		Header:     header,
+		Body:       body,
+	}
+}
+
+func jsonBody(t *testing.T, body any) io.ReadCloser {
+	t.Helper()
+	raw, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return io.NopCloser(strings.NewReader(string(raw)))
 }
 
 func writeJSON(t *testing.T, w http.ResponseWriter, status int, body any) {

@@ -205,15 +205,15 @@ func (c *Client) Buy(ctx context.Context, buy BuyRequest) (*PurchaseResult, erro
 		return nil, errors.New("idempotency key unavailable")
 	}
 
-	initial, initialBody, err := c.sendPurchase(ctx, body, idempotencyKey, "")
-	if err != nil {
-		return nil, err
+	initial := c.sendPurchase(ctx, body, idempotencyKey, "")
+	if initial.err != nil {
+		return nil, initial.err
 	}
-	defer func() { _ = initial.Body.Close() }()
-	if initial.StatusCode != http.StatusPaymentRequired {
-		return nil, statusError("purchase challenge", initial.StatusCode, initialBody)
+	defer func() { _ = initial.response.Body.Close() }()
+	if initial.response.StatusCode != http.StatusPaymentRequired {
+		return nil, statusError("purchase challenge", initial.response.StatusCode, initial.body)
 	}
-	required, err := x402http.Newx402HTTPClient(nil).GetPaymentRequiredResponse(headersMap(initial.Header), initialBody)
+	required, err := x402http.Newx402HTTPClient(nil).GetPaymentRequiredResponse(headersMap(initial.response.Header), initial.body)
 	if err != nil {
 		return nil, fmt.Errorf("parsing payment challenge: %w", err)
 	}
@@ -250,26 +250,35 @@ func (c *Client) Buy(ctx context.Context, buy BuyRequest) (*PurchaseResult, erro
 		return nil, errors.New("payment signature header missing")
 	}
 
-	paid, paidBody, err := c.sendPurchase(ctx, body, idempotencyKey, paymentSignature)
-	if err != nil {
-		paid, paidBody, err = c.sendPurchase(ctx, body, idempotencyKey, paymentSignature)
-		if err != nil {
-			return nil, fmt.Errorf("paid purchase outcome ambiguous: %w", redactError(err))
+	paid := c.sendPurchase(ctx, body, idempotencyKey, paymentSignature)
+	if paid.err != nil {
+		if !paid.ambiguous {
+			return nil, paid.err
+		}
+		paid = c.sendPurchase(ctx, body, idempotencyKey, paymentSignature)
+		if paid.err != nil {
+			if !paid.ambiguous {
+				return nil, paid.err
+			}
+			return nil, fmt.Errorf("paid purchase outcome ambiguous: %w", redactError(paid.err))
 		}
 	}
-	defer func() { _ = paid.Body.Close() }()
-	if paid.StatusCode < 200 || paid.StatusCode > 299 {
-		return nil, statusError("paid purchase", paid.StatusCode, paidBody)
+	defer func() { _ = paid.response.Body.Close() }()
+	if paid.response.StatusCode < 200 || paid.response.StatusCode > 299 {
+		return nil, statusError("paid purchase", paid.response.StatusCode, paid.body)
 	}
-	settlement, err := x402http.Newx402HTTPClient(nil).GetPaymentSettleResponse(headersMap(paid.Header))
+	settlement, err := x402http.Newx402HTTPClient(nil).GetPaymentSettleResponse(headersMap(paid.response.Header))
 	if err != nil {
 		return nil, fmt.Errorf("payment response receipt missing: %w", err)
 	}
 	if !settlement.Success || string(settlement.Network) != plan.Price.Network || settlement.Amount != plan.Price.Atomic || settlement.Transaction == "" {
 		return nil, fmt.Errorf("%w: settlement header mismatch", ErrInvalidAccessPassReceipt)
 	}
+	if strings.TrimSpace(settlement.Payer) == "" {
+		return nil, fmt.Errorf("%w: payer missing", ErrInvalidAccessPassReceipt)
+	}
 	var result PurchaseResult
-	if err := decodeStrict(paidBody, &purchaseResultForDecode{PurchaseResult: &result, plan: plan, network: string(settlement.Network), transaction: settlement.Transaction, amount: settlement.Amount, now: c.now()}); err != nil {
+	if err := decodeStrict(paid.body, &purchaseResultForDecode{PurchaseResult: &result, plan: plan, network: string(settlement.Network), transaction: settlement.Transaction, amount: settlement.Amount, payer: settlement.Payer, now: c.now()}); err != nil {
 		return nil, fmt.Errorf("parsing access pass purchase: %w", err)
 	}
 	return &result, nil
@@ -281,17 +290,25 @@ type purchaseResultForDecode struct {
 	network     string
 	transaction string
 	amount      string
+	payer       string
 	now         time.Time
 }
 
 func (p *purchaseResultForDecode) validate() error {
-	return p.PurchaseResult.validateSuccess(p.plan, p.network, p.transaction, p.amount, p.now)
+	return p.PurchaseResult.validateSuccess(p.plan, p.network, p.transaction, p.amount, p.payer, p.now)
 }
 
-func (c *Client) sendPurchase(ctx context.Context, body []byte, idempotencyKey, paymentSignature string) (*http.Response, []byte, error) {
+type purchaseSendResult struct {
+	response  *http.Response
+	body      []byte
+	err       error
+	ambiguous bool
+}
+
+func (c *Client) sendPurchase(ctx context.Context, body []byte, idempotencyKey, paymentSignature string) purchaseSendResult {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoints.Purchases.String(), bytes.NewReader(body))
 	if err != nil {
-		return nil, nil, err
+		return purchaseSendResult{err: err}
 	}
 	c.addUserAgent(req)
 	req.Header.Set("Content-Type", "application/json")
@@ -301,14 +318,17 @@ func (c *Client) sendPurchase(ctx context.Context, body []byte, idempotencyKey, 
 	}
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, nil, err
+		if resp != nil && resp.Body != nil {
+			_ = resp.Body.Close()
+		}
+		return purchaseSendResult{response: resp, err: redactError(err), ambiguous: resp == nil}
 	}
 	data, readErr := readBounded(resp.Body)
 	if readErr != nil {
 		_ = resp.Body.Close()
-		return resp, nil, readErr
+		return purchaseSendResult{response: resp, err: redactError(readErr)}
 	}
-	return resp, data, nil
+	return purchaseSendResult{response: resp, body: data}
 }
 
 func (c *Client) addUserAgent(req *http.Request) {
@@ -350,9 +370,16 @@ func validatePaymentChallenge(required x402.PaymentRequired, plan Plan, maxAtomi
 		return errors.New("x402 challenge exceeds max price")
 	}
 	if req.Extra != nil {
-		if flow, ok := req.Extra["paymentFlow"]; ok && flow != "upfront" {
-			return errors.New("x402 challenge payment flow mismatch")
+		if flow, ok := req.Extra["paymentFlow"]; ok {
+			flowValue, ok := flow.(string)
+			if !ok || flowValue != "upfront" {
+				return errors.New("x402 challenge payment flow mismatch")
+			}
 		}
+	}
+	method, ok := req.Extra["assetTransferMethod"].(string)
+	if !ok || method != "eip3009" {
+		return errors.New("x402 challenge asset transfer method mismatch")
 	}
 	return nil
 }

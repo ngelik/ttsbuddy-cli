@@ -132,11 +132,11 @@ func (p Plan) validate() error {
 	}
 }
 
-func (r PurchaseResult) validateSuccess(plan Plan, settlementNetwork, settlementTransaction, settlementAmount string, now time.Time) error {
+func (r PurchaseResult) validateSuccess(plan Plan, settlementNetwork, settlementTransaction, settlementAmount, settlementPayer string, now time.Time) error {
 	if !isAccessPassCredential(r.Pass) {
 		return fmt.Errorf("%w: pass credential missing or malformed", ErrInvalidAccessPassReceipt)
 	}
-	if err := validateCommonPassReceipt(r.Status, r.AllowanceUnits, r.ReservedUnits, r.ConsumedUnits, r.RemainingUnits, r.RequestLimitUnits, r.ExpiresAt, r.Receipt, plan, settlementNetwork, settlementTransaction, settlementAmount, now); err != nil {
+	if err := validateCommonPassReceipt(r.Status, r.AllowanceUnits, r.ReservedUnits, r.ConsumedUnits, r.RemainingUnits, r.RequestLimitUnits, r.ExpiresAt, r.Receipt, plan, settlementNetwork, settlementTransaction, settlementAmount, settlementPayer, now); err != nil {
 		return err
 	}
 	return nil
@@ -164,7 +164,7 @@ func (r StatusResult) validate() error {
 	return nil
 }
 
-func validateCommonPassReceipt(status string, allowance, reserved, consumed, remaining, requestLimit int64, expiresAt time.Time, receipt PurchaseReceipt, plan Plan, settlementNetwork, settlementTransaction, settlementAmount string, now time.Time) error {
+func validateCommonPassReceipt(status string, allowance, reserved, consumed, remaining, requestLimit int64, expiresAt time.Time, receipt PurchaseReceipt, plan Plan, settlementNetwork, settlementTransaction, settlementAmount, settlementPayer string, now time.Time) error {
 	switch {
 	case status != "active":
 		return fmt.Errorf("%w: pass status is not active", ErrInvalidAccessPassReceipt)
@@ -190,6 +190,10 @@ func validateCommonPassReceipt(status string, allowance, reserved, consumed, rem
 		return fmt.Errorf("%w: asset mismatch", ErrInvalidAccessPassReceipt)
 	case receipt.Amount != plan.Price.Atomic || receipt.Amount != settlementAmount:
 		return fmt.Errorf("%w: amount mismatch", ErrInvalidAccessPassReceipt)
+	case strings.TrimSpace(settlementPayer) == "" || strings.TrimSpace(receipt.Payer) == "":
+		return fmt.Errorf("%w: payer missing", ErrInvalidAccessPassReceipt)
+	case !strings.EqualFold(receipt.Payer, settlementPayer):
+		return fmt.Errorf("%w: payer mismatch", ErrInvalidAccessPassReceipt)
 	default:
 		return nil
 	}

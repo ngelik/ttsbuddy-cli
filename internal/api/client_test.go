@@ -406,21 +406,23 @@ func TestCompletedMissingAudio(t *testing.T) {
 
 func TestParseResponsePreservesAccessPassBillingFields(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(TTSResponse{
-			Success: true,
-			Status:  "completed",
-			JobID:   "job-pass",
-			Billing: &Billing{
-				Mode:                     "access_pass",
-				EstimatedCostCents:       0,
-				AccessPassAllowanceUnits: ptrInt64(500_000),
-				AccessPassConsumedUnits:  ptrInt64(100),
-				AccessPassReservedUnits:  ptrInt64(0),
-				AccessPassRemainingUnits: ptrInt64(499_900),
-				AccessPassRequestLimit:   ptrInt64(100_000),
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"success": true,
+			"status": "completed",
+			"job_id": "job-pass",
+			"billing": {
+				"mode": "prepaid_pass",
+				"estimated_cost_cents": 0,
+				"units": 123,
+				"request_units": 123,
+				"allowance_units": 500000,
+				"reserved_units": 0,
+				"consumed_units": 100,
+				"remaining_units": 499900
 			},
-			Meta: &Meta{RequestID: "req-pass", APIVersion: "2026-04"},
-		})
+			"meta": {"request_id": "req-pass", "api_version": "2026-04"}
+		}`))
 	}))
 	defer srv.Close()
 
@@ -429,16 +431,27 @@ func TestParseResponsePreservesAccessPassBillingFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Speak error: %v", err)
 	}
-	if resp.Billing == nil || resp.Billing.Mode != "access_pass" {
+	if resp.Billing == nil || resp.Billing.Mode != "prepaid_pass" {
 		t.Fatalf("missing pass billing: %#v", resp.Billing)
 	}
-	if resp.Billing.AccessPassRemainingUnits == nil || *resp.Billing.AccessPassRemainingUnits != 499_900 {
+	if resp.Billing.Units == nil || *resp.Billing.Units != 123 {
+		t.Fatalf("units not preserved: %#v", resp.Billing)
+	}
+	if resp.Billing.RequestUnits == nil || *resp.Billing.RequestUnits != 123 {
+		t.Fatalf("request units not preserved: %#v", resp.Billing)
+	}
+	if resp.Billing.AllowanceUnits == nil || *resp.Billing.AllowanceUnits != 500_000 {
+		t.Fatalf("allowance units not preserved: %#v", resp.Billing)
+	}
+	if resp.Billing.ConsumedUnits == nil || *resp.Billing.ConsumedUnits != 100 {
+		t.Fatalf("consumed units not preserved: %#v", resp.Billing)
+	}
+	if resp.Billing.ReservedUnits == nil || *resp.Billing.ReservedUnits != 0 {
+		t.Fatalf("reserved units not preserved: %#v", resp.Billing)
+	}
+	if resp.Billing.RemainingUnits == nil || *resp.Billing.RemainingUnits != 499_900 {
 		t.Fatalf("remaining units not preserved: %#v", resp.Billing)
 	}
-}
-
-func ptrInt64(v int64) *int64 {
-	return &v
 }
 
 func fixtureCredential(prefix string, public, secret byte) string {
