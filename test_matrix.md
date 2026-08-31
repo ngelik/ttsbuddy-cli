@@ -110,7 +110,7 @@ Check each item after verifying. Run `make test` for unit tests, `make test-live
 - [ ] `ttsbuddy access buy starter --wallet local --max-price 5e0` — exit 2 before signer/network
 - [ ] `ttsbuddy access buy starter --wallet local --max-price 5.00 --key ttsb_...` — exit 2, does not read stored keys or passes before purchase
 - [ ] `ttsbuddy access buy` save failure after settlement — prints the full pass exactly once on stdout and a recovery warning on stderr
-- [ ] `ttsbuddy access buy --json` — emits one structured success object including the full pass
+- [ ] `ttsbuddy access buy --json` — emits one structured success object; saved success redacts the pass, while post-settlement save failure prints the full pass exactly once for recovery
 - [ ] `ttsbuddy access status` — uses only `TTSBUDDY_ACCESS_PASS` or stored pass, calls server even when local expiry elapsed
 - [ ] `ttsbuddy access status --key ttsb_...` — exit 2, `--key` unsupported for access status
 - [ ] `ttsbuddy access forget` — local-only, idempotent, removes only the exact stored pass and preserves `api_key`

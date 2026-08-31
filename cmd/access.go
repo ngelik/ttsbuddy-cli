@@ -200,11 +200,7 @@ func runAccessBuy(cmd *cobra.Command, args []string) error {
 
 	saveErr := saveAccessPassForCLI(storedPassFromPurchase(*result))
 	if flagJSON {
-		out := accessBuyJSON{Success: true, Saved: saveErr == nil, PurchaseResult: *result}
-		if saveErr != nil {
-			out.SaveError = sanitizeAccessMessage(saveErr.Error())
-		}
-		return writeAccessJSON(out)
+		return writeAccessJSON(accessBuyJSONFromResult(*result, saveErr))
 	}
 	if saveErr != nil {
 		fmt.Fprintln(accessStdout, result.Pass)
@@ -257,15 +253,47 @@ func runAccessForget(cmd *cobra.Command) error {
 }
 
 type accessBuyJSON struct {
-	Success   bool   `json:"success"`
-	Saved     bool   `json:"saved"`
-	SaveError string `json:"save_error,omitempty"`
-	access.PurchaseResult
+	Success           bool                   `json:"success"`
+	Saved             bool                   `json:"saved"`
+	SaveError         string                 `json:"save_error,omitempty"`
+	Pass              string                 `json:"pass"`
+	Status            string                 `json:"status"`
+	AllowanceUnits    int64                  `json:"allowance_units"`
+	ReservedUnits     int64                  `json:"reserved_units"`
+	ConsumedUnits     int64                  `json:"consumed_units"`
+	RemainingUnits    int64                  `json:"remaining_units"`
+	RequestLimitUnits int64                  `json:"request_limit_units"`
+	ExpiresAt         time.Time              `json:"expires_at"`
+	Receipt           access.PurchaseReceipt `json:"receipt"`
 }
 
 type accessForgetJSON struct {
 	Success   bool `json:"success"`
 	Forgotten bool `json:"forgotten"`
+}
+
+func accessBuyJSONFromResult(result access.PurchaseResult, saveErr error) accessBuyJSON {
+	pass := result.Pass
+	if saveErr == nil {
+		pass = config.RedactCredential(result.Pass)
+	}
+	out := accessBuyJSON{
+		Success:           true,
+		Saved:             saveErr == nil,
+		Pass:              pass,
+		Status:            result.Status,
+		AllowanceUnits:    result.AllowanceUnits,
+		ReservedUnits:     result.ReservedUnits,
+		ConsumedUnits:     result.ConsumedUnits,
+		RemainingUnits:    result.RemainingUnits,
+		RequestLimitUnits: result.RequestLimitUnits,
+		ExpiresAt:         result.ExpiresAt,
+		Receipt:           result.Receipt,
+	}
+	if saveErr != nil {
+		out.SaveError = sanitizeAccessMessage(saveErr.Error())
+	}
+	return out
 }
 
 func renderAccessPlans(plans *access.PlansResponse) {

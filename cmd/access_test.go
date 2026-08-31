@@ -239,7 +239,9 @@ func TestAccessBuyJSONReturnsSingleStructuredObject(t *testing.T) {
 	restore.client = &fakeAccessClient{buyFn: func(context.Context, access.BuyRequest) (*access.PurchaseResult, error) {
 		return accessPurchaseFixture(), nil
 	}}
-	restore.saveAccessPass = func(config.StoredAccessPass) error { return errors.New("save failed") }
+	restore.saveAccessPass = func(config.StoredAccessPass) error {
+		return errors.New("save failed for " + testAccessPassCredential())
+	}
 	restore.newLocalSigner = func() (wallet.Signer, error) { return &accessTestSigner{}, nil }
 	setWalletEnv(t)
 	flagJSON = true
@@ -257,6 +259,30 @@ func TestAccessBuyJSONReturnsSingleStructuredObject(t *testing.T) {
 		t.Fatalf("JSON output should contain complete pass once, got %q", stdout.String())
 	}
 	assertContains(t, stdout.String(), "\"saved\": false", "stdout")
+}
+
+func TestAccessBuyJSONSavedSuccessDoesNotDiscloseSecrets(t *testing.T) {
+	stdout, stderr := captureAccessWriters(t)
+	restore := replaceAccessDeps(t)
+	restore.client = &fakeAccessClient{buyFn: func(context.Context, access.BuyRequest) (*access.PurchaseResult, error) {
+		return accessPurchaseFixture(), nil
+	}}
+	restore.newLocalSigner = func() (wallet.Signer, error) { return &accessTestSigner{}, nil }
+	setWalletEnv(t)
+	flagJSON = true
+	t.Cleanup(func() { flagJSON = false })
+
+	cmd := accessBuyCommandForTest(t, "starter", "--wallet", "local", "--max-price", "5.00")
+	if err := runAccessBuy(cmd, []string{"starter"}); err != nil {
+		t.Fatalf("runAccessBuy() error = %v", err)
+	}
+	if stderr.String() != "" {
+		t.Fatalf("JSON mode should not write stderr, got %q", stderr.String())
+	}
+	assertValidJSON(t, stdout.String())
+	assertContains(t, stdout.String(), "\"saved\": true", "stdout")
+	assertContains(t, stdout.String(), "ttsp_abcd1234_...", "stdout")
+	assertAccessStringsDoNotLeak(t, stdout.String(), stderr.String(), false)
 }
 
 func TestAccessStatusUsesPassEnvOrStoredPassAndCallsServerWhenStoredPassExpired(t *testing.T) {
@@ -346,6 +372,52 @@ func TestAccessForgetIsLocalOnlyIdempotentAndPreservesAPIKey(t *testing.T) {
 	assertExitCode(t, r, 0)
 	assertContains(t, r.Stdout, "No stored access pass", "stdout")
 	assertAccessOutputDoesNotLeak(t, r, false)
+}
+
+func TestAccessForgetPreservesConcurrentReplacementPassAndAPIKey(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	loadedPass := "ttsp_" + strings.Repeat("1", 8) + "_" + strings.Repeat("2", 48)
+	replacementPass := testAccessPassCredential()
+	apiKey := testSubscriptionCredential()
+	writeAccessTestConfig(t, home, map[string]any{
+		"api_key":     apiKey,
+		"access_pass": storedAccessPassMap(loadedPass, time.Now().Add(time.Hour)),
+	})
+
+	stdout, stderr := captureAccessWriters(t)
+	restore := replaceAccessDeps(t)
+	var clientConstructed atomic.Bool
+	restore.newClient = func(string, string, bool) (accessCLIClient, error) {
+		clientConstructed.Store(true)
+		return nil, errors.New("network client should not be constructed")
+	}
+	oldResolved := resolvedCfg
+	resolvedCfg = &config.ResolvedConfig{
+		AccessPass: &config.StoredAccessPass{Credential: loadedPass},
+	}
+	t.Cleanup(func() { resolvedCfg = oldResolved })
+
+	writeAccessTestConfig(t, home, map[string]any{
+		"api_key":     apiKey,
+		"access_pass": storedAccessPassMap(replacementPass, time.Now().Add(time.Hour)),
+	})
+	if err := runAccessForget(&cobra.Command{Use: "forget"}); err != nil {
+		t.Fatalf("runAccessForget() error = %v", err)
+	}
+
+	assertContains(t, stdout.String(), "No stored access pass", "stdout")
+	if stderr.String() != "" {
+		t.Fatalf("unexpected stderr: %q", stderr.String())
+	}
+	data := string(readAccessTestConfig(t, home))
+	assertContains(t, data, replacementPass, "config")
+	assertContains(t, data, apiKey, "config")
+	assertNotContains(t, data, loadedPass, "config")
+	if clientConstructed.Load() {
+		t.Fatal("access forget constructed a network client")
+	}
+	assertAccessStringsDoNotLeak(t, stdout.String(), stderr.String(), false)
 }
 
 type accessDepsRestore struct {
