@@ -68,6 +68,21 @@ Check each item after verifying. Run `make test` for unit tests, `make test-live
 - [ ] Same for voice, speed, timeout
 
 ## Commands
+- [ ] `AUTH_ONLY=1 BINARY=bin/ttsbuddy ./tests/acceptance_test.sh` — signed-out auth lifecycle passes in an isolated HOME without an API key or network
+- [ ] `ttsbuddy auth --help` — lists login, status, logout
+- [ ] `ttsbuddy auth status` (signed out) — no network, exit 1
+- [ ] `ttsbuddy auth logout` (signed out) — idempotent, exit 0
+- [ ] `ttsbuddy auth logout --local-only` — clears only a stored CLI session and never contacts the server
+- [ ] Development-only `ttsbuddy auth login` — stores an expiring `ttsc_` session without printing the code, proof, or credential
+- [ ] Development-only `ttsbuddy auth status` — reports remote usability and never returns the bearer credential
+- [ ] Development-only `ttsbuddy auth logout` — confirms remote revocation before clearing local state; a failed revocation retains local state
+- [ ] Development negatives — unknown account, incorrect/expired code, MFA, and pending Clerk task disclose no account/proof/credential material
+- [ ] Exchange replay/concurrency — one proof produces at most one CLI credential
+- [ ] Replacement — second fresh login revokes the first and reports replacement only after local save
+- [ ] Lifecycle — login → speak → status → logout works; reuse after logout is rejected
+- [ ] Gate matrix — unset/false/malformed flag, malformed allowlist, included/excluded verified user; GET/DELETE/Agent TTS remain unaffected
+- [ ] Existing permanent `api_key` remains byte-for-byte unchanged through login/logout
+- [ ] Temporary config directory/file modes are `0700`/`0600`; final local/server cleanup is confirmed
 - [ ] `ttsbuddy voices` — offline curated list with Kokoro voices plus Supertonic Fast language modes, native names, and no raw `F1`/`M1` labels
 - [ ] `ttsbuddy voices --all` — live catalog fetch; Supertonic alias rows such as `code=F1` and `voice_id=st_f1` still display native names
 - [ ] `ttsbuddy voices --all` (upstream down) — fallback to curated + warning

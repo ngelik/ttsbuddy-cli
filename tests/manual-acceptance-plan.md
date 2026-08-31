@@ -14,6 +14,13 @@ export TB_OUT="$(mktemp -d /tmp/ttsbuddy-out.XXXXXX)"
 alias tb='HOME="$TB_HOME" ttsbuddy'
 ```
 
+Run the safe signed-out authentication subset without any API key or live request:
+
+```bash
+make build
+AUTH_ONLY=1 BINARY=bin/ttsbuddy ./tests/acceptance_test.sh
+```
+
 Seed the test config explicitly:
 
 ```bash
@@ -61,6 +68,54 @@ sh -c "$cmd" >case.stdout 2>case.stderr; echo $? >case.exit
 | A.6 | `tb status --help`, `tb voices --help`, `tb config --help`, `tb completion --help` | Each exits 0 | 0 |
 | A.7 | `tb completion zsh` | Non-empty shell script output | 0 |
 | A.8 | **Documentation check only**: compare README examples/output-mode claims against actual behavior for `--json`, `-o -`, and `--no-download --json`. Record mismatches as doc defects. | — | — |
+
+### AUTH. Browserless Session Commands
+
+The automated `AUTH_ONLY=1` subset uses a fresh HOME and does not contact Clerk or TTS Buddy. The authenticated cases below are development-only and require the local bridge plus the existing test account; never paste the email code or returned credential into a receipt.
+
+| # | Command | Expected | Exit |
+|---|---------|----------|------|
+| AUTH.1 | `tb auth --help` | Lists `login`, `status`, and `logout` | 0 |
+| AUTH.2 | `tb auth status` with no stored session | Says `Not signed in`; no network request | 1 |
+| AUTH.3 | `tb auth logout` with no stored session | Says `Already signed out`; no network request | 0 |
+| AUTH.4 | `tb --json auth logout` with no stored session | Valid JSON with `success: true` and `status: signed_out` | 0 |
+| AUTH.5 | `tb auth logout --local-only` with no stored session | Idempotent signed-out result; no network request | 0 |
+| AUTH.6 | `tb auth login` against the reviewed development endpoints | Email-code login succeeds and stores one expiring `ttsc_` session without printing the code, Clerk proof, or credential | 0 |
+| AUTH.7 | `tb auth status` and `tb --json auth status` | Reports active/usable state and expiry; never returns the bearer credential | 0 |
+| AUTH.8 | `tb speak "CLI session acceptance" --no-download` | Uses the CLI session when no permanent key override exists | 0 |
+| AUTH.9 | `tb auth logout` then repeat it | First call confirms remote revocation and clears local state; second call is idempotent | 0 |
+| AUTH.10 | `tb auth logout --local-only` with a stored development session | Clears only local state and warns that remote validity may remain until expiry | 0 |
+
+Development bridge negative and concurrency cases (use only the existing development account; unknown-account input must be synthetic and must not create a user):
+
+| # | Case | Expected |
+|---|------|----------|
+| AUTH.11 | Known account, correct fresh code | Login succeeds once |
+| AUTH.12 | Unknown account | Same generic post-challenge message; no account enumeration and no credential |
+| AUTH.13 | Incorrect code, then expired code | Generic failure; no proof or CLI credential |
+| AUTH.14 | Account/session requiring MFA | Exchange rejects the proof; no credential |
+| AUTH.15 | Clerk sign-in remains pending | No completed-session proof is accepted |
+| AUTH.16 | Replay one completed Clerk proof | First exchange may succeed; every replay is rejected |
+| AUTH.17 | Two concurrent exchanges for one proof | Exactly one succeeds |
+| AUTH.18 | Two fresh logins | Second reports replacement only after saving; first CLI credential becomes unusable |
+| AUTH.19 | Login → speak → status → logout → reuse | Speak/status work before logout; revoked credential is rejected afterward |
+| AUTH.20 | Permanent key exists throughout login/logout | Stored `api_key` is byte-for-byte unchanged |
+
+Development gate cases:
+
+| Gate state | POST exchange | GET/DELETE and Agent TTS |
+|------------|---------------|--------------------------|
+| `CLI_AUTH_EXCHANGE_ENABLED` unset, `false`, or malformed | Fixed fail-closed 503; no Clerk/DB exchange work | Unaffected |
+| Enabled with malformed `CLI_AUTH_CANARY_USER_IDS` | Fixed configuration 503 | Unaffected |
+| Enabled with a valid allowlist containing the verified user | Exchange allowed after proof and entitlement checks | Unaffected |
+| Enabled with a valid allowlist excluding the verified user | Generic rejection; no issuance | Unaffected |
+
+After the first local write, inspect permissions without printing the config:
+
+```bash
+stat -f '%Lp %N' "$TB_HOME/.ttsbuddy" "$TB_HOME/.ttsbuddy/config.json"  # macOS: 700, 600
+stat -c '%a %n' "$TB_HOME/.ttsbuddy" "$TB_HOME/.ttsbuddy/config.json"   # Linux: 700, 600
+```
 
 ### B. Config and Precedence
 
@@ -143,6 +198,7 @@ Use the job_id captured from test P.2:
 ## Assumptions and Release Gates
 
 **Assumptions:**
+- `AUTH_ONLY=1` is local and safe: it needs neither `TTSBUDDY_API_KEY` nor network access
 - Tests run against production with a key subject to rate limiting
 - Live voice catalog size is unstable; curated list size is stable at 23
 - `--json` is the authoritative machine-output mode; combined-mode behavior that contradicts README should be recorded
@@ -156,5 +212,9 @@ Use the job_id captured from test P.2:
 ## Cleanup
 
 ```bash
+tb auth logout || tb auth logout --local-only
 rm -rf "$TB_HOME" "$TB_OUT"
+unset TB_HOME TB_OUT TTSBUDDY_API_KEY
 ```
+
+Confirm the temporary HOME and output directory are gone, the temporary CLI credential is revoked or expired, and the existing Clerk user and permanent key were not modified.

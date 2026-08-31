@@ -3,6 +3,7 @@
 # Runs against the live API using the installed or dev-built binary.
 #
 # Usage:
+#   AUTH_ONLY=1 BINARY=bin/ttsbuddy ./tests/acceptance_test.sh
 #   TTSBUDDY_API_KEY=ttsb_... ./tests/acceptance_test.sh
 #   BINARY=bin/ttsbuddy TTSBUDDY_API_KEY=ttsb_... ./tests/acceptance_test.sh
 #
@@ -11,6 +12,7 @@
 set -uo pipefail
 
 BINARY="${BINARY:-ttsbuddy}"
+AUTH_ONLY="${AUTH_ONLY:-0}"
 POST_DELAY="${POST_DELAY:-65}"
 PASS=0
 FAIL=0
@@ -19,11 +21,6 @@ TOTAL=0
 RATE_LIMITED_COUNT=0
 
 # --- Setup ---
-
-if [ -z "${TTSBUDDY_API_KEY:-}" ]; then
-    echo "❌ TTSBUDDY_API_KEY not set. Export it first."
-    exit 2
-fi
 
 if ! command -v "$BINARY" &>/dev/null && [ ! -x "$BINARY" ]; then
     echo "❌ Binary not found: $BINARY"
@@ -48,7 +45,11 @@ JOB_ID=""
 echo ""
 echo "=== TTSBuddy CLI Acceptance Tests ==="
 echo "Binary:     $BINARY ($(command -v "$BINARY" 2>/dev/null || echo "$BINARY"))"
-echo "API Key:    ${TTSBUDDY_API_KEY:0:15}..."
+if [ -n "${TTSBUDDY_API_KEY:-}" ]; then
+    echo "API Key:    ${TTSBUDDY_API_KEY:0:15}..."
+else
+    echo "API Key:    not set"
+fi
 echo "POST delay: ${POST_DELAY}s"
 echo "Run ID:     $ACCEPTANCE_RUN_ID"
 echo "TB_HOME:    $TB_HOME"
@@ -86,6 +87,22 @@ skip() {
 is_audio_file() {
     local path="$1"
     [ -s "$path" ] && file "$path" 2>/dev/null | grep -qi "audio\|mpeg\|mp3\|ID3"
+}
+
+print_summary() {
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "📊 Results: $PASS/$TOTAL passed"
+    if [ "$SKIP" -gt 0 ]; then
+        echo "⏭️  $SKIP skipped"
+    fi
+    if [ "$RATE_LIMITED_COUNT" -gt 0 ]; then
+        echo "🔄 $RATE_LIMITED_COUNT rate-limit retries"
+    fi
+    if [ "$FAIL" -gt 0 ]; then
+        echo "❌ $FAIL test(s) failed"
+        return 1
+    fi
+    echo "✅ All tests passed"
 }
 
 # run_test <id> <expected_exit> <cmd...>
@@ -194,6 +211,33 @@ post_test() {
         fail "$id" "expected exit $expected, got $actual"
     fi
 }
+
+# ============================================================
+# AUTH. Safe signed-out lifecycle (never calls a live service)
+# ============================================================
+
+echo "📋 AUTH. Signed-out and local-only lifecycle"
+run_test_stdout "AUTH.1 auth --help" 0 "login" tb auth --help
+run_test_stderr "AUTH.2 signed-out status" 1 "Not signed in" tb auth status
+run_test_stdout "AUTH.3 signed-out logout" 0 "Already signed out" tb auth logout
+run_test_json "AUTH.4 signed-out logout --json" tb --json auth logout
+run_test_stdout "AUTH.5 signed-out logout --local-only" 0 "Already signed out" tb auth logout --local-only
+echo ""
+
+if [ "$AUTH_ONLY" = "1" ]; then
+    print_summary
+    exit $?
+fi
+
+if [ "$AUTH_ONLY" != "0" ]; then
+    echo "❌ AUTH_ONLY must be 0 or 1."
+    exit 2
+fi
+
+if [ -z "${TTSBUDDY_API_KEY:-}" ]; then
+    echo "❌ TTSBUDDY_API_KEY not set. Export it first, or use AUTH_ONLY=1."
+    exit 2
+fi
 
 # --- Seed config ---
 
@@ -567,17 +611,4 @@ echo ""
 # Summary
 # ============================================================
 
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "📊 Results: $PASS/$TOTAL passed"
-if [ "$SKIP" -gt 0 ]; then
-    echo "⏭️  $SKIP skipped"
-fi
-if [ "$RATE_LIMITED_COUNT" -gt 0 ]; then
-    echo "🔄 $RATE_LIMITED_COUNT rate-limit retries"
-fi
-if [ "$FAIL" -gt 0 ]; then
-    echo "❌ $FAIL test(s) failed"
-    exit 1
-else
-    echo "✅ All tests passed"
-fi
+print_summary
