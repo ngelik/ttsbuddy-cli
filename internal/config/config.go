@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -42,6 +43,8 @@ type StoredCLISession struct {
 	Credential string `json:"credential"`
 	ExpiresAt  string `json:"expires_at"`
 }
+
+var configMutationMu sync.Mutex
 
 // validKeys maps user-facing key names to Config field setters.
 var validKeys = map[string]bool{
@@ -383,6 +386,14 @@ func validCredential(value, prefix string) bool {
 	return true
 }
 
+func IsSubscriptionCredential(credential string) bool {
+	return validCredential(credential, "ttsb")
+}
+
+func IsManualSubscriptionCredential(credential string) bool {
+	return IsSubscriptionCredential(credential)
+}
+
 func validCLICredential(value string) bool { return validCredential(value, "ttsc") }
 
 // ActiveCLISession validates the stored credential and absolute server expiry.
@@ -416,26 +427,22 @@ func StoreCLISession(expectedPrior string, next StoredCLISession) error {
 	if session, warning := ActiveCLISession(&Config{CLISession: &next}, time.Now()); session == nil || warning != "" {
 		return &ValidationError{Msg: "invalid CLI session"}
 	}
-	cfg, err := Load()
-	if err != nil {
-		return err
-	}
-	if sessionCredential(cfg) != expectedPrior {
-		return fmt.Errorf("CLI session changed concurrently")
-	}
-	cfg.CLISession = &next
-	return Save(cfg)
+	return mutateAndSaveConfig(func(cfg *Config) (bool, error) {
+		if sessionCredential(cfg) != expectedPrior {
+			return false, fmt.Errorf("CLI session changed concurrently")
+		}
+		cfg.CLISession = &next
+		return true, nil
+	})
 }
 
 // ClearCLISession removes only the exact stored CLI session that was used.
 func ClearCLISession(expectedCredential string) error {
-	cfg, err := Load()
-	if err != nil {
-		return err
-	}
-	if sessionCredential(cfg) != expectedCredential {
-		return fmt.Errorf("CLI session changed concurrently")
-	}
-	cfg.CLISession = nil
-	return Save(cfg)
+	return mutateAndSaveConfig(func(cfg *Config) (bool, error) {
+		if sessionCredential(cfg) != expectedCredential {
+			return false, fmt.Errorf("CLI session changed concurrently")
+		}
+		cfg.CLISession = nil
+		return true, nil
+	})
 }
