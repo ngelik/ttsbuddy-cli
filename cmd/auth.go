@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"os"
 	"regexp"
 	"time"
@@ -75,13 +74,16 @@ func runAuthLogin(cmd *cobra.Command, _ []string) error {
 	}
 	exchanged := false
 	defer func() {
+		if !shouldAttemptClerkCleanup(exchanged) {
+			clerk.Close()
+			return
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
 		cleanupErr := clerk.Cleanup(ctx)
-		if shouldWarnClerkCleanup(exchanged, cleanupErr) {
+		if cleanupErr != nil {
 			fmt.Fprintln(os.Stderr, "Warning: temporary sign-in cleanup could not be confirmed.")
 		}
-		clerk.Close()
 	}()
 	ctx := cmd.Context()
 	fmt.Fprintln(os.Stderr, "If this address belongs to an eligible TTS Buddy account, check your email for a code.")
@@ -138,12 +140,8 @@ func runAuthLogin(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
-func shouldWarnClerkCleanup(exchangeSucceeded bool, cleanupErr error) bool {
-	if cleanupErr == nil {
-		return false
-	}
-	var requestErr *clerkfapi.RequestError
-	return !exchangeSucceeded || !errors.As(cleanupErr, &requestErr) || requestErr.StatusCode != http.StatusNotFound
+func shouldAttemptClerkCleanup(exchangeSucceeded bool) bool {
+	return !exchangeSucceeded
 }
 
 func validateLoginCredential(response *api.CLIAuthResponse) (*api.CLIAuthCredential, error) {

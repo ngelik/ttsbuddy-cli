@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"encoding/json"
-	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -12,25 +11,14 @@ import (
 	"time"
 
 	"github.com/ngelik/ttsbuddy-cli/internal/api"
-	"github.com/ngelik/ttsbuddy-cli/internal/clerkfapi"
 )
 
-func TestClerkCleanupWarningUsesBackendExchangeAsRevocationAuthority(t *testing.T) {
-	alreadyRevoked := &clerkfapi.RequestError{StatusCode: http.StatusNotFound}
-	if shouldWarnClerkCleanup(true, alreadyRevoked) {
-		t.Fatal("already-revoked cleanup after successful exchange should not warn")
+func TestClerkCleanupRunsOnlyBeforeBackendExchange(t *testing.T) {
+	if shouldAttemptClerkCleanup(true) {
+		t.Fatal("successful backend exchange already revoked the temporary Clerk session")
 	}
-	if !shouldWarnClerkCleanup(false, alreadyRevoked) {
-		t.Fatal("pre-exchange cleanup failure should warn")
-	}
-	if !shouldWarnClerkCleanup(true, &clerkfapi.RequestError{StatusCode: http.StatusInternalServerError}) {
-		t.Fatal("post-exchange Clerk server failure should warn")
-	}
-	if !shouldWarnClerkCleanup(true, errors.New("network failure")) {
-		t.Fatal("post-exchange network failure should warn")
-	}
-	if shouldWarnClerkCleanup(false, nil) {
-		t.Fatal("successful cleanup should not warn")
+	if !shouldAttemptClerkCleanup(false) {
+		t.Fatal("pre-exchange failure must retain best-effort Clerk cleanup")
 	}
 }
 
