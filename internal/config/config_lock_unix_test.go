@@ -23,29 +23,29 @@ func TestConfigMutationsSerializeAcrossProcesses(t *testing.T) {
 	}
 
 	releasePath := filepath.Join(home, "release-config-mutation")
-	passCmd, passLines, passStderr := startConfigMutationHelper(t, home, releasePath, "pass")
-	if !waitForConfigMutationLine(passLines, "entered", 2*time.Second) {
-		_ = passCmd.Process.Kill()
-		t.Fatalf("pass helper did not enter mutation; stderr: %s", passStderr.String())
+	keyCmd, keyLines, keyStderr := startConfigMutationHelper(t, home, releasePath, "key")
+	if !waitForConfigMutationLine(keyLines, "entered", 2*time.Second) {
+		_ = keyCmd.Process.Kill()
+		t.Fatalf("key helper did not enter mutation; stderr: %s", keyStderr.String())
 	}
 
 	voiceCmd, voiceLines, voiceStderr := startConfigMutationHelper(t, home, releasePath, "voice")
 	_ = waitForConfigMutationLine(voiceLines, "entered", 200*time.Millisecond)
 
 	if err := os.WriteFile(releasePath, []byte("go"), 0600); err != nil {
-		_ = passCmd.Process.Kill()
+		_ = keyCmd.Process.Kill()
 		_ = voiceCmd.Process.Kill()
 		t.Fatal(err)
 	}
-	waitConfigMutationHelper(t, passCmd, passStderr)
+	waitConfigMutationHelper(t, keyCmd, keyStderr)
 	waitConfigMutationHelper(t, voiceCmd, voiceStderr)
 
 	cfg, err := Load()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.AccessPass == nil || cfg.AccessPass.Credential != fixtureAccessPass('p', 'a').Credential || cfg.DefaultVoice != "parallel-voice" {
-		t.Fatalf("cross-process config mutation lost an update: voice=%q pass=%#v", cfg.DefaultVoice, cfg.AccessPass)
+	if cfg.APIKey != fixtureCredential("ttsb", 'p', 'a') || cfg.DefaultVoice != "parallel-voice" {
+		t.Fatalf("cross-process config mutation lost an update: voice=%q key=%q", cfg.DefaultVoice, RedactKey(cfg.APIKey))
 	}
 }
 
@@ -124,9 +124,8 @@ func TestConfigMutationLockSubprocessHelper(t *testing.T) {
 		for time.Now().Before(deadline) {
 			if _, err := os.Stat(releasePath); err == nil {
 				switch mode {
-				case "pass":
-					pass := fixtureAccessPass('p', 'a')
-					cfg.AccessPass = &pass
+				case "key":
+					cfg.APIKey = fixtureCredential("ttsb", 'p', 'a')
 				case "voice":
 					cfg.DefaultVoice = "parallel-voice"
 				default:

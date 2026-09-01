@@ -39,14 +39,6 @@ func writeAuthConfigWithExpiry(t *testing.T, home string, expires time.Time) {
 	body, _ := json.Marshal(map[string]any{
 		"api_key":     "ttsb_" + strings.Repeat("c", 8) + "_" + strings.Repeat("d", 48),
 		"cli_session": map[string]string{"credential": authFixtureToken(), "expires_at": expires.UTC().Format(time.RFC3339)},
-		"access_pass": map[string]any{
-			"credential":          "ttsp_" + strings.Repeat("e", 8) + "_" + strings.Repeat("f", 48),
-			"purchase_id":         "purchase_fixture",
-			"expires_at":          time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
-			"network":             "eip155:84532",
-			"allowance_units":     1000,
-			"request_limit_units": 500,
-		},
 	})
 	if err := os.WriteFile(filepath.Join(dir, "config.json"), body, 0600); err != nil {
 		t.Fatal(err)
@@ -146,9 +138,6 @@ func TestAuthStatusAndLogoutUseOnlyStoredCLISession(t *testing.T) {
 	}
 	if !strings.Contains(string(body), "ttsb_") {
 		t.Fatal("permanent key removed")
-	}
-	if !strings.Contains(string(body), "ttsp_") {
-		t.Fatal("access pass removed")
 	}
 }
 

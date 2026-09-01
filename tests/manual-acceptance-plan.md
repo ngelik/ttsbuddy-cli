@@ -63,9 +63,9 @@ sh -c "$cmd" >case.stdout 2>case.stderr; echo $? >case.exit
 | A.1 | `tb version` | Shows version, commit, date, Go version | 0 |
 | A.2 | `tb version --json` | Valid JSON with version, commit, date, go | 0 |
 | A.3 | `tb --version` | Same version information | 0 |
-| A.4 | `tb --help` | Includes access, completion, config, speak, status, version, voices | 0 |
+| A.4 | `tb --help` | Includes completion, config, speak, status, version, voices | 0 |
 | A.5 | `tb speak --help` | Includes --file, --voice, --speed, --output, --output-dir, --timeout, --raw, --no-download, --idempotency-key | 0 |
-| A.6 | `tb access --help`, `tb status --help`, `tb voices --help`, `tb config --help`, `tb completion --help` | Each exits 0 | 0 |
+| A.6 | `tb status --help`, `tb voices --help`, `tb config --help`, `tb completion --help` | Each exits 0 | 0 |
 | A.7 | `tb completion zsh` | Non-empty shell script output | 0 |
 | A.8 | **Documentation check only**: compare README examples/output-mode claims against actual behavior for `--json`, `-o -`, and `--no-download --json`. Record mismatches as doc defects. | — | — |
 
@@ -195,92 +195,11 @@ Use the job_id captured from test P.2:
 - Auto-named output exists inside `$TB_OUT`, not outside it
 - No unexpected file is created for `--no-download`
 
-## PREPAID. Base Sepolia Access Pass Acceptance
-
-This section is a hard-gated private-beta acceptance run. It is not part of the
-default live API-key acceptance flow, and it must not run from CI or from a real
-mainnet wallet. Use the server-side runbook in
-`tests/acceptance/prepaid-access-pass-base-sepolia.md` from the TTS Buddy app
-repository as the source of truth for local Supabase, failure injection, receipt
-fields, and stop conditions.
-
-Required local setup:
-
-```bash
-export TTSBUDDY_ACCEPT_ROOT="$(mktemp -d /tmp/ttsbuddy-prepaid-accept.XXXXXX)"
-export TTSBUDDY_ACCEPT_HOME="$TTSBUDDY_ACCEPT_ROOT/home"
-export TTSBUDDY_ACCEPT_OUT="$TTSBUDDY_ACCEPT_ROOT/out"
-export TTSBUDDY_ACCEPT_RECEIPTS="$TTSBUDDY_ACCEPT_ROOT/receipts"
-mkdir -p "$TTSBUDDY_ACCEPT_HOME" "$TTSBUDDY_ACCEPT_OUT" "$TTSBUDDY_ACCEPT_RECEIPTS/local" "$TTSBUDDY_ACCEPT_RECEIPTS/cdp"
-
-make build
-```
-
-Run once for each wallet backend after the local Supabase stack is clean and the
-three functions are served at `http://127.0.0.1:54321/functions/v1`:
-
-```bash
-PREPAID_ACCEPTANCE=1 \
-PREPAID_PAYMENT_OPT_IN=BASE_SEPOLIA_TEST_USDC_ONLY \
-PREPAID_LOCAL_STACK_ACK=CLEAN_LOCAL_SUPABASE_ONLY \
-PREPAID_WALLET=local \
-PREPAID_LOCAL_WALLET_OPT_IN=1 \
-PREPAID_MAX_PRICE=5.00 \
-PREPAID_EXPECTED_PAYEE_ADDRESS=<controlled disposable Base Sepolia payee> \
-PREPAID_EXPECTED_CLI_REVISION=<40-hex clean CLI revision> \
-PREPAID_RECEIPT_DIR="$TTSBUDDY_ACCEPT_RECEIPTS/local" \
-TTSBUDDY_API_URL=http://127.0.0.1:54321/functions/v1/agent-tts \
-TTSBUDDY_ALLOW_CUSTOM_API_URL=true \
-BINARY=bin/ttsbuddy \
-./tests/acceptance_test.sh
-```
-
-Then repeat with `PREPAID_WALLET=cdp`,
-`PREPAID_CDP_WALLET_OPT_IN=1`, and the CDP wallet environment variables set in
-the shell. Do not pass wallet or CDP secrets as CLI arguments.
-
-The scripted prepaid smoke proves:
-
-- `access plans` returns the frozen Base Sepolia starter plan.
-- `access buy starter --wallet <local|cdp> --max-price 5.00` stores one redacted
-  pass.
-- `access status` reads the stored pass, not a subscription key or CLI session.
-- `speak` uses the stored prepaid pass for direct text and downloads one audio
-  file.
-- `status --watch` observes the same job.
-- pass counters move by the expected UTF-16 units for the direct text.
-- `access forget` removes local pass storage, and a follow-up `access status`
-  fails without mutating the server pass.
-- the immutable receipt directory contains only redacted JSON summaries and
-  checksums.
-
-Manual checks that must be completed outside the happy-path script:
-
-- local wallet path and CDP path both settle on Base Sepolia with exactly one
-  transaction, one purchase row, and one pass row;
-- dropped purchase success plus identical paid retry does not double-settle or
-  create a second pass;
-- five `100000` UTF-16-unit requests consume exactly `500000` total, while the
-  sixth request and a `100001` UTF-16-unit request fail before provider work;
-- emoji/supplementary-character input has identical CLI and server UTF-16
-  counts;
-- two passes cannot replay idempotency keys or read each other's jobs;
-- expiry blocks new POSTs but preserves existing GET/download until emergency
-  revocation, after which POST/GET/status fail generically;
-- database, provider, facilitator, activation, and reconciliation failure
-  injections match the server runbook.
-
-Stop immediately and quarantine local receipts if any output contains a full
-prepaid bearer, payment signature value, wallet secret, CDP secret, service-role
-key, or HMAC key.
-
 ## Assumptions and Release Gates
 
 **Assumptions:**
 - `AUTH_ONLY=1` is local and safe: it needs neither `TTSBUDDY_API_KEY` nor network access
 - Tests run against production with a key subject to rate limiting
-- `PREPAID_ACCEPTANCE=1` is local Base Sepolia only and requires explicit
-  testnet-payment opt-in env vars before it can buy a pass
 - Live voice catalog size is unstable; curated list size is stable at 23
 - `--json` is the authoritative machine-output mode; combined-mode behavior that contradicts README should be recorded
 

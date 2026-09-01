@@ -28,7 +28,6 @@ const (
 type Config struct {
 	APIKey            string            `json:"api_key,omitempty"`
 	CLISession        *StoredCLISession `json:"cli_session,omitempty"`
-	AccessPass        *StoredAccessPass `json:"access_pass,omitempty"`
 	CLIAuthURL        string            `json:"cli_auth_url,omitempty"`
 	APIURL            string            `json:"api_url,omitempty"`
 	TTSAPIBaseURL     string            `json:"tts_api_base_url,omitempty"`
@@ -38,7 +37,6 @@ type Config struct {
 	DefaultSpeed      float64           `json:"default_speed,omitempty"`
 	OutputDir         string            `json:"output_dir,omitempty"`
 	PollTimeout       string            `json:"poll_timeout,omitempty"`
-	extra             map[string]json.RawMessage
 }
 
 type StoredCLISession struct {
@@ -46,76 +44,7 @@ type StoredCLISession struct {
 	ExpiresAt  string `json:"expires_at"`
 }
 
-type StoredAccessPass struct {
-	Credential   string    `json:"credential"`
-	PurchaseID   string    `json:"purchase_id"`
-	ExpiresAt    time.Time `json:"expires_at"`
-	Network      string    `json:"network"`
-	Allowance    int64     `json:"allowance_units"`
-	RequestLimit int64     `json:"request_limit_units"`
-}
-
-var knownConfigJSONFields = map[string]bool{
-	"api_key":              true,
-	"cli_session":          true,
-	"access_pass":          true,
-	"cli_auth_url":         true,
-	"api_url":              true,
-	"tts_api_base_url":     true,
-	"allow_custom_api_url": true,
-	"default_voice":        true,
-	"default_language":     true,
-	"default_speed":        true,
-	"output_dir":           true,
-	"poll_timeout":         true,
-}
-
 var configMutationMu sync.Mutex
-
-func (c *Config) UnmarshalJSON(data []byte) error {
-	type configJSON Config
-	var decoded configJSON
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		return err
-	}
-	*c = Config(decoded)
-	c.extra = nil
-
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return err
-	}
-	for key := range knownConfigJSONFields {
-		delete(raw, key)
-	}
-	if len(raw) > 0 {
-		c.extra = raw
-	}
-	return nil
-}
-
-func (c Config) MarshalJSON() ([]byte, error) {
-	type configJSON Config
-	data, err := json.Marshal(configJSON(c))
-	if err != nil {
-		return nil, err
-	}
-	if len(c.extra) == 0 {
-		return data, nil
-	}
-
-	var merged map[string]json.RawMessage
-	if err := json.Unmarshal(data, &merged); err != nil {
-		return nil, err
-	}
-	for key, value := range c.extra {
-		if knownConfigJSONFields[key] {
-			continue
-		}
-		merged[key] = value
-	}
-	return json.Marshal(merged)
-}
 
 // validKeys maps user-facing key names to Config field setters.
 var validKeys = map[string]bool{
@@ -351,46 +280,6 @@ func Set(key, value string) error {
 	})
 }
 
-// SaveAccessPass stores a validated prepaid access pass without touching
-// unrelated configuration values.
-func SaveAccessPass(pass StoredAccessPass) error {
-	if !IsAccessPassCredential(pass.Credential) {
-		return &ValidationError{Msg: "invalid access pass credential"}
-	}
-	if strings.TrimSpace(pass.PurchaseID) == "" || strings.TrimSpace(pass.Network) == "" {
-		return &ValidationError{Msg: "invalid access pass metadata"}
-	}
-	if pass.Allowance <= 0 || pass.RequestLimit <= 0 || pass.RequestLimit > pass.Allowance {
-		return &ValidationError{Msg: "invalid access pass limits"}
-	}
-	return mutateAndSaveConfig(func(cfg *Config) (bool, error) {
-		next := pass
-		cfg.AccessPass = &next
-		return true, nil
-	})
-}
-
-// ForgetAccessPass removes the stored access pass only when the caller names
-// the exact credential it previously observed.
-func ForgetAccessPass(expectedCredential string) (bool, error) {
-	removed := false
-	err := mutateAndSaveConfig(func(cfg *Config) (bool, error) {
-		if cfg.AccessPass == nil {
-			return false, nil
-		}
-		if cfg.AccessPass.Credential != expectedCredential {
-			return false, nil
-		}
-		cfg.AccessPass = nil
-		removed = true
-		return true, nil
-	})
-	if err != nil {
-		return false, err
-	}
-	return removed, nil
-}
-
 func mutateAndSaveConfig(update func(*Config) (bool, error)) error {
 	configMutationMu.Lock()
 	defer configMutationMu.Unlock()
@@ -465,63 +354,21 @@ func FormatSpeed(speed float64) string {
 	return strconv.FormatFloat(speed, 'f', -1, 64)
 }
 
-// RedactCredential returns a redacted version of a bearer credential, showing
-// only the public_id.
-func RedactCredential(credential string) string {
-	if credential == "" {
+// RedactKey returns a redacted version of an API key, showing only the public_id.
+// ttsb_a1b2c3d4_e5f6... → ttsb_a1b2c3d4_...
+func RedactKey(key string) string {
+	if key == "" {
 		return ""
 	}
-	if !strings.HasPrefix(credential, "ttsb_") && !strings.HasPrefix(credential, "ttsc_") && !strings.HasPrefix(credential, "ttsp_") {
+	if !strings.HasPrefix(key, "ttsb_") && !strings.HasPrefix(key, "ttsc_") {
 		return "***"
 	}
 	// ttsb_<public_id>_<secret>
-	parts := strings.SplitN(credential, "_", 3)
+	parts := strings.SplitN(key, "_", 3)
 	if len(parts) < 3 {
 		return "***"
 	}
 	return fmt.Sprintf("%s_%s_...", parts[0], parts[1])
-}
-
-// RedactKey returns a redacted version of an API key, showing only the public_id.
-// ttsb_a1b2c3d4_e5f6... -> ttsb_a1b2c3d4_...
-func RedactKey(key string) string { return RedactCredential(key) }
-
-type CredentialKind string
-
-const (
-	CredentialKindNone         CredentialKind = ""
-	CredentialKindSubscription CredentialKind = "subscription"
-	CredentialKindAccessPass   CredentialKind = "access_pass"
-	CredentialKindCLISession   CredentialKind = "cli_session"
-)
-
-func CredentialKindFor(credential string) CredentialKind {
-	switch {
-	case validCredential(credential, "ttsb"):
-		return CredentialKindSubscription
-	case validCredential(credential, "ttsp"):
-		return CredentialKindAccessPass
-	case validCredential(credential, "ttsc"):
-		return CredentialKindCLISession
-	default:
-		return CredentialKindNone
-	}
-}
-
-func IsSubscriptionCredential(credential string) bool {
-	return validCredential(credential, "ttsb")
-}
-
-func IsAccessPassCredential(credential string) bool {
-	return validCredential(credential, "ttsp")
-}
-
-func IsManualSubscriptionCredential(credential string) bool {
-	return validCredential(credential, "ttsb")
-}
-
-func IsManualCredential(credential string) bool {
-	return validCredential(credential, "ttsb") || validCredential(credential, "ttsp")
 }
 
 func validCredential(value, prefix string) bool {
@@ -537,6 +384,14 @@ func validCredential(value, prefix string) bool {
 		}
 	}
 	return true
+}
+
+func IsSubscriptionCredential(credential string) bool {
+	return validCredential(credential, "ttsb")
+}
+
+func IsManualSubscriptionCredential(credential string) bool {
+	return IsSubscriptionCredential(credential)
 }
 
 func validCLICredential(value string) bool { return validCredential(value, "ttsc") }
