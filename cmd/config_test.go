@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -55,18 +56,22 @@ func TestConfigGetKeyRedacted(t *testing.T) {
 
 func TestConfigSetKey(t *testing.T) {
 	home := t.TempDir()
-	r := runCLI(t, envForTest(home, "", ""), "config", "set", "key", "ttsb_new_secret123")
+	key := "ttsb_" + strings.Repeat("1", 8) + "_" + strings.Repeat("2", 48)
+	r := runCLI(t, envForTest(home, "", ""), "config", "set", "key", key)
 	assertExitCode(t, r, 0)
-	assertContains(t, r.Stderr, "ttsb_new_...", "stderr should show redacted confirmation")
+	assertContains(t, r.Stderr, "ttsb_11111111_...", "stderr should show redacted confirmation")
 
 	// Verify persisted
 	data, _ := os.ReadFile(filepath.Join(home, ".ttsbuddy", "config.json"))
-	assertContains(t, string(data), "ttsb_new_secret123", "config file should contain full key")
+	assertContains(t, string(data), key, "config file should contain full key")
 }
 
 func TestConfigSetBadKey(t *testing.T) {
 	home := t.TempDir()
 	r := runCLI(t, envForTest(home, "", ""), "config", "set", "key", "badformat")
+	assertExitCode(t, r, 2)
+
+	r = runCLI(t, envForTest(home, "", ""), "config", "set", "key", "ttsb_abcd1234_secret")
 	assertExitCode(t, r, 2)
 }
 
