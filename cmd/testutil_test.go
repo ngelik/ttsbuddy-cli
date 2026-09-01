@@ -52,6 +52,10 @@ type cliResult struct {
 // runCLI runs the CLI as a subprocess, capturing stdout, stderr, and exit code.
 // The subprocess re-enters via TestHelperProcess.
 func runCLI(t *testing.T, env []string, args ...string) cliResult {
+	return runCLIInput(t, "", env, args...)
+}
+
+func runCLIInput(t *testing.T, stdin string, env []string, args ...string) cliResult {
 	t.Helper()
 
 	// Build args: -test.run=TestHelperProcess -- <cli args>
@@ -64,6 +68,7 @@ func runCLI(t *testing.T, env []string, args ...string) cliResult {
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
+	cmd.Stdin = strings.NewReader(stdin)
 
 	err := cmd.Run()
 
@@ -147,9 +152,23 @@ func envForTest(home, apiURL, apiKey string) []string {
 		env = append(env, "TTSBUDDY_API_URL="+apiURL)
 	}
 	if apiKey != "" {
+		apiKey = normalizeTestAPIKey(apiKey)
 		env = append(env, "TTSBUDDY_API_KEY="+apiKey)
 	}
 	return env
+}
+
+func normalizeTestAPIKey(apiKey string) string {
+	switch apiKey {
+	case "ttsb_test_key", "ttsb_test_abc", "ttsb_myid_mysecret", "ttsb_bad_key":
+		return testSubscriptionCredential()
+	default:
+		return apiKey
+	}
+}
+
+func testSubscriptionCredential() string {
+	return "ttsb_" + strings.Repeat("a", 8) + "_" + strings.Repeat("b", 48)
 }
 
 // mockCompletedHandler returns a handler that responds with a completed TTS response.

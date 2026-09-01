@@ -1,10 +1,14 @@
 package config
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 func TestLoadMissingFile(t *testing.T) {
@@ -111,12 +115,28 @@ func TestSetUnknownKey(t *testing.T) {
 	}
 }
 
+func TestSetRejectsMalformedAPIKey(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	if err := Set("key", "ttsb_abcd1234_secret"); err == nil {
+		t.Fatal("malformed API key was stored")
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.APIKey != "" {
+		t.Fatalf("malformed API key should not be persisted: %q", cfg.APIKey)
+	}
+}
+
 func TestRedactKey(t *testing.T) {
 	tests := []struct {
 		input string
 		want  string
 	}{
 		{"ttsb_a1b2c3d4_e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8", "ttsb_a1b2c3d4_..."},
+		{"ttsp_a1b2c3d4_e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8", "ttsp_a1b2c3d4_..."},
 		{"ttsb_short_secret", "ttsb_short_..."},
 		{"", ""},
 		{"not_a_key", "***"},
@@ -127,6 +147,310 @@ func TestRedactKey(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("RedactKey(%q) = %q, want %q", tt.input, got, tt.want)
 		}
+	}
+}
+
+func fixtureCredential(prefix string, public, secret byte) string {
+	return prefix + "_" + strings.Repeat(string(public), 8) + "_" + strings.Repeat(string(secret), 48)
+}
+
+func fixtureAccessPass(public, secret byte) StoredAccessPass {
+	return StoredAccessPass{
+		Credential:   fixtureCredential("ttsp", public, secret),
+		PurchaseID:   "purchase_" + strings.Repeat(string(public), 8),
+		ExpiresAt:    time.Now().Add(24 * time.Hour).UTC(),
+		Network:      "eip155:84532",
+		Allowance:    500_000,
+		RequestLimit: 100_000,
+	}
+}
+
+func TestAccessPassStoragePreservesConfigUnknownsAndPermissions(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("TTSBUDDY_EVM_PRIVATE_KEY", "wallet-secret-must-not-be-written")
+
+	dir := filepath.Join(home, ".ttsbuddy")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "config.json")
+	raw := `{
+  "api_key": "` + fixtureCredential("ttsb", 'a', 'b') + `",
+  "default_voice": "af_heart",
+  "future_setting": {"keep": true}
+}
+`
+	if err := os.WriteFile(path, []byte(raw), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	pass := fixtureAccessPass('c', 'd')
+	if err := SaveAccessPass(pass); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "wallet-secret-must-not-be-written") {
+		t.Fatal("wallet environment value was persisted")
+	}
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := doc["future_setting"]; !ok {
+		t.Fatalf("unknown field was not preserved: %s", data)
+	}
+	var stored struct {
+		Credential   string    `json:"credential"`
+		PurchaseID   string    `json:"purchase_id"`
+		ExpiresAt    time.Time `json:"expires_at"`
+		Network      string    `json:"network"`
+		Allowance    int64     `json:"allowance_units"`
+		RequestLimit int64     `json:"request_limit_units"`
+	}
+	if err := json.Unmarshal(doc["access_pass"], &stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored.Credential != pass.Credential || stored.PurchaseID != pass.PurchaseID || stored.Network != pass.Network || stored.Allowance != pass.Allowance || stored.RequestLimit != pass.RequestLimit {
+		t.Fatalf("stored access pass mismatch: %#v", stored)
+	}
+
+	stat, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stat.Mode().Perm() != 0600 {
+		t.Fatalf("config file mode = %o", stat.Mode().Perm())
+	}
+	dirStat, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dirStat.Mode().Perm() != 0700 {
+		t.Fatalf("config dir mode = %o", dirStat.Mode().Perm())
+	}
+}
+
+func TestSaveAccessPassRejectsMalformedCredential(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	pass := fixtureAccessPass('c', 'd')
+	pass.Credential = "ttsp_abcd1234_secret"
+
+	if err := SaveAccessPass(pass); err == nil {
+		t.Fatal("malformed access pass credential was stored")
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.AccessPass != nil {
+		t.Fatalf("malformed pass should not be persisted: %#v", cfg.AccessPass)
+	}
+}
+
+func TestAccessPassMutationPreservesConcurrentUnrelatedSet(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	for attempt := 0; attempt < 200; attempt++ {
+		if err := Save(&Config{DefaultVoice: "base"}); err != nil {
+			t.Fatal(err)
+		}
+		voice := fmt.Sprintf("voice-%03d", attempt)
+		pass := fixtureAccessPass('c', 'd')
+
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		var saveErr error
+		var setErr error
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			<-start
+			saveErr = SaveAccessPass(pass)
+		}()
+		go func() {
+			defer wg.Done()
+			<-start
+			setErr = Set("voice", voice)
+		}()
+		close(start)
+		wg.Wait()
+		if saveErr != nil {
+			t.Fatalf("SaveAccessPass: %v", saveErr)
+		}
+		if setErr != nil {
+			t.Fatalf("Set voice: %v", setErr)
+		}
+
+		cfg, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.AccessPass == nil || cfg.AccessPass.Credential != pass.Credential || cfg.DefaultVoice != voice {
+			t.Fatalf("attempt %d lost a concurrent update: voice=%q pass=%#v", attempt, cfg.DefaultVoice, cfg.AccessPass)
+		}
+	}
+}
+
+func TestForgetAccessPassRequiresExactCredentialAndPreservesUnrelatedConfig(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	apiKey := fixtureCredential("ttsb", 'a', 'b')
+	pass := fixtureAccessPass('c', 'd')
+	if err := Save(&Config{APIKey: apiKey, DefaultVoice: "af_heart", AccessPass: &pass}); err != nil {
+		t.Fatal(err)
+	}
+
+	removed, err := ForgetAccessPass(fixtureCredential("ttsp", 'e', 'f'))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed {
+		t.Fatal("mismatched credential removed the pass")
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.AccessPass == nil || cfg.AccessPass.Credential != pass.Credential {
+		t.Fatalf("pass should remain after mismatched forget: %#v", cfg.AccessPass)
+	}
+
+	removed, err = ForgetAccessPass(pass.Credential)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !removed {
+		t.Fatal("exact credential did not remove pass")
+	}
+	cfg, err = Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.AccessPass != nil || cfg.APIKey != apiKey || cfg.DefaultVoice != "af_heart" {
+		t.Fatalf("forget changed unrelated config or left pass: %#v", cfg)
+	}
+}
+
+func TestCLISessionStoragePreservesUnrelatedConfigAndCompares(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	permanent := fixtureCredential("ttsb", 'a', 'b')
+	first := fixtureCredential("ttsc", 'c', 'd')
+	second := fixtureCredential("ttsc", 'e', 'f')
+	if err := Save(&Config{APIKey: permanent, DefaultVoice: "voice", CLIAuthURL: "https://example.test/auth"}); err != nil {
+		t.Fatal(err)
+	}
+	expires := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
+	if err := StoreCLISession("", StoredCLISession{Credential: first, ExpiresAt: expires}); err != nil {
+		t.Fatal(err)
+	}
+	if err := StoreCLISession("", StoredCLISession{Credential: second, ExpiresAt: expires}); err == nil {
+		t.Fatal("expected compare conflict")
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.APIKey != permanent || cfg.DefaultVoice != "voice" || cfg.CLISession.Credential != first {
+		t.Fatalf("config not preserved: %#v", cfg)
+	}
+	if err := ClearCLISession(first); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _ = Load()
+	if cfg.CLISession != nil || cfg.APIKey != permanent {
+		t.Fatalf("clear changed unrelated config: %#v", cfg)
+	}
+	path, _ := ConfigPath()
+	stat, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stat.Mode().Perm() != 0600 {
+		t.Fatalf("mode = %o", stat.Mode().Perm())
+	}
+}
+
+func TestCLISessionAndAccessPassMutationsPreserveEachOther(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	pass := fixtureAccessPass('a', 'b')
+	cli := fixtureCredential("ttsc", 'c', 'd')
+	expires := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
+
+	if err := Save(&Config{AccessPass: &pass}); err != nil {
+		t.Fatal(err)
+	}
+	if err := StoreCLISession("", StoredCLISession{Credential: cli, ExpiresAt: expires}); err != nil {
+		t.Fatal(err)
+	}
+
+	updatedPass := fixtureAccessPass('e', 'f')
+	if err := SaveAccessPass(updatedPass); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.CLISession == nil || cfg.CLISession.Credential != cli {
+		t.Fatalf("access-pass save changed CLI session: %#v", cfg.CLISession)
+	}
+	if cfg.AccessPass == nil || cfg.AccessPass.Credential != updatedPass.Credential {
+		t.Fatalf("CLI-session save lost access pass: %#v", cfg.AccessPass)
+	}
+
+	removed, err := ForgetAccessPass(updatedPass.Credential)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !removed {
+		t.Fatal("exact access pass was not removed")
+	}
+	cfg, err = Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.AccessPass != nil || cfg.CLISession == nil || cfg.CLISession.Credential != cli {
+		t.Fatalf("access-pass clear changed CLI session: pass=%#v session=%#v", cfg.AccessPass, cfg.CLISession)
+	}
+
+	if err := SaveAccessPass(updatedPass); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ClearCLISession(cli); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.CLISession != nil || cfg.AccessPass == nil || cfg.AccessPass.Credential != updatedPass.Credential {
+		t.Fatalf("CLI-session clear changed access pass: session=%#v pass=%#v", cfg.CLISession, cfg.AccessPass)
+	}
+}
+
+func TestActiveCLISessionValidation(t *testing.T) {
+	now := time.Now().UTC()
+	valid := fixtureCredential("ttsc", 'a', 'b')
+	for name, cfg := range map[string]*Config{
+		"malformed token":  {CLISession: &StoredCLISession{Credential: "bad", ExpiresAt: now.Add(time.Hour).Format(time.RFC3339)}},
+		"malformed expiry": {CLISession: &StoredCLISession{Credential: valid, ExpiresAt: "bad"}},
+		"expired":          {CLISession: &StoredCLISession{Credential: valid, ExpiresAt: now.Add(-time.Second).Format(time.RFC3339)}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			session, warning := ActiveCLISession(cfg, now)
+			if session != nil || warning == "" {
+				t.Fatalf("session=%v warning=%q", session, warning)
+			}
+		})
+	}
+	session, warning := ActiveCLISession(&Config{CLISession: &StoredCLISession{Credential: valid, ExpiresAt: now.Add(time.Hour).Format(time.RFC3339)}}, now)
+	if session == nil || warning != "" {
+		t.Fatalf("session=%v warning=%q", session, warning)
 	}
 }
 
@@ -150,6 +474,130 @@ func TestResolvePrecedence(t *testing.T) {
 	resolved, _ = Resolve(cfg, FlagValues{Voice: &flagVoice})
 	if resolved.Voice != "am_adam" {
 		t.Errorf("flag should override env: got %q", resolved.Voice)
+	}
+}
+
+func TestResolveCredentialPrecedenceIncludesActiveCLISession(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	permanent := fixtureCredential("ttsb", 'a', 'b')
+	cli := fixtureCredential("ttsc", 'c', 'd')
+	environment := fixtureCredential("ttsb", 'e', 'f')
+	flag := fixtureCredential("ttsb", '1', '2')
+	cfg := &Config{APIKey: permanent, CLISession: &StoredCLISession{Credential: cli, ExpiresAt: time.Now().Add(time.Hour).UTC().Format(time.RFC3339)}}
+	resolved, _ := Resolve(cfg, FlagValues{})
+	if resolved.APIKey != cli {
+		t.Fatalf("CLI = %q", resolved.APIKey)
+	}
+	t.Setenv("TTSBUDDY_API_KEY", environment)
+	resolved, _ = Resolve(cfg, FlagValues{})
+	if resolved.APIKey != environment {
+		t.Fatalf("env = %q", resolved.APIKey)
+	}
+	resolved, _ = Resolve(cfg, FlagValues{APIKey: &flag})
+	if resolved.APIKey != flag {
+		t.Fatalf("flag = %q", resolved.APIKey)
+	}
+}
+
+func TestResolveCredentialPrecedenceIncludesAccessPass(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	permanent := fixtureCredential("ttsb", 'a', 'b')
+	cli := fixtureCredential("ttsc", 'c', 'd')
+	storedPass := fixtureAccessPass('e', 'f')
+	storedPass.ExpiresAt = time.Now().Add(-time.Hour).UTC()
+	envAPI := fixtureCredential("ttsb", '1', '2')
+	envPass := fixtureCredential("ttsp", '3', '4')
+	flagAPI := fixtureCredential("ttsb", '5', '6')
+	flagPass := fixtureCredential("ttsp", '7', '8')
+	cfg := &Config{
+		APIKey: permanent,
+		CLISession: &StoredCLISession{
+			Credential: cli,
+			ExpiresAt:  time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
+		},
+		AccessPass: &storedPass,
+	}
+
+	resolved, warnings := Resolve(cfg, FlagValues{})
+	if len(warnings) != 0 {
+		t.Fatalf("unexpected warnings: %v", warnings)
+	}
+	if resolved.APIKey != storedPass.Credential || resolved.CredentialKind != CredentialKindAccessPass {
+		t.Fatalf("stored pass should outrank stored session/key, got %q kind %q", resolved.APIKey, resolved.CredentialKind)
+	}
+
+	t.Setenv("TTSBUDDY_API_KEY", envAPI)
+	resolved, _ = Resolve(cfg, FlagValues{})
+	if resolved.APIKey != envAPI || resolved.CredentialKind != CredentialKindSubscription {
+		t.Fatalf("env API key = %q kind %q", resolved.APIKey, resolved.CredentialKind)
+	}
+
+	t.Setenv("TTSBUDDY_ACCESS_PASS", envPass)
+	resolved, _ = Resolve(cfg, FlagValues{})
+	if resolved.APIKey != envPass || resolved.CredentialKind != CredentialKindAccessPass {
+		t.Fatalf("env access pass = %q kind %q", resolved.APIKey, resolved.CredentialKind)
+	}
+
+	resolved, _ = Resolve(cfg, FlagValues{APIKey: &flagAPI})
+	if resolved.APIKey != flagAPI || resolved.CredentialKind != CredentialKindSubscription {
+		t.Fatalf("flag API key = %q kind %q", resolved.APIKey, resolved.CredentialKind)
+	}
+
+	resolved, _ = Resolve(cfg, FlagValues{APIKey: &flagPass})
+	if resolved.APIKey != flagPass || resolved.CredentialKind != CredentialKindAccessPass {
+		t.Fatalf("flag access pass = %q kind %q", resolved.APIKey, resolved.CredentialKind)
+	}
+}
+
+func TestResolveMalformedStoredAccessPassFallsBackWithWarning(t *testing.T) {
+	cli := fixtureCredential("ttsc", 'c', 'd')
+	cfg := &Config{
+		APIKey: fixtureCredential("ttsb", 'a', 'b'),
+		CLISession: &StoredCLISession{
+			Credential: cli,
+			ExpiresAt:  time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
+		},
+		AccessPass: &StoredAccessPass{Credential: "ttsp_abcd1234_secret"},
+	}
+	resolved, warnings := Resolve(cfg, FlagValues{})
+	if resolved.APIKey != cli || resolved.CredentialKind != CredentialKindCLISession {
+		t.Fatalf("CLI fallback = %q kind %q", resolved.APIKey, resolved.CredentialKind)
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "stored access pass is malformed") {
+		t.Fatalf("warnings = %v", warnings)
+	}
+}
+
+func TestResolveMalformedEnvironmentAccessPassIgnored(t *testing.T) {
+	t.Setenv("TTSBUDDY_ACCESS_PASS", "ttsp_abcd1234_secret")
+	resolved, warnings := Resolve(&Config{APIKey: fixtureCredential("ttsb", 'a', 'b')}, FlagValues{})
+	if resolved.APIKey != fixtureCredential("ttsb", 'a', 'b') || resolved.CredentialKind != CredentialKindSubscription {
+		t.Fatalf("malformed env access pass should not win, got %q kind %q", resolved.APIKey, resolved.CredentialKind)
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "invalid TTSBUDDY_ACCESS_PASS") {
+		t.Fatalf("warnings = %v", warnings)
+	}
+}
+
+func TestResolveMalformedEnvironmentAPIKeyIgnored(t *testing.T) {
+	t.Setenv("TTSBUDDY_API_KEY", "ttsb_abcd1234_secret")
+	storedPass := fixtureAccessPass('c', 'd')
+	resolved, warnings := Resolve(&Config{AccessPass: &storedPass}, FlagValues{})
+	if resolved.APIKey != storedPass.Credential || resolved.CredentialKind != CredentialKindAccessPass {
+		t.Fatalf("malformed env API key should not win, got %q kind %q", resolved.APIKey, resolved.CredentialKind)
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "invalid TTSBUDDY_API_KEY") {
+		t.Fatalf("warnings = %v", warnings)
+	}
+}
+
+func TestResolveMalformedStoredAPIKeyIgnored(t *testing.T) {
+	resolved, warnings := Resolve(&Config{APIKey: "ttsb_abcd1234_secret"}, FlagValues{})
+	if resolved.APIKey != "" || resolved.CredentialKind != CredentialKindNone {
+		t.Fatalf("malformed stored API key should not resolve, got %q kind %q", resolved.APIKey, resolved.CredentialKind)
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "stored API key is malformed") {
+		t.Fatalf("warnings = %v", warnings)
 	}
 }
 
@@ -459,6 +907,32 @@ func TestResolveAllowCustomAPIURLWarning(t *testing.T) {
 	}
 	if !strings.Contains(warnings[0], "invalid TTSBUDDY_ALLOW_CUSTOM_API_URL") {
 		t.Fatalf("warning should mention invalid env var, got %q", warnings[0])
+	}
+}
+
+func TestResolveClerkFrontendAPIURLUsesEnvironmentOptIn(t *testing.T) {
+	t.Setenv("TTSBUDDY_CLERK_FRONTEND_API_URL", "https://clerk.example.test")
+	t.Setenv("TTSBUDDY_ALLOW_CUSTOM_API_URL", "true")
+
+	resolved, warnings := Resolve(&Config{}, FlagValues{})
+	if len(warnings) != 0 {
+		t.Fatalf("unexpected warnings: %v", warnings)
+	}
+	if resolved.ClerkFrontendAPIURL != "https://clerk.example.test" {
+		t.Fatalf("ClerkFrontendAPIURL = %q, want environment override", resolved.ClerkFrontendAPIURL)
+	}
+}
+
+func TestResolveClerkFrontendAPIURLRejectsWithoutEnvironmentOptIn(t *testing.T) {
+	t.Setenv("TTSBUDDY_CLERK_FRONTEND_API_URL", "https://clerk.example.test")
+	t.Setenv("TTSBUDDY_ALLOW_CUSTOM_API_URL", "false")
+
+	resolved, warnings := Resolve(&Config{}, FlagValues{})
+	if resolved.ClerkFrontendAPIURL != DefaultClerkFAPIURL {
+		t.Fatalf("ClerkFrontendAPIURL = %q, want shipped default", resolved.ClerkFrontendAPIURL)
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "ignoring TTSBUDDY_CLERK_FRONTEND_API_URL") {
+		t.Fatalf("warnings = %v, want one opt-in warning", warnings)
 	}
 }
 

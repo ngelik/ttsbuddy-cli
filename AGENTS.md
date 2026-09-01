@@ -116,3 +116,15 @@ Then run: `make lint`. Config is in `.golangci.yml`.
 - `github.com/spf13/cobra` — CLI framework
 - `golang.org/x/term` — TTY detection
 - Go stdlib for everything else
+
+## CLI authentication contract
+
+- `internal/clerkfapi` owns the pinned native Clerk email-code protocol. Any
+  contract change must pass the authenticated development probe before release.
+- `internal/prompt` owns bounded email and hidden OTP input. Never put an OTP in
+  argv, logs, fixtures, or receipts.
+- Permanent credentials use `ttsb_`; expiring CLI sessions use `ttsc_` and are
+  stored separately with an absolute seven-day expiry.
+- Precedence is `--key` > environment > CLI session > permanent config key.
+- Login/logout never overwrite `api_key`. A new login replaces only the prior
+  CLI session; remote logout failure retains the local session.

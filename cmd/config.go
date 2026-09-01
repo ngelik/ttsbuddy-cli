@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/ngelik/ttsbuddy-cli/internal/config"
 	"github.com/spf13/cobra"
@@ -20,7 +19,7 @@ Usage:
   ttsbuddy config get <key>          Show a single value
   ttsbuddy config set <key> <value>  Set a value
 
-Valid keys: key, voice, language, speed, timeout, output_dir, api_url, tts_api_base_url, allow_custom_api_url`,
+Valid keys: key, voice, language, speed, timeout, output_dir, api_url, cli_auth_url, tts_api_base_url, allow_custom_api_url`,
 	Args: noArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Show resolved values (file + env + defaults) for consistency
@@ -32,19 +31,30 @@ Valid keys: key, voice, language, speed, timeout, output_dir, api_url, tts_api_b
 
 		if flagJSON {
 			out := *resolved
-			out.APIKey = config.RedactKey(out.APIKey)
+			out.APIKey = config.RedactCredential(out.APIKey)
+			if out.AccessPass != nil {
+				pass := *out.AccessPass
+				pass.Credential = config.RedactCredential(pass.Credential)
+				out.AccessPass = &pass
+			}
 			enc := json.NewEncoder(os.Stdout)
 			enc.SetIndent("", "  ")
 			return enc.Encode(out)
 		}
 
-		_, _ = fmt.Fprintf(os.Stdout, "%-20s %s\n", "key:", config.RedactKey(resolved.APIKey))
+		_, _ = fmt.Fprintf(os.Stdout, "%-20s %s\n", "key:", config.RedactCredential(resolved.APIKey))
+		accessPass := ""
+		if resolved.AccessPass != nil {
+			accessPass = config.RedactCredential(resolved.AccessPass.Credential)
+		}
+		_, _ = fmt.Fprintf(os.Stdout, "%-20s %s\n", "access_pass:", accessPass)
 		_, _ = fmt.Fprintf(os.Stdout, "%-20s %s\n", "voice:", resolved.Voice)
 		_, _ = fmt.Fprintf(os.Stdout, "%-20s %s\n", "language:", resolved.Language)
 		_, _ = fmt.Fprintf(os.Stdout, "%-20s %s\n", "speed:", config.FormatSpeed(resolved.Speed))
 		_, _ = fmt.Fprintf(os.Stdout, "%-20s %s\n", "timeout:", resolved.PollTimeout)
 		_, _ = fmt.Fprintf(os.Stdout, "%-20s %s\n", "output_dir:", resolved.OutputDir)
 		_, _ = fmt.Fprintf(os.Stdout, "%-20s %s\n", "api_url:", resolved.APIURL)
+		_, _ = fmt.Fprintf(os.Stdout, "%-20s %s\n", "cli_auth_url:", resolved.CLIAuthURL)
 		_, _ = fmt.Fprintf(os.Stdout, "%-20s %s\n", "tts_api_base_url:", resolved.TTSAPIBaseURL)
 		_, _ = fmt.Fprintf(os.Stdout, "%-20s %t\n", "allow_custom_api_url:", resolved.AllowCustomAPIURL)
 		return nil
@@ -58,7 +68,7 @@ var configGetCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		key := args[0]
 		if !config.IsValidKey(key) {
-			return &exitError{code: 2, msg: fmt.Sprintf("unknown config key: %s\nValid keys: key, voice, language, speed, timeout, output_dir, api_url, tts_api_base_url, allow_custom_api_url", key)}
+			return &exitError{code: 2, msg: fmt.Sprintf("unknown config key: %s\nValid keys: key, voice, language, speed, timeout, output_dir, api_url, cli_auth_url, tts_api_base_url, allow_custom_api_url", key)}
 		}
 		resolved := resolvedCfg
 		if resolved == nil {
@@ -78,11 +88,11 @@ var configSetCmd = &cobra.Command{
 		key, value := args[0], args[1]
 
 		if !config.IsValidKey(key) {
-			return &exitError{code: 2, msg: fmt.Sprintf("unknown config key: %s\nValid keys: key, voice, language, speed, timeout, output_dir, api_url, tts_api_base_url, allow_custom_api_url", key)}
+			return &exitError{code: 2, msg: fmt.Sprintf("unknown config key: %s\nValid keys: key, voice, language, speed, timeout, output_dir, api_url, cli_auth_url, tts_api_base_url, allow_custom_api_url", key)}
 		}
 
-		if (key == "key" || key == "api_key") && !strings.HasPrefix(value, "ttsb_") {
-			return &exitError{code: 2, msg: "API key must start with 'ttsb_'"}
+		if (key == "key" || key == "api_key") && !config.IsManualSubscriptionCredential(value) {
+			return &exitError{code: 2, msg: "API key must start with 'ttsb_' and match the expected key format"}
 		}
 
 		if err := config.Set(key, value); err != nil {
@@ -95,7 +105,7 @@ var configSetCmd = &cobra.Command{
 
 		switch key {
 		case "key", "api_key":
-			fmt.Fprintf(os.Stderr, "API key set: %s\n", config.RedactKey(value))
+			fmt.Fprintf(os.Stderr, "API key set: %s\n", config.RedactCredential(value))
 		default:
 			fmt.Fprintf(os.Stderr, "%s set: %s\n", key, value)
 		}
@@ -106,7 +116,7 @@ var configSetCmd = &cobra.Command{
 func getResolvedValue(r *config.ResolvedConfig, key string) string {
 	switch key {
 	case "key", "api_key":
-		return config.RedactKey(r.APIKey)
+		return config.RedactCredential(r.APIKey)
 	case "voice":
 		return r.Voice
 	case "language", "default_language":
@@ -119,6 +129,8 @@ func getResolvedValue(r *config.ResolvedConfig, key string) string {
 		return r.OutputDir
 	case "api_url":
 		return r.APIURL
+	case "cli_auth_url":
+		return r.CLIAuthURL
 	case "tts_api_base_url":
 		return r.TTSAPIBaseURL
 	case "allow_custom_api_url":

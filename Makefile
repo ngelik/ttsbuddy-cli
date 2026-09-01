@@ -12,7 +12,7 @@ LDFLAGS := -s -w \
   -X $(MODULE)/cmd.Commit=$(COMMIT) \
   -X $(MODULE)/cmd.Date=$(DATE)
 
-.PHONY: build test test-live test-acceptance lint vuln tools release-snapshot check-actions-pinned clean
+.PHONY: build test test-live test-acceptance lint vuln tools release-snapshot check-actions-pinned x402-access-probe clerk-auth-probe clean
 
 build:
 	go build -ldflags "$(LDFLAGS)" -o bin/ttsbuddy ./cmd/ttsbuddy
@@ -22,6 +22,12 @@ test:
 
 test-live:
 	TTSBUDDY_TEST_LIVE=1 go test -race -count=1 -run TestLive ./...
+
+x402-access-probe:
+	go run ./tools/x402-access-probe
+
+clerk-auth-probe:
+	go run ./tools/clerk-fapi-probe
 
 test-acceptance:
 	@echo "Running acceptance tests (requires TTSBUDDY_API_KEY)..."

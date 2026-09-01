@@ -19,37 +19,65 @@ type FlagValues struct {
 
 // ResolvedConfig contains fully resolved values with all defaults applied.
 type ResolvedConfig struct {
-	APIKey            string
-	APIURL            string
-	TTSAPIBaseURL     string
-	AllowCustomAPIURL bool
-	Voice             string
-	Language          string
-	Speed             float64
-	OutputDir         string
-	PollTimeout       string
+	APIKey              string
+	CredentialKind      CredentialKind
+	AccessPass          *StoredAccessPass
+	APIURL              string
+	CLIAuthURL          string
+	ClerkFrontendAPIURL string
+	TTSAPIBaseURL       string
+	AllowCustomAPIURL   bool
+	Voice               string
+	Language            string
+	Speed               float64
+	OutputDir           string
+	PollTimeout         string
 }
 
-// Resolve applies precedence: flags > env vars > config file > defaults.
-// Resolve applies precedence: flags > env vars > config file > defaults.
+// Resolve applies credential precedence:
+// --key > TTSBUDDY_ACCESS_PASS > TTSBUDDY_API_KEY > stored access pass >
+// active CLI session > stored permanent API key.
+// Non-credential values keep the existing flags > env vars > config > defaults order.
 // Returns the resolved config and any warnings (e.g., invalid env var values).
 // Callers should decide whether to print warnings based on output mode.
 func Resolve(cfg *Config, flags FlagValues) (*ResolvedConfig, []string) {
 	var warnings []string
 	r := &ResolvedConfig{
-		APIKey:            cfg.APIKey,
-		APIURL:            or(cfg.APIURL, DefaultAPIURL),
-		TTSAPIBaseURL:     or(cfg.TTSAPIBaseURL, DefaultTTSAPIBaseURL),
-		AllowCustomAPIURL: cfg.AllowCustomAPIURL,
-		Voice:             or(cfg.DefaultVoice, DefaultVoice),
-		Language:          or(cfg.DefaultLanguage, DefaultLanguage),
-		Speed:             orFloat(cfg.DefaultSpeed, DefaultSpeed),
-		OutputDir:         or(cfg.OutputDir, DefaultOutputDir),
-		PollTimeout:       or(cfg.PollTimeout, DefaultPollTimeout),
+		APIURL:              or(cfg.APIURL, DefaultAPIURL),
+		CLIAuthURL:          or(cfg.CLIAuthURL, DefaultCLIAuthURL),
+		ClerkFrontendAPIURL: DefaultClerkFAPIURL,
+		TTSAPIBaseURL:       or(cfg.TTSAPIBaseURL, DefaultTTSAPIBaseURL),
+		AllowCustomAPIURL:   cfg.AllowCustomAPIURL,
+		Voice:               or(cfg.DefaultVoice, DefaultVoice),
+		Language:            or(cfg.DefaultLanguage, DefaultLanguage),
+		Speed:               orFloat(cfg.DefaultSpeed, DefaultSpeed),
+		OutputDir:           or(cfg.OutputDir, DefaultOutputDir),
+		PollTimeout:         or(cfg.PollTimeout, DefaultPollTimeout),
+	}
+	if cfg.APIKey != "" {
+		if IsSubscriptionCredential(cfg.APIKey) {
+			setCredential(r, cfg.APIKey, CredentialKindSubscription)
+		} else {
+			warnings = append(warnings, "stored API key is malformed; ignoring it")
+		}
+	}
+	if session, warning := ActiveCLISession(cfg, time.Now()); session != nil {
+		setCredential(r, session.Credential, CredentialKindCLISession)
+	} else if warning != "" {
+		warnings = append(warnings, warning)
+	}
+	if cfg.AccessPass != nil {
+		pass := *cfg.AccessPass
+		r.AccessPass = &pass
+		if IsAccessPassCredential(pass.Credential) {
+			setCredential(r, pass.Credential, CredentialKindAccessPass)
+		} else {
+			warnings = append(warnings, "stored access pass is malformed; ignoring it")
+		}
 	}
 
 	// Layer 2: environment variables override config file.
-	warnings = applyEnv(r)
+	warnings = append(warnings, applyEnv(r)...)
 
 	// Layer 3: flags override everything.
 	applyFlags(r, flags)
@@ -57,17 +85,16 @@ func Resolve(cfg *Config, flags FlagValues) (*ResolvedConfig, []string) {
 	return r, warnings
 }
 
+func setCredential(r *ResolvedConfig, credential string, kind CredentialKind) {
+	if credential == "" {
+		return
+	}
+	r.APIKey = credential
+	r.CredentialKind = kind
+}
+
 func applyEnv(r *ResolvedConfig) []string {
 	var warnings []string
-	if v := os.Getenv("TTSBUDDY_API_KEY"); v != "" {
-		r.APIKey = v
-	}
-	if v := os.Getenv("TTSBUDDY_API_URL"); v != "" {
-		r.APIURL = v
-	}
-	if v := os.Getenv("TTSBUDDY_TTS_API_BASE_URL"); v != "" {
-		r.TTSAPIBaseURL = v
-	}
 	if v := os.Getenv("TTSBUDDY_ALLOW_CUSTOM_API_URL"); v != "" {
 		allow, err := strconv.ParseBool(v)
 		if err != nil {
@@ -75,6 +102,36 @@ func applyEnv(r *ResolvedConfig) []string {
 		} else {
 			r.AllowCustomAPIURL = allow
 		}
+	}
+	if v := os.Getenv("TTSBUDDY_API_KEY"); v != "" {
+		if IsSubscriptionCredential(v) {
+			setCredential(r, v, CredentialKindSubscription)
+		} else {
+			warnings = append(warnings, "invalid TTSBUDDY_API_KEY; ignoring it")
+		}
+	}
+	if v := os.Getenv("TTSBUDDY_ACCESS_PASS"); v != "" {
+		if IsAccessPassCredential(v) {
+			setCredential(r, v, CredentialKindAccessPass)
+		} else {
+			warnings = append(warnings, "invalid TTSBUDDY_ACCESS_PASS; ignoring it")
+		}
+	}
+	if v := os.Getenv("TTSBUDDY_API_URL"); v != "" {
+		r.APIURL = v
+	}
+	if v := os.Getenv("TTSBUDDY_CLI_AUTH_URL"); v != "" {
+		r.CLIAuthURL = v
+	}
+	if v := os.Getenv("TTSBUDDY_CLERK_FRONTEND_API_URL"); v != "" {
+		if r.AllowCustomAPIURL || os.Getenv("TTSBUDDY_ALLOW_CUSTOM_API_URL") == "true" {
+			r.ClerkFrontendAPIURL = v
+		} else {
+			warnings = append(warnings, "ignoring TTSBUDDY_CLERK_FRONTEND_API_URL without custom API URL opt-in")
+		}
+	}
+	if v := os.Getenv("TTSBUDDY_TTS_API_BASE_URL"); v != "" {
+		r.TTSAPIBaseURL = v
 	}
 	if v := os.Getenv("TTSBUDDY_VOICE"); v != "" {
 		r.Voice = v
@@ -109,7 +166,11 @@ func applyEnv(r *ResolvedConfig) []string {
 
 func applyFlags(r *ResolvedConfig, f FlagValues) {
 	if f.APIKey != nil {
-		r.APIKey = *f.APIKey
+		if kind := CredentialKindFor(*f.APIKey); kind == CredentialKindSubscription || kind == CredentialKindAccessPass {
+			setCredential(r, *f.APIKey, kind)
+		} else {
+			setCredential(r, *f.APIKey, CredentialKindNone)
+		}
 	}
 	if f.Voice != nil {
 		r.Voice = *f.Voice
