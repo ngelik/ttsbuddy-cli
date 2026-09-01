@@ -404,60 +404,6 @@ func TestCompletedMissingAudio(t *testing.T) {
 	}
 }
 
-func TestParseResponsePreservesAccessPassBillingFields(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{
-			"success": true,
-			"status": "completed",
-			"job_id": "job-pass",
-			"billing": {
-				"mode": "prepaid_pass",
-				"estimated_cost_cents": 0,
-				"units": 123,
-				"request_units": 123,
-				"allowance_units": 500000,
-				"reserved_units": 0,
-				"consumed_units": 100,
-				"remaining_units": 499900
-			},
-			"meta": {"request_id": "req-pass", "api_version": "2026-04"}
-		}`))
-	}))
-	defer srv.Close()
-
-	client := NewClient(srv.URL, fixtureCredential("ttsp", 'a', 'b'), "test")
-	resp, _, err := client.Speak(context.Background(), SpeakRequest{Text: "hello"}, "idem-pass")
-	if err != nil {
-		t.Fatalf("Speak error: %v", err)
-	}
-	if resp.Billing == nil || resp.Billing.Mode != "prepaid_pass" {
-		t.Fatalf("missing pass billing: %#v", resp.Billing)
-	}
-	if resp.Billing.Units == nil || *resp.Billing.Units != 123 {
-		t.Fatalf("units not preserved: %#v", resp.Billing)
-	}
-	if resp.Billing.RequestUnits == nil || *resp.Billing.RequestUnits != 123 {
-		t.Fatalf("request units not preserved: %#v", resp.Billing)
-	}
-	if resp.Billing.AllowanceUnits == nil || *resp.Billing.AllowanceUnits != 500_000 {
-		t.Fatalf("allowance units not preserved: %#v", resp.Billing)
-	}
-	if resp.Billing.ConsumedUnits == nil || *resp.Billing.ConsumedUnits != 100 {
-		t.Fatalf("consumed units not preserved: %#v", resp.Billing)
-	}
-	if resp.Billing.ReservedUnits == nil || *resp.Billing.ReservedUnits != 0 {
-		t.Fatalf("reserved units not preserved: %#v", resp.Billing)
-	}
-	if resp.Billing.RemainingUnits == nil || *resp.Billing.RemainingUnits != 499_900 {
-		t.Fatalf("remaining units not preserved: %#v", resp.Billing)
-	}
-}
-
-func fixtureCredential(prefix string, public, secret byte) string {
-	return prefix + "_" + strings.Repeat(string(public), 8) + "_" + strings.Repeat(string(secret), 48)
-}
-
 func TestResolveStatusURL(t *testing.T) {
 	client := NewClient("https://www.ttsbuddy.com/v1/agent-tts", "key", "test")
 
@@ -886,31 +832,6 @@ func TestSpeakNonJSON403(t *testing.T) {
 	}
 	if apiErr.ErrorCode() != ErrForbidden {
 		t.Errorf("code: got %q, want %q (should be generic FORBIDDEN, not INACTIVE_SUBSCRIPTION)", apiErr.ErrorCode(), ErrForbidden)
-	}
-}
-
-func TestSpeak402DoesNotAttemptAccessPassPurchase(t *testing.T) {
-	var paymentHeaders []string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		paymentHeaders = append(paymentHeaders, r.Header.Get("PAYMENT-SIGNATURE"))
-		w.WriteHeader(http.StatusPaymentRequired)
-		_ = json.NewEncoder(w).Encode(TTSResponse{
-			Success: false,
-			Error:   &APIError{Code: "PASS_BALANCE_INSUFFICIENT", Message: "buy another pass explicitly"},
-		})
-	}))
-	defer srv.Close()
-
-	client := NewClient(srv.URL, fixtureCredential("ttsp", 'a', 'b'), "test")
-	_, status, err := client.Speak(context.Background(), SpeakRequest{Text: "hello"}, "idem-402")
-	if err == nil {
-		t.Fatal("expected 402 to remain an API error")
-	}
-	if status != http.StatusPaymentRequired {
-		t.Fatalf("status = %d, want 402", status)
-	}
-	if len(paymentHeaders) != 1 || paymentHeaders[0] != "" {
-		t.Fatalf("Speak attempted payment headers: %#v", paymentHeaders)
 	}
 }
 

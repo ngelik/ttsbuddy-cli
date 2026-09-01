@@ -4,11 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
-	"time"
-
-	"github.com/ngelik/ttsbuddy-cli/internal/config"
 )
 
 func TestConfigShowResolved(t *testing.T) {
@@ -38,34 +34,6 @@ func TestConfigJSON(t *testing.T) {
 	}
 }
 
-func TestConfigShowsStoredAccessPassRedacted(t *testing.T) {
-	home := t.TempDir()
-	passCredential := "ttsp_" + strings.Repeat("a", 8) + "_" + strings.Repeat("b", 48)
-	t.Setenv("HOME", home)
-	if err := config.SaveAccessPass(config.StoredAccessPass{
-		Credential:   passCredential,
-		PurchaseID:   "purchase_test",
-		ExpiresAt:    time.Now().Add(24 * time.Hour).UTC(),
-		Network:      "eip155:84532",
-		Allowance:    500_000,
-		RequestLimit: 100_000,
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	r := runCLI(t, envForTest(home, "", ""), "config")
-	assertExitCode(t, r, 0)
-	assertContains(t, r.Stdout, "access_pass:", "stdout")
-	assertContains(t, r.Stdout, "ttsp_aaaaaaaa_...", "stdout")
-	assertNotContains(t, r.Stdout, strings.Repeat("b", 48), "stdout should not contain pass secret")
-
-	r = runCLI(t, envForTest(home, "", ""), "config", "--json")
-	assertExitCode(t, r, 0)
-	assertValidJSON(t, r.Stdout)
-	assertContains(t, r.Stdout, "ttsp_aaaaaaaa_...", "stdout")
-	assertNotContains(t, r.Stdout, strings.Repeat("b", 48), "stdout should not contain pass secret")
-}
-
 func TestConfigGetVoice(t *testing.T) {
 	home := t.TempDir()
 	r := runCLI(t, append(
@@ -87,35 +55,19 @@ func TestConfigGetKeyRedacted(t *testing.T) {
 
 func TestConfigSetKey(t *testing.T) {
 	home := t.TempDir()
-	key := "ttsb_" + strings.Repeat("1", 8) + "_" + strings.Repeat("2", 48)
-	r := runCLI(t, envForTest(home, "", ""), "config", "set", "key", key)
+	r := runCLI(t, envForTest(home, "", ""), "config", "set", "key", "ttsb_new_secret123")
 	assertExitCode(t, r, 0)
-	assertContains(t, r.Stderr, "ttsb_11111111_...", "stderr should show redacted confirmation")
+	assertContains(t, r.Stderr, "ttsb_new_...", "stderr should show redacted confirmation")
 
 	// Verify persisted
 	data, _ := os.ReadFile(filepath.Join(home, ".ttsbuddy", "config.json"))
-	assertContains(t, string(data), key, "config file should contain full key")
+	assertContains(t, string(data), "ttsb_new_secret123", "config file should contain full key")
 }
 
 func TestConfigSetBadKey(t *testing.T) {
 	home := t.TempDir()
 	r := runCLI(t, envForTest(home, "", ""), "config", "set", "key", "badformat")
 	assertExitCode(t, r, 2)
-
-	r = runCLI(t, envForTest(home, "", ""), "config", "set", "key", "ttsb_abcd1234_secret")
-	assertExitCode(t, r, 2)
-}
-
-func TestConfigSetKeyRejectsAccessPassAndNoAccessPassSetter(t *testing.T) {
-	home := t.TempDir()
-	passCredential := "ttsp_" + strings.Repeat("a", 8) + "_" + strings.Repeat("b", 48)
-	r := runCLI(t, envForTest(home, "", ""), "config", "set", "key", passCredential)
-	assertExitCode(t, r, 2)
-	assertContains(t, r.Stderr, "API key must start with 'ttsb_'", "stderr")
-
-	r = runCLI(t, envForTest(home, "", ""), "config", "set", "access_pass", passCredential)
-	assertExitCode(t, r, 2)
-	assertContains(t, r.Stderr, "unknown config key: access_pass", "stderr")
 }
 
 func TestConfigSetSpeed(t *testing.T) {

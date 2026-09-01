@@ -80,12 +80,6 @@ type Billing struct {
 	MonthlyMinutesUsed      *float64 `json:"monthly_minutes_used,omitempty"`
 	MonthlyMinutesLimit     *float64 `json:"monthly_minutes_limit"`
 	MonthlyMinutesRemaining *float64 `json:"monthly_minutes_remaining"`
-	Units                   *int64   `json:"units,omitempty"`
-	RequestUnits            *int64   `json:"request_units,omitempty"`
-	AllowanceUnits          *int64   `json:"allowance_units,omitempty"`
-	ReservedUnits           *int64   `json:"reserved_units,omitempty"`
-	ConsumedUnits           *int64   `json:"consumed_units,omitempty"`
-	RemainingUnits          *int64   `json:"remaining_units,omitempty"`
 }
 
 // APIError is the structured error from the API.

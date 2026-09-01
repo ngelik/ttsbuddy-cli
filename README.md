@@ -82,12 +82,9 @@ The script builds `ttsbuddy` when needed and uses only the public demo key and a
 ## Authentication
 
 Use `ttsbuddy auth login` for interactive terminal work. Use a permanent
-`ttsb_` key for CI and unattended automation. Prepaid access passes use `ttsp_`
-credentials and are intended for explicit, self-contained access without a
-subscription key. Login/logout store the CLI session separately and never
-overwrite `api_key`. Effective credential precedence is `--key` >
-`TTSBUDDY_ACCESS_PASS` > `TTSBUDDY_API_KEY` > stored prepaid access pass >
-active CLI session > stored permanent key.
+`ttsb_` key for CI and unattended automation. Login/logout store the CLI
+session separately and never overwrite `api_key`. Effective precedence is
+`--key` > `TTSBUDDY_API_KEY` > active CLI session > stored permanent key.
 
 `ttsbuddy auth logout` revokes the stored session before clearing it. A network
 or server failure retains the local session so the command can be retried.
@@ -101,10 +98,6 @@ API keys are created in **Dashboard → Settings** at [ttsbuddy.com/dashboard](h
 1. **Flag**: `-k ttsb_...` (leaks to shell history — avoid in shared environments)
 2. **Environment variable**: `export TTSBUDDY_API_KEY=ttsb_...`
 3. **Config file**: `ttsbuddy config set key ttsb_...` (stored at `~/.ttsbuddy/config.json`)
-
-Use `TTSBUDDY_ACCESS_PASS=ttsp_...` to provide a prepaid access pass from the
-environment. Passes bought through `ttsbuddy access buy starter ...` are stored
-separately from `api_key`.
 
 For full details on creating and managing keys, see the [API Keys guide](https://ttsbuddy.com/docs/developers/api-keys).
 
@@ -156,7 +149,6 @@ ttsbuddy speak "Hello" -o - | afplay -
 **Notes:**
 - `.md` and `.markdown` files are automatically preprocessed: headings, links, images, and code blocks are stripped for cleaner narration. Use `--raw` to send verbatim.
 - Fast voices (`st_*`) support 30+ language modes through `--language`, use native display names in `ttsbuddy voices`, and support the full 0.5–1.5 speed range.
-- Local input checks use the same UTF-16 unit estimate as the API. Subscription and CLI-session credentials keep the 500,000-unit advisory limit; prepaid access passes use a 100,000-unit per-request limit. Server-side rejection remains authoritative.
 - Auto-named files use the pattern `ttsbuddy-YYYYMMDD-HHMMSS-<voice>.mp3`.
 
 **Fast voice language codes:** `en`, `ar`, `bg`, `hr`, `cs`, `da`, `nl`, `et`, `fi`, `fr`, `de`, `el`, `hi`, `hu`, `id`, `it`, `ja`, `ko`, `lv`, `lt`, `pl`, `pt`, `ro`, `ru`, `sk`, `sl`, `es`, `sv`, `tr`, `uk`, `vi`.
@@ -178,47 +170,12 @@ ttsbuddy web https://www.ttsbuddy.com/docs/ --no-download
 
 `web` fetches only `http` and `https` pages, extracts the readable article text locally, and sends the extracted text plus source URL to the API. If `--voice`, `--language`, or `--speed` are omitted, the backend applies your TTSBuddy account preferences. When the extracted article language differs from the target language, the backend translates the article before speech generation.
 
-Prepaid access passes are direct-text only for now: `web` rejects `ttsp_`
-credentials before fetching a page. Save or pipe the text yourself and use
-`ttsbuddy speak -f <file>` or `ttsbuddy speak -`.
-
 `web` supports the same output and polling flags as `speak`: `--voice`, `--language`, `--speed`, `--output`, `--output-dir`, `--timeout`, `--no-download`, and `--idempotency-key`.
 
 During longer jobs, `web` shows the local extraction step, backend submission,
 queued/processing status, and real provider percentages when the API has them.
 When conversion completes, human output includes the job ID plus speech length,
 MP3 size, and generation speed when available.
-
-### access
-
-Manage prepaid access passes. These commands never auto-buy from `speak` or
-`web`; purchases are always explicit.
-
-```bash
-# Public plan list
-ttsbuddy access plans
-ttsbuddy access plans --json
-
-# Buy the starter pass with an existing funded wallet
-ttsbuddy access buy starter --wallet local --max-price 5.00
-ttsbuddy access buy starter --wallet cdp --max-price 5.00
-
-# Check or forget the current pass
-ttsbuddy access status
-ttsbuddy access forget
-```
-
-`access buy` rejects `--key`, does not use stored API keys or existing passes
-for purchase, and constructs only the signer named by `--wallet`. The `local`
-wallet reads `TTSBUDDY_EVM_PRIVATE_KEY`. The `cdp` wallet reads
-`CDP_API_KEY_ID`, `CDP_API_KEY_SECRET`, `CDP_WALLET_SECRET`, and
-`TTSBUDDY_CDP_EVM_ACCOUNT_ADDRESS`. Wallet values are never accepted as CLI
-arguments.
-
-`access status` uses only `TTSBUDDY_ACCESS_PASS` or the stored access pass and
-checks the server even when the local expiry timestamp has passed. `access
-forget` is local-only and removes only the exact pass loaded at command start;
-it does not revoke, refund, or modify `api_key`.
 
 ### voices
 
@@ -306,7 +263,6 @@ ttsbuddy version --json
 | Setting | Env Variable | Flag | Default |
 |---------|-------------|------|---------|
 | API key | `TTSBUDDY_API_KEY` | `-k` | — |
-| Access pass | `TTSBUDDY_ACCESS_PASS` | `-k` on TTS API commands; not `access *` | — |
 | CLI auth URL | `TTSBUDDY_CLI_AUTH_URL` | — | `https://www.ttsbuddy.com/v1/cli-auth` |
 | Voice | `TTSBUDDY_VOICE` | `-v` | `st_m1` |
 | Language | `TTSBUDDY_LANGUAGE` | `-l, --language` | `en` |
@@ -350,7 +306,7 @@ Example human output for a webpage conversion:
 
 ```text
 Fetching webpage...
-Extracted "Top announcements of AWS re:Invent 2025" (10,793 UTF-16 units)
+Extracted "Top announcements of AWS re:Invent 2025" (10793 chars)
 Submitting webpage TTS request...
 Queued job fe57968d...
 Processing 42%... (1m47s)
@@ -391,7 +347,7 @@ ttsbuddy speak "Hello" --no-download --json | jq -r '.audio_url'
 |-------|-------|
 | POST requests per minute | 1 per API key |
 | GET requests per minute | 30 per API key |
-| Max text length | 500,000 UTF-16 units for subscriptions; 100,000 UTF-16 units per prepaid pass request |
+| Max text length | 500,000 characters |
 | Monthly TTS minutes | Depends on plan |
 | Audio URL lifetime | Temporary — download immediately |
 
@@ -406,8 +362,7 @@ For full API details, see the [API Reference](https://ttsbuddy.com/docs/develope
 | "Rate limited" | Wait and retry (automatic with backoff) |
 | "Monthly minutes exhausted" | Upgrade plan or wait for reset |
 | "No API access" | Your plan may not include API access |
-| "Text too long" | Split input into chunks under the credential's UTF-16 unit limit |
-| "Prepaid access pass has insufficient remaining units" | Run an explicit `ttsbuddy access buy starter --wallet <local\|cdp> --max-price <decimal>` |
+| "Text too long" | Split input into chunks under 500k characters |
 | Audio file not found | Files expire based on plan — re-generate |
 
 ## Development
@@ -438,7 +393,7 @@ TTSBUDDY_API_KEY=ttsb_... make test-acceptance
 
 ### Test Architecture
 
-- **Internal packages** (`internal/api`, `internal/config`, `internal/markdown`, `internal/access`, `internal/wallet`) use standard Go unit tests with `httptest` servers — no network or live API needed.
+- **Internal packages** (`internal/api`, `internal/config`, `internal/markdown`) use standard Go unit tests with `httptest` servers — no network or live API needed.
 - **Command tests** (`cmd/`) use a **subprocess pattern** to safely test `os.Exit` paths and direct `os.Stdout/Stderr` writes. Each test re-invokes the test binary via `TestHelperProcess`, capturing real output and exit codes.
 - **Acceptance tests** (`tests/acceptance_test.sh`) run the built binary against the live API, gated by `TTSBUDDY_API_KEY`.
 
