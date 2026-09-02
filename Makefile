@@ -19,6 +19,7 @@ build:
 
 test:
 	go test -race -count=1 ./...
+	./tests/acceptance_privacy_test.sh
 
 test-live:
 	TTSBUDDY_TEST_LIVE=1 go test -race -count=1 -run TestLive ./...

@@ -41,8 +41,15 @@ Download the latest release from [GitHub Releases](https://github.com/ngelik/tts
 ### Check version
 
 ```bash
+type -a ttsbuddy
 ttsbuddy version
 ```
+
+After installing or updating, confirm that the first `ttsbuddy` found on your
+`PATH` is the binary you intended to use. An older binary installed earlier on
+`PATH` can shadow a newer Homebrew installation. If multiple installs appear,
+inspect them before changing `PATH` or removing anything; do not delete an
+install whose origin is unclear.
 
 ## Quick Start
 
@@ -234,7 +241,7 @@ ttsbuddy config set timeout 5m
 ttsbuddy config set allow_custom_api_url true
 ```
 
-Valid keys: `key`, `voice`, `language`, `speed`, `timeout`, `output_dir`, `api_url`, `tts_api_base_url`, `allow_custom_api_url`
+Valid keys: `key`, `voice`, `language`, `speed`, `timeout`, `output_dir`, `api_url`, `cli_auth_url`, `tts_api_base_url`, `allow_custom_api_url`
 
 ### version
 
