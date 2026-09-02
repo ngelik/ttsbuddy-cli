@@ -46,7 +46,7 @@ echo ""
 echo "=== TTSBuddy CLI Acceptance Tests ==="
 echo "Binary:     $BINARY ($(command -v "$BINARY" 2>/dev/null || echo "$BINARY"))"
 if [ -n "${TTSBUDDY_API_KEY:-}" ]; then
-    echo "API Key:    ${TTSBUDDY_API_KEY:0:15}..."
+    echo "API Key:    set (redacted)"
 else
     echo "API Key:    not set"
 fi
@@ -68,14 +68,6 @@ fail() {
     FAIL=$((FAIL + 1))
     TOTAL=$((TOTAL + 1))
     echo "  ❌ $1: $2"
-    # Dump stderr on failure for debugging
-    if [ -f "$TB_OUT/_stderr" ]; then
-        local lines
-        lines=$(wc -l < "$TB_OUT/_stderr")
-        if [ "$lines" -gt 0 ]; then
-            echo "     stderr: $(head -3 "$TB_OUT/_stderr")"
-        fi
-    fi
 }
 
 skip() {
@@ -409,11 +401,10 @@ if jq -e '
     and any(.[]; .id == "st_m1" and .name == "Louis" and .language_code == "fr")
     and all(.[]; .name != "F1" and .name != "M1")
 ' "$TB_OUT/_stdout" >/dev/null 2>&1; then
-    stderr_content=$(cat "$TB_OUT/_stderr")
-    if [ -z "$stderr_content" ]; then
+    if [ ! -s "$TB_OUT/_stderr" ]; then
         pass "C.4 voices --all --json (no stderr)"
     else
-        fail "C.4 voices --all --json" "stderr not empty: $stderr_content"
+        fail "C.4 voices --all --json" "stderr_empty=false"
     fi
 else
     fail "C.4 voices --all --json" "invalid JSON or missing native Fast names"
@@ -442,11 +433,14 @@ echo "  ⚠️  Estimated ~$((POST_DELAY * 5))s (~$((POST_DELAY * 5 / 60))min)"
 
 # P.1: file save + --quiet (covers: file output, --quiet suppresses stderr)
 post_test "P.1 speak → file (quiet)" 0 tb speak "Hi" -o "$TB_OUT/t1.mp3" --quiet
-stderr_content=$(cat "$TB_OUT/_stderr" 2>/dev/null)
-if [ -s "$TB_OUT/t1.mp3" ] && [ -z "$stderr_content" ]; then
+file_exists=false
+stderr_empty=false
+[ -s "$TB_OUT/t1.mp3" ] && file_exists=true
+[ ! -s "$TB_OUT/_stderr" ] && stderr_empty=true
+if [ "$file_exists" = true ] && [ "$stderr_empty" = true ]; then
     pass "P.1 file exists + quiet"
 else
-    fail "P.1 file exists + quiet" "file=$(ls -la "$TB_OUT/t1.mp3" 2>&1) stderr='$stderr_content'"
+    fail "P.1 file exists + quiet" "file_exists=$file_exists stderr_empty=$stderr_empty"
 fi
 
 # P.2: JSON output (covers: --json mode, captures job_id for status tests)
@@ -454,7 +448,7 @@ post_test "P.2 speak --json" 0 tb speak "Ok" --json
 cp "$TB_OUT/_stdout" "$TB_OUT/t2.json"
 if jq -e '.status' "$TB_OUT/t2.json" >/dev/null 2>&1; then
     JOB_ID=$(jq -r '.job_id' "$TB_OUT/t2.json")
-    pass "P.2 valid JSON (job=$JOB_ID)"
+    pass "P.2 valid JSON"
 else
     fail "P.2 valid JSON" "missing .status"
 fi
