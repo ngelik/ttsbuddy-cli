@@ -59,11 +59,14 @@ ttsbuddy speak "Hello from TTS Buddy"
 ttsbuddy auth status
 ```
 
-`ttsbuddy auth browser` signs in through Clerk in your browser. For terminals
-without a browser, use `ttsbuddy auth email`; `ttsbuddy auth login` remains a
-backward-compatible alias for the email-code flow. Each method stores the same
-seven-day `ttsc_` CLI session. A new login replaces the prior CLI session.
-There is no refresh; login again after expiry.
+`ttsbuddy auth browser` can sign in an existing Clerk account or create a new
+one through Clerk's hosted page. On a new account's first successful consent,
+TTS Buddy initializes the standard Free plan before issuing the CLI session.
+`ttsbuddy auth email` remains a sign-in-only fallback for existing accounts.
+Clerk owns registration and email verification; the CLI does not create
+accounts itself. Each method stores the same seven-day `ttsc_` CLI session. A
+new login replaces the prior CLI session. There is no refresh; login again
+after expiry.
 
 ```bash
 # 1. Set your API key (create one in Dashboard -> Settings)
