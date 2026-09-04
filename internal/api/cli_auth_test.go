@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -40,6 +41,24 @@ func TestCLIAuthClientMethodsHeadersAndResponse(t *testing.T) {
 				t.Fatalf("response=%#v err=%v", response, err)
 			}
 		})
+	}
+}
+
+func TestCLIAuthBrowserExchangeSendsExplicitMethodJSON(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if r.Method != http.MethodPost || r.Header.Get("Authorization") != "Bearer oauth-proof-fixture" || r.Header.Get("Content-Type") != "application/json" || string(body) != `{"method":"browser"}` {
+			t.Fatalf("method=%s auth=%q content-type=%q body=%q", r.Method, r.Header.Get("Authorization"), r.Header.Get("Content-Type"), body)
+		}
+		_ = json.NewEncoder(w).Encode(CLIAuthResponse{Success: true})
+	}))
+	defer srv.Close()
+	client, err := NewCLIAuthClient(srv.URL+"/v1/cli-auth", "oauth-proof-fixture", "test", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response, _, exchangeErr := client.ExchangeBrowser(context.Background()); exchangeErr != nil || response == nil || !response.Success {
+		t.Fatalf("response=%#v err=%v", response, exchangeErr)
 	}
 }
 

@@ -19,6 +19,7 @@ builds:
       - -X github.com/ngelik/ttsbuddy-cli/cmd.Version={{.Version}}
       - -X github.com/ngelik/ttsbuddy-cli/cmd.Commit={{.ShortCommit}}
       - -X github.com/ngelik/ttsbuddy-cli/cmd.Date={{.Date}}
+      - -X github.com/ngelik/ttsbuddy-cli/cmd.ClerkOAuthClientID={{.Env.CLERK_OAUTH_CLIENT_ID}}
 
 archives:
   - id: default

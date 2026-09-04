@@ -115,7 +115,7 @@ func TestMissingCredentialErrorsLeadWithAuthLoginAndKeepPermanentAlternative(t *
 		t.Run(tt.name, func(t *testing.T) {
 			r := runCLI(t, envForTest(t.TempDir(), "", ""), tt.args...)
 			assertExitCode(t, r, 2)
-			assertContains(t, r.Stderr, "ttsbuddy auth login", "stderr")
+			assertContains(t, r.Stderr, "ttsbuddy auth browser", "stderr")
 			assertContains(t, r.Stderr, "ttsbuddy config set key", "stderr")
 			assertContains(t, r.Stderr, "https://ttsbuddy.com/dashboard", "stderr")
 		})

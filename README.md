@@ -54,14 +54,16 @@ install whose origin is unclear.
 ## Quick Start
 
 ```bash
-ttsbuddy auth login
+ttsbuddy auth browser
 ttsbuddy speak "Hello from TTS Buddy"
 ttsbuddy auth status
 ```
 
-Interactive login uses an email code and stores one seven-day `ttsc_` CLI
-session. A new login replaces the prior CLI session. There is no refresh;
-login again after expiry.
+`ttsbuddy auth browser` signs in through Clerk in your browser. For terminals
+without a browser, use `ttsbuddy auth email`; `ttsbuddy auth login` remains a
+backward-compatible alias for the email-code flow. Each method stores the same
+seven-day `ttsc_` CLI session. A new login replaces the prior CLI session.
+There is no refresh; login again after expiry.
 
 ```bash
 # 1. Set your API key (create one in Dashboard -> Settings)
@@ -88,10 +90,11 @@ The script builds `ttsbuddy` when needed and uses only the public demo key and a
 
 ## Authentication
 
-Use `ttsbuddy auth login` for interactive terminal work. Use a permanent
-`ttsb_` key for CI and unattended automation. Login/logout store the CLI
-session separately and never overwrite `api_key`. Effective precedence is
-`--key` > `TTSBUDDY_API_KEY` > active CLI session > stored permanent key.
+Use `ttsbuddy auth browser` for interactive terminal work, or `ttsbuddy auth
+email` when a browser is unavailable. Use a permanent `ttsb_` key for CI and
+unattended automation. Login/logout store the CLI session separately and never
+overwrite `api_key`. Effective precedence is `--key` > `TTSBUDDY_API_KEY` >
+active CLI session > stored permanent key.
 
 `ttsbuddy auth logout` revokes the stored session before clearing it. A network
 or server failure retains the local session so the command can be retried.
@@ -281,6 +284,20 @@ ttsbuddy version --json
 | Allow custom API URL | `TTSBUDDY_ALLOW_CUSTOM_API_URL` | — | `false` |
 
 By default, credentialed commands may use the production TTSBuddy hosts or localhost development endpoints. Sending an API key to any other HTTPS API host requires explicit opt-in with `ttsbuddy config set allow_custom_api_url true` or `TTSBUDDY_ALLOW_CUSTOM_API_URL=true`.
+
+Browser authentication uses the public production Clerk OAuth client ID built
+into the source, including binaries produced by `go install`. Release builds
+inject and verify the same public value (for example,
+`make build CLERK_OAUTH_CLIENT_ID=...`). Local development may set
+`TTSBUDDY_CLERK_OAUTH_CLIENT_ID`
+and `TTSBUDDY_CLERK_OAUTH_ISSUER` only together with
+`TTSBUDDY_ALLOW_CUSTOM_API_URL=true`. The callback always uses an ephemeral
+`127.0.0.1` port and `/callback`.
+
+Release builds fail closed unless the repository variable
+`CLERK_OAUTH_CLIENT_ID` is configured. It must match the public production
+client ID compiled into source. Browser and email authentication are available
+in packaged, Homebrew, and `go install ...@latest` builds.
 
 ## Global Flags
 

@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"regexp"
 	"time"
 
 	"github.com/ngelik/ttsbuddy-cli/internal/api"
 	"github.com/ngelik/ttsbuddy-cli/internal/clerkfapi"
+	"github.com/ngelik/ttsbuddy-cli/internal/clerkoauth"
 	"github.com/ngelik/ttsbuddy-cli/internal/config"
 	"github.com/ngelik/ttsbuddy-cli/internal/prompt"
 	"github.com/spf13/cobra"
@@ -18,14 +20,33 @@ import (
 
 var authLocalOnly bool
 
+// ClerkOAuthClientID is public configuration. Keeping the production client ID
+// as the source default makes browser authentication work for `go install`
+// builds, while release builds can still inject and verify the same value.
+var ClerkOAuthClientID = "gRApqxGCscvVfceh"
+
+// ClerkOAuthIssuer is public configuration and may be overridden for local
+// development only when custom API URLs have been explicitly enabled.
+var ClerkOAuthIssuer = config.DefaultClerkFAPIURL
+
+var runBrowserOAuth = func(ctx context.Context, issuer, clientID string, allowCustom bool, output io.Writer) (string, error) {
+	client, err := clerkoauth.New(clerkoauth.Config{IssuerURL: issuer, ClientID: clientID, AllowCustomIssuer: allowCustom, Output: output})
+	if err != nil {
+		return "", err
+	}
+	return client.Run(ctx)
+}
+
 var authCmd = &cobra.Command{Use: "auth", Short: "Sign in and manage the CLI session", Args: noArgs}
 var authLoginCmd = &cobra.Command{Use: "login", Short: "Sign in with an email code", Args: noArgs, RunE: runAuthLogin}
+var authEmailCmd = &cobra.Command{Use: "email", Short: "Sign in with an email code", Args: noArgs, RunE: runAuthLogin}
+var authBrowserCmd = &cobra.Command{Use: "browser", Short: "Sign in with a browser", Args: noArgs, RunE: runAuthBrowser}
 var authStatusCmd = &cobra.Command{Use: "status", Short: "Show CLI session status", Args: noArgs, RunE: runAuthStatus}
 var authLogoutCmd = &cobra.Command{Use: "logout", Short: "Sign out the CLI session", Args: noArgs, RunE: runAuthLogout}
 
 func init() {
 	authLogoutCmd.Flags().BoolVar(&authLocalOnly, "local-only", false, "remove local session without server revocation")
-	authCmd.AddCommand(authLoginCmd, authStatusCmd, authLogoutCmd)
+	authCmd.AddCommand(authLoginCmd, authEmailCmd, authBrowserCmd, authStatusCmd, authLogoutCmd)
 	rootCmd.AddCommand(authCmd)
 }
 
@@ -102,22 +123,66 @@ func runAuthLogin(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	client, err := api.NewCLIAuthClient(resolvedCfg.CLIAuthURL, proof.Token, Version, resolvedCfg.AllowCustomAPIURL)
-	if err != nil {
+	exchanged, err = exchangeAndStoreCLISession(ctx, proof.Token, false)
+	return err
+}
+
+func runAuthBrowser(cmd *cobra.Command, _ []string) error {
+	if err := rejectAuthGlobalCredentialFlags(cmd, true); err != nil {
 		return err
 	}
-	response, status, err := client.Exchange(ctx)
-	if err != nil {
-		return &exitError{code: 1, msg: fmt.Sprintf("CLI login exchange failed (status %d)", status)}
+	if err := validateAuthURL(resolvedCfg); err != nil {
+		return err
 	}
-	exchanged = true
+	issuer, clientID := ClerkOAuthIssuer, ClerkOAuthClientID
+	if resolvedCfg.AllowCustomAPIURL {
+		if value := os.Getenv("TTSBUDDY_CLERK_OAUTH_ISSUER"); value != "" {
+			issuer = value
+		}
+		if value := os.Getenv("TTSBUDDY_CLERK_OAUTH_CLIENT_ID"); value != "" {
+			clientID = value
+		}
+	}
+	if clientID == "" {
+		return &exitError{code: 1, msg: "browser authentication is not configured: missing Clerk OAuth client ID"}
+	}
+	lock, err := config.AcquireLoginLock()
+	if err != nil {
+		return &exitError{code: 1, msg: err.Error()}
+	}
+	defer func() { _ = lock.Release() }()
+
+	fmt.Fprintln(os.Stderr, "Signing in successfully will sign out any existing CLI session on another machine.")
+	proof, err := runBrowserOAuth(cmd.Context(), issuer, clientID, resolvedCfg.AllowCustomAPIURL, cmd.ErrOrStderr())
+	if err != nil {
+		return &exitError{code: 1, msg: err.Error()}
+	}
+	_, err = exchangeAndStoreCLISession(cmd.Context(), proof, true)
+	return err
+}
+
+func exchangeAndStoreCLISession(ctx context.Context, proof string, browser bool) (bool, error) {
+	client, err := api.NewCLIAuthClient(resolvedCfg.CLIAuthURL, proof, Version, resolvedCfg.AllowCustomAPIURL)
+	if err != nil {
+		return false, err
+	}
+	var response *api.CLIAuthResponse
+	var status int
+	if browser {
+		response, status, err = client.ExchangeBrowser(ctx)
+	} else {
+		response, status, err = client.Exchange(ctx)
+	}
+	if err != nil {
+		return false, &exitError{code: 1, msg: fmt.Sprintf("CLI login exchange failed (status %d)", status)}
+	}
 	credential, err := validateLoginCredential(response)
 	if err != nil {
-		return err
+		return true, err
 	}
 	cfg, err := config.Load()
 	if err != nil {
-		return err
+		return true, err
 	}
 	expected := ""
 	if cfg.CLISession != nil {
@@ -129,15 +194,15 @@ func runAuthLogin(cmd *cobra.Command, _ []string) error {
 			_, _, cleanupErr = cleanup.Revoke(ctx)
 		}
 		if cleanupErr != nil {
-			return &exitError{code: 1, msg: "saving CLI session failed; server cleanup could not be confirmed"}
+			return true, &exitError{code: 1, msg: "saving CLI session failed; server cleanup could not be confirmed"}
 		}
-		return &exitError{code: 1, msg: "saving CLI session failed; issued session was revoked"}
+		return true, &exitError{code: 1, msg: "saving CLI session failed; issued session was revoked"}
 	}
 	if response.Replaced {
 		fmt.Fprintln(os.Stderr, "Previous CLI session signed out.")
 	}
 	fmt.Fprintf(os.Stderr, "Signed in. CLI session expires at %s.\n", credential.ExpiresAt)
-	return nil
+	return true, nil
 }
 
 func shouldAttemptClerkCleanup(exchangeSucceeded bool) bool {
@@ -175,7 +240,7 @@ func runAuthStatus(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	if session == nil {
-		return &exitError{code: 1, msg: "Not signed in. Run: ttsbuddy auth login"}
+		return &exitError{code: 1, msg: "Not signed in. Run: ttsbuddy auth browser"}
 	}
 	if err := validateAuthURL(resolvedCfg); err != nil {
 		return err

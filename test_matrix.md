@@ -69,11 +69,13 @@ Check each item after verifying. Run `make test` for unit tests, `make test-live
 
 ## Commands
 - [ ] `AUTH_ONLY=1 BINARY=bin/ttsbuddy ./tests/acceptance_test.sh` — signed-out auth lifecycle passes in an isolated HOME without an API key or network
-- [ ] `ttsbuddy auth --help` — lists login, status, logout
+- [ ] `ttsbuddy auth --help` — lists browser, email, login, status, logout
 - [ ] `ttsbuddy auth status` (signed out) — no network, exit 1
 - [ ] `ttsbuddy auth logout` (signed out) — idempotent, exit 0
 - [ ] `ttsbuddy auth logout --local-only` — clears only a stored CLI session and never contacts the server
 - [ ] Development-only `ttsbuddy auth login` — stores an expiring `ttsc_` session without printing the code, proof, or credential
+- [ ] Development-only `ttsbuddy auth email` — matches the existing `auth login` email-code behavior
+- [ ] Development-only `ttsbuddy auth browser` — completes Clerk OAuth Authorization Code + PKCE on `127.0.0.1:<ephemeral>/callback`, then stores an expiring `ttsc_` session without printing OAuth or CLI credentials
 - [ ] Development-only `ttsbuddy auth status` — reports remote usability and never returns the bearer credential
 - [ ] Development-only `ttsbuddy auth logout` — confirms remote revocation before clearing local state; a failed revocation retains local state
 - [ ] Development negatives — unknown account, incorrect/expired code, MFA, and pending Clerk task disclose no account/proof/credential material

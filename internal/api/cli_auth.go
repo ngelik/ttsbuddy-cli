@@ -86,24 +86,30 @@ func isLoopbackHost(host string) bool {
 }
 
 func (c *CLIAuthClient) Exchange(ctx context.Context) (*CLIAuthResponse, int, error) {
-	return c.do(ctx, http.MethodPost)
+	return c.do(ctx, http.MethodPost, nil)
+}
+func (c *CLIAuthClient) ExchangeBrowser(ctx context.Context) (*CLIAuthResponse, int, error) {
+	return c.do(ctx, http.MethodPost, strings.NewReader(`{"method":"browser"}`))
 }
 func (c *CLIAuthClient) Status(ctx context.Context) (*CLIAuthResponse, int, error) {
-	return c.do(ctx, http.MethodGet)
+	return c.do(ctx, http.MethodGet, nil)
 }
 func (c *CLIAuthClient) Revoke(ctx context.Context) (*CLIAuthResponse, int, error) {
-	return c.do(ctx, http.MethodDelete)
+	return c.do(ctx, http.MethodDelete, nil)
 }
 
-func (c *CLIAuthClient) do(ctx context.Context, method string) (*CLIAuthResponse, int, error) {
+func (c *CLIAuthClient) do(ctx context.Context, method string, body io.Reader) (*CLIAuthResponse, int, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, method, c.url, nil)
+	req, err := http.NewRequestWithContext(ctx, method, c.url, body)
 	if err != nil {
 		return nil, 0, errors.New("creating CLI authentication request")
 	}
 	req.Header.Set("Authorization", "Bearer "+c.bearer)
 	req.Header.Set("User-Agent", "ttsbuddy-cli/"+c.version)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, 0, errors.New("sending CLI authentication request")
@@ -118,12 +124,12 @@ func (c *CLIAuthClient) do(ctx context.Context, method string) (*CLIAuthResponse
 		return nil, resp.StatusCode, &CLIAuthHTTPError{StatusCode: resp.StatusCode, RetryAfterSeconds: retry}
 	}
 	limited := io.LimitReader(resp.Body, maxCLIAuthBody+1)
-	body, err := io.ReadAll(limited)
-	if err != nil || len(body) > maxCLIAuthBody {
+	responseBody, err := io.ReadAll(limited)
+	if err != nil || len(responseBody) > maxCLIAuthBody {
 		return nil, resp.StatusCode, errors.New("invalid CLI authentication response")
 	}
 	var result CLIAuthResponse
-	if err := json.Unmarshal(body, &result); err != nil {
+	if err := json.Unmarshal(responseBody, &result); err != nil {
 		return nil, resp.StatusCode, errors.New("invalid CLI authentication response")
 	}
 	return &result, resp.StatusCode, nil
