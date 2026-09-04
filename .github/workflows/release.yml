@@ -10,6 +10,7 @@ permissions:
 
 env:
   GO_VERSION: "1.26.7"
+  CLERK_OAUTH_CLIENT_ID: ${{ vars.CLERK_OAUTH_CLIENT_ID }}
 
 jobs:
   authorize-release:
@@ -26,6 +27,8 @@ jobs:
           cache: true
       - name: Verify workflow action pins
         run: make check-actions-pinned
+      - name: Require the public Clerk OAuth client ID
+        run: test -n "$CLERK_OAUTH_CLIENT_ID"
       - name: Verify tag authorization and provenance
         env:
           RELEASE_ACTOR: ${{ github.actor }}

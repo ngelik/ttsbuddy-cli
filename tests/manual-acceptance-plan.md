@@ -75,12 +75,14 @@ The automated `AUTH_ONLY=1` subset uses a fresh HOME and does not contact Clerk 
 
 | # | Command | Expected | Exit |
 |---|---------|----------|------|
-| AUTH.1 | `tb auth --help` | Lists `login`, `status`, and `logout` | 0 |
+| AUTH.1 | `tb auth --help` | Lists `browser`, `email`, `login`, `status`, and `logout` | 0 |
 | AUTH.2 | `tb auth status` with no stored session | Says `Not signed in`; no network request | 1 |
 | AUTH.3 | `tb auth logout` with no stored session | Says `Already signed out`; no network request | 0 |
 | AUTH.4 | `tb --json auth logout` with no stored session | Valid JSON with `success: true` and `status: signed_out` | 0 |
 | AUTH.5 | `tb auth logout --local-only` with no stored session | Idempotent signed-out result; no network request | 0 |
 | AUTH.6 | `tb auth login` against the reviewed development endpoints | Email-code login succeeds and stores one expiring `ttsc_` session without printing the code, Clerk proof, or credential | 0 |
+| AUTH.6a | `tb auth email` against the reviewed development endpoints | Matches the `auth login` email-code compatibility behavior | 0 |
+| AUTH.6b | `tb auth browser` against the reviewed development OAuth app and bridge | Opens Clerk, completes PKCE through the loopback callback, and stores one expiring `ttsc_` session without printing OAuth or CLI credentials | 0 |
 | AUTH.7 | `tb auth status` and `tb --json auth status` | Reports active/usable state and expiry; never returns the bearer credential | 0 |
 | AUTH.8 | `tb speak "CLI session acceptance" --no-download` | Uses the CLI session when no permanent key override exists | 0 |
 | AUTH.9 | `tb auth logout` then repeat it | First call confirms remote revocation and clears local state; second call is idempotent | 0 |

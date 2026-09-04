@@ -10,7 +10,7 @@ import (
 func ErrorGuidance(code string) string {
 	switch code {
 	case "INVALID_KEY":
-		return "Invalid credential. Run: ttsbuddy auth login. For automation, use: ttsbuddy config set key <your-key>"
+		return "Invalid credential. Run: ttsbuddy auth browser. For automation, use: ttsbuddy config set key <your-key>"
 	case "INACTIVE_SUBSCRIPTION":
 		return "Subscription inactive. Reactivate at https://ttsbuddy.com/billing"
 	case "NO_API_ACCESS":

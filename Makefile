@@ -5,12 +5,14 @@ GOVULNCHECK_VER := v1.7.0
 SYFT_VERSION    := v1.51.1
 
 VERSION ?= dev
+CLERK_OAUTH_CLIENT_ID ?= gRApqxGCscvVfceh
 COMMIT  := $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
 DATE    := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS := -s -w \
   -X $(MODULE)/cmd.Version=$(VERSION) \
   -X $(MODULE)/cmd.Commit=$(COMMIT) \
-  -X $(MODULE)/cmd.Date=$(DATE)
+  -X $(MODULE)/cmd.Date=$(DATE) \
+  -X $(MODULE)/cmd.ClerkOAuthClientID=$(CLERK_OAUTH_CLIENT_ID)
 
 .PHONY: build test test-live test-acceptance lint vuln tools release-snapshot check-actions-pinned clerk-auth-probe clean
 
@@ -44,7 +46,8 @@ tools:
 	go install github.com/anchore/syft/cmd/syft@$(SYFT_VERSION)
 
 release-snapshot:
-	goreleaser release --snapshot --clean --skip=sign
+	test -n "$(CLERK_OAUTH_CLIENT_ID)"
+	CLERK_OAUTH_CLIENT_ID="$(CLERK_OAUTH_CLIENT_ID)" goreleaser release --snapshot --clean --skip=sign
 
 check-actions-pinned:
 	./scripts/check-github-actions-pinned.sh

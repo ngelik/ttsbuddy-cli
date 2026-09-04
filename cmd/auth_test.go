@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -62,7 +63,7 @@ func TestAuthStatusChecksRemoteEvenWhenLocalExpiryPassed(t *testing.T) {
 
 func TestAuthCommandsRegisteredAndSignedOutLifecycle(t *testing.T) {
 	home := t.TempDir()
-	for _, args := range [][]string{{"auth", "--help"}, {"auth", "login", "extra"}, {"auth", "status", "extra"}} {
+	for _, args := range [][]string{{"auth", "--help"}, {"auth", "login", "extra"}, {"auth", "email", "extra"}, {"auth", "browser", "extra"}, {"auth", "status", "extra"}} {
 		result := runCLI(t, []string{"HOME=" + home}, args...)
 		if args[1] == "--help" && result.ExitCode != 0 {
 			t.Fatalf("help: %#v", result)
@@ -78,6 +79,95 @@ func TestAuthCommandsRegisteredAndSignedOutLifecycle(t *testing.T) {
 	logout := runCLI(t, []string{"HOME=" + home}, "--json", "auth", "logout")
 	if logout.ExitCode != 0 || strings.TrimSpace(logout.Stdout) != `{"status":"signed_out","success":true}` {
 		t.Fatalf("logout=%#v", logout)
+	}
+}
+
+func TestAuthHelpListsEmailAndBrowserMethods(t *testing.T) {
+	result := runCLI(t, []string{"HOME=" + t.TempDir()}, "auth", "--help")
+	if result.ExitCode != 0 || !strings.Contains(result.Stdout, "email") || !strings.Contains(result.Stdout, "browser") {
+		t.Fatalf("result=%#v", result)
+	}
+}
+
+func TestAuthEmailKeepsLoginCompatibilityOutput(t *testing.T) {
+	env := []string{"HOME=" + t.TempDir()}
+	login := runCLIInput(t, "", env, "auth", "login")
+	email := runCLIInput(t, "", env, "auth", "email")
+	if login.ExitCode != email.ExitCode || login.Stdout != email.Stdout || login.Stderr != email.Stderr {
+		t.Fatalf("login=%#v email=%#v", login, email)
+	}
+}
+
+func TestAuthBrowserFailsBeforeFlowWhenClientIDMissing(t *testing.T) {
+	result := runCLI(t, []string{
+		"HOME=" + t.TempDir(),
+		"TTSBUDDY_TEST_CLEAR_CLERK_OAUTH_CLIENT_ID=1",
+	}, "auth", "browser")
+	if result.ExitCode != 1 || !strings.Contains(result.Stderr, "missing Clerk OAuth client ID") {
+		t.Fatalf("result=%#v", result)
+	}
+}
+
+func TestAuthBrowserEnvOverridesRequireCustomOptIn(t *testing.T) {
+	result := runCLI(t, []string{
+		"HOME=" + t.TempDir(),
+		"TTSBUDDY_TEST_CLEAR_CLERK_OAUTH_CLIENT_ID=1",
+		"TTSBUDDY_CLERK_OAUTH_CLIENT_ID=development-client",
+		"TTSBUDDY_TEST_BROWSER_AUTH_TOKEN=oauth-proof-should-not-run",
+	}, "auth", "browser")
+	if result.ExitCode != 1 || !strings.Contains(result.Stderr, "missing Clerk OAuth client ID") {
+		t.Fatalf("result=%#v", result)
+	}
+}
+
+func TestAuthBrowserHasProductionClientIDForGoInstallBuilds(t *testing.T) {
+	if ClerkOAuthClientID != "gRApqxGCscvVfceh" {
+		t.Fatalf("ClerkOAuthClientID=%q", ClerkOAuthClientID)
+	}
+}
+
+func TestAuthBrowserExchangesProofAndStoresOnlyCLISession(t *testing.T) {
+	oauthProof := "oauth-proof-private-fixture"
+	issued := authFixtureToken()
+	server := startMockAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if r.Method != http.MethodPost || r.Header.Get("Authorization") != "Bearer "+oauthProof || string(body) != `{"method":"browser"}` {
+			t.Fatalf("method=%s auth=%q body=%q", r.Method, r.Header.Get("Authorization"), body)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"success":    true,
+			"credential": map[string]any{"token": issued, "type": "cli_session", "scope": "agent_tts", "expires_at": time.Now().Add(time.Hour).UTC().Format(time.RFC3339)},
+		})
+	}))
+	home := t.TempDir()
+	permanent := "ttsb_" + strings.Repeat("c", 8) + "_" + strings.Repeat("d", 48)
+	dir := filepath.Join(home, ".ttsbuddy")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"api_key":"`+permanent+`"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	result := runCLI(t, []string{
+		"HOME=" + home,
+		"TTSBUDDY_CLI_AUTH_URL=" + server + "/v1/cli-auth",
+		"TTSBUDDY_ALLOW_CUSTOM_API_URL=true",
+		"TTSBUDDY_CLERK_OAUTH_ISSUER=" + server,
+		"TTSBUDDY_CLERK_OAUTH_CLIENT_ID=development-client",
+		"TTSBUDDY_TEST_BROWSER_AUTH_TOKEN=" + oauthProof,
+	}, "auth", "browser")
+	if result.ExitCode != 0 {
+		t.Fatalf("result=%#v", result)
+	}
+	if strings.Contains(result.Stdout+result.Stderr, oauthProof) || strings.Contains(result.Stdout+result.Stderr, issued) {
+		t.Fatal("authentication secret leaked")
+	}
+	configBody, err := os.ReadFile(filepath.Join(dir, "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(configBody), issued) || !strings.Contains(string(configBody), permanent) || strings.Contains(string(configBody), oauthProof) {
+		t.Fatalf("stored config does not preserve credential boundaries: %s", configBody)
 	}
 }
 

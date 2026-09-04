@@ -209,7 +209,7 @@ func TestSpeakNoAPIKey(t *testing.T) {
 	home := t.TempDir()
 	r := runCLI(t, envForTest(home, "", ""), "speak", "hello")
 	assertExitCode(t, r, 2)
-	assertContains(t, r.Stderr, "ttsbuddy auth login", "stderr")
+	assertContains(t, r.Stderr, "ttsbuddy auth browser", "stderr")
 }
 
 func TestSpeakInline(t *testing.T) {

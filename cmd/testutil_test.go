@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -36,6 +37,12 @@ func TestHelperProcess(t *testing.T) {
 				Text:  "Readable article text for the web command test.",
 			}, nil
 		}
+	}
+	if token := os.Getenv("TTSBUDDY_TEST_BROWSER_AUTH_TOKEN"); token != "" {
+		runBrowserOAuth = func(context.Context, string, string, bool, io.Writer) (string, error) { return token, nil }
+	}
+	if os.Getenv("TTSBUDDY_TEST_CLEAR_CLERK_OAUTH_CLIENT_ID") == "1" {
+		ClerkOAuthClientID = ""
 	}
 	_ = Execute()
 	// If Execute didn't os.Exit, exit 0
