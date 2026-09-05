@@ -1,11 +1,11 @@
 # Clerk FAPI probe
 
-Run `make clerk-auth-probe` to exercise the browserless Clerk Frontend API login scaffold against a development Clerk instance without printing raw responses, tokens, OTPs, session identifiers, or email addresses.
+Run `make clerk-auth-probe` to exercise the browserless Clerk Frontend API login scaffold against a development Clerk instance without printing raw responses, tokens, OTPs, session identifiers, or email addresses. Pass `--signup` to run the fresh-identity signup proof; the default mode remains the existing-account login proof.
 
 Required inputs:
 
 - `TTSBUDDY_CLERK_FRONTEND_API_URL` set to the public development Frontend API origin
-- an already-existing development account that can receive Clerk email OTP messages; do not create, replace, or delete a user for this probe
+- an approved development mailbox that can receive Clerk email OTP messages; default login mode uses an already-existing account, while `--signup` requires a genuinely new identity and may create one
 - an interactive terminal for entering the email address and hidden OTP
 
 If `TTSBUDDY_CLERK_FRONTEND_API_URL` is absent, the probe exits with a development-only hard gate report. That record keeps the live gate closed and prints only sanitized booleans plus the missing-variable reason. Protocol failures are reported as the generic `probe failed` outcome so an unknown email cannot be distinguished from an eligible one by CLI output.
@@ -17,7 +17,7 @@ What the probe records:
 - whether a session id was issued
 - decoded JWT claim keys and JSON value types only
 - UTC timestamps and Clerk request ids when the server supplies them
-- a fixed internal protocol-stage label on failure (`attempt_first_factor`, `validate_sign_in`, `get_session`, `validate_session`, or `create_session_token`)
+- a fixed internal protocol-stage label on failure (`attempt_first_factor`, `validate_sign_in`, `create_sign_up`, `validate_sign_up`, `prepare_sign_up_verification`, `attempt_sign_up_verification`, `get_session`, `validate_session`, or `create_session_token`)
 
 What the probe does not record:
 
@@ -42,3 +42,11 @@ Hard gate:
 - failure-branch behavior remains covered by the mock-backed protocol tests; the live receipt stores only fixed state/claim metadata and pass/fail status
 - if the required development Frontend API environment variable is absent, the probe reports `development_only=true` and `live_gate_open=false` instead of attempting any network activity
 - if the published Frontend API schema is insufficient to prove the native client token rotation contract or the exact cleanup behavior in that environment, stop and write a new CLI-specific PKCE design instead of guessing
+
+For a signup proof, also record that the test identity was new in the development
+instance before starting, that the signup required only email verification, and
+that the completed signup returned an active session which passed the unchanged
+backend `cli-auth` proof checks. Do not print the address, code, Clerk user/session
+identifiers, JWT, or CLI credential. A signup that requires legal acceptance,
+CAPTCHA, MFA, or another field is a browser-auth fallback, not a reason to fill
+the field implicitly.

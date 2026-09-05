@@ -38,14 +38,16 @@ var runBrowserOAuth = func(ctx context.Context, issuer, clientID string, allowCu
 }
 
 var authCmd = &cobra.Command{Use: "auth", Short: "Sign in and manage the CLI session", Args: noArgs}
-var authLoginCmd = &cobra.Command{Use: "login", Short: "Sign in with an email code", Args: noArgs, RunE: runAuthLogin}
-var authEmailCmd = &cobra.Command{Use: "email", Short: "Sign in with an email code", Args: noArgs, RunE: runAuthLogin}
+var authLoginCmd = &cobra.Command{Use: "login", Short: "Sign in with an email code (or create an account with --signup)", Args: noArgs, RunE: runAuthLogin}
+var authEmailCmd = &cobra.Command{Use: "email", Short: "Sign in with an email code (or create an account with --signup)", Args: noArgs, RunE: runAuthLogin}
 var authBrowserCmd = &cobra.Command{Use: "browser", Short: "Sign in with a browser", Args: noArgs, RunE: runAuthBrowser}
 var authStatusCmd = &cobra.Command{Use: "status", Short: "Show CLI session status", Args: noArgs, RunE: runAuthStatus}
 var authLogoutCmd = &cobra.Command{Use: "logout", Short: "Sign out the CLI session", Args: noArgs, RunE: runAuthLogout}
 
 func init() {
 	authLogoutCmd.Flags().BoolVar(&authLocalOnly, "local-only", false, "remove local session without server revocation")
+	authLoginCmd.Flags().Bool("signup", false, "create a new account instead of signing in")
+	authEmailCmd.Flags().Bool("signup", false, "create a new account instead of signing in")
 	authCmd.AddCommand(authLoginCmd, authEmailCmd, authBrowserCmd, authStatusCmd, authLogoutCmd)
 	rootCmd.AddCommand(authCmd)
 }
@@ -71,6 +73,7 @@ func runAuthLogin(cmd *cobra.Command, _ []string) error {
 	if err := rejectAuthGlobalCredentialFlags(cmd, true); err != nil {
 		return err
 	}
+	signup, _ := cmd.Flags().GetBool("signup")
 	if err := validateAuthURL(resolvedCfg); err != nil {
 		return err
 	}
@@ -84,6 +87,9 @@ func runAuthLogin(cmd *cobra.Command, _ []string) error {
 	defer func() { _ = lock.Release() }()
 
 	fmt.Fprintln(os.Stderr, "Signing in successfully will sign out any existing CLI session on another machine.")
+	if signup {
+		fmt.Fprintln(os.Stderr, "Creating a TTS Buddy account using email verification.")
+	}
 	p := prompt.New(cmd.InOrStdin(), cmd.ErrOrStderr())
 	email, err := p.RequiredLine("Email: ", 254)
 	if err != nil {
@@ -103,14 +109,32 @@ func runAuthLogin(cmd *cobra.Command, _ []string) error {
 		defer cancel()
 		cleanupErr := clerk.Cleanup(ctx)
 		if cleanupErr != nil {
-			fmt.Fprintln(os.Stderr, "Warning: temporary sign-in cleanup could not be confirmed.")
+			fmt.Fprintln(os.Stderr, "Warning: temporary authentication cleanup could not be confirmed.")
 		}
 	}()
 	ctx := cmd.Context()
-	fmt.Fprintln(os.Stderr, "If this address belongs to an eligible TTS Buddy account, check your email for a code.")
-	challenge, err := clerk.StartEmailCode(ctx, email)
-	if err != nil {
-		return err
+	var signUpChallenge *clerkfapi.SignUpChallenge
+	var signInChallenge *clerkfapi.Challenge
+	if signup {
+		fmt.Fprintln(os.Stderr, "Check your email for a verification code.")
+		started, startErr := clerk.StartEmailSignUp(ctx, email)
+		if startErr != nil {
+			if clerkfapi.IsSignupEmailExists(startErr) {
+				return &exitError{code: 1, msg: "An account already exists for this email. Run: ttsbuddy auth email"}
+			}
+			if clerkfapi.IsSignupBrowserFallback(startErr) {
+				return &exitError{code: 1, msg: "CLI signup requires browser authentication. Run: ttsbuddy auth browser"}
+			}
+			return startErr
+		}
+		signUpChallenge = started
+	} else {
+		fmt.Fprintln(os.Stderr, "If this address belongs to an eligible TTS Buddy account, check your email for a code.")
+		started, startErr := clerk.StartEmailCode(ctx, email)
+		if startErr != nil {
+			return startErr
+		}
+		signInChallenge = started
 	}
 	code, err := p.Secret("Code: ", 6)
 	if err != nil {
@@ -119,8 +143,16 @@ func runAuthLogin(cmd *cobra.Command, _ []string) error {
 	if !regexp.MustCompile(`^[0-9]{6}$`).MatchString(code) {
 		return &exitError{code: 2, msg: "code must be exactly six digits"}
 	}
-	proof, err := clerk.VerifyEmailCode(ctx, *challenge, code)
+	var proof *clerkfapi.SessionProof
+	if signup {
+		proof, err = clerk.VerifyEmailSignUp(ctx, *signUpChallenge, code)
+	} else {
+		proof, err = clerk.VerifyEmailCode(ctx, *signInChallenge, code)
+	}
 	if err != nil {
+		if signup && clerkfapi.IsSignupBrowserFallback(err) {
+			return &exitError{code: 1, msg: "CLI signup requires browser authentication. Run: ttsbuddy auth browser"}
+		}
 		return err
 	}
 	exchanged, err = exchangeAndStoreCLISession(ctx, proof.Token, false)

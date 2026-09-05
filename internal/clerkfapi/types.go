@@ -5,6 +5,19 @@ import (
 	"fmt"
 )
 
+var (
+	errSignupEmailExists     = errors.New("that email is already registered")
+	errSignupBrowserFallback = errors.New("clerk signup requires browser authentication")
+)
+
+// IsSignupEmailExists reports the safe, fixed error returned when signup is
+// attempted for an existing identifier. It never exposes Clerk response text.
+func IsSignupEmailExists(err error) bool { return errors.Is(err, errSignupEmailExists) }
+
+// IsSignupBrowserFallback reports that terminal signup cannot satisfy the
+// provider's requirements and must continue in a browser.
+func IsSignupBrowserFallback(err error) bool { return errors.Is(err, errSignupBrowserFallback) }
+
 type SignInState string
 
 const (
@@ -12,9 +25,23 @@ const (
 	SignInComplete         SignInState = "complete"
 )
 
+type SignUpState string
+
+const (
+	SignUpMissingRequirements SignUpState = "missing_requirements"
+	SignUpComplete            SignUpState = "complete"
+)
+
 type Challenge struct {
 	SignInID       string
 	EmailAddressID string
+}
+
+// SignUpChallenge identifies a native email-code signup attempt. The
+// native-client token remains private to Client and is carried across all
+// requests until a SessionProof is created or Cleanup is called.
+type SignUpChallenge struct {
+	SignUpID string
 }
 
 type SessionProof struct {
@@ -82,6 +109,25 @@ type signInResponse struct {
 	SupportedFirstFactors []firstFactorResponse `json:"supported_first_factors"`
 	CurrentTask           *sessionTaskResponse  `json:"current_task"`
 	Tasks                 []sessionTaskResponse `json:"tasks"`
+}
+
+type signUpResponse struct {
+	ID               string              `json:"id"`
+	Status           SignUpState         `json:"status"`
+	RequiredFields   []string            `json:"required_fields"`
+	MissingFields    []string            `json:"missing_fields"`
+	UnverifiedFields []string            `json:"unverified_fields"`
+	Verifications    signUpVerifications `json:"verifications"`
+	CreatedSessionID string              `json:"created_session_id"`
+}
+
+type signUpVerifications struct {
+	EmailAddress *signUpVerification `json:"email_address"`
+}
+
+type signUpVerification struct {
+	NextAction          string   `json:"next_action"`
+	SupportedStrategies []string `json:"supported_strategies"`
 }
 
 type firstFactorResponse struct {

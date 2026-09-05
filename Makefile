@@ -27,7 +27,7 @@ test-live:
 	TTSBUDDY_TEST_LIVE=1 go test -race -count=1 -run TestLive ./...
 
 clerk-auth-probe:
-	go run ./tools/clerk-fapi-probe
+	go run ./tools/clerk-fapi-probe $(PROBE_ARGS)
 
 test-acceptance:
 	@echo "Running acceptance tests (requires TTSBUDDY_API_KEY)..."
