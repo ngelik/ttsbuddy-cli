@@ -71,7 +71,7 @@ sh -c "$cmd" >case.stdout 2>case.stderr; echo $? >case.exit
 
 ### AUTH. Browserless Session Commands
 
-The automated `AUTH_ONLY=1` subset uses a fresh HOME and does not contact Clerk or TTS Buddy. The authenticated cases below are development-only and require the local bridge plus the existing test account; never paste the email code or returned credential into a receipt.
+The automated `AUTH_ONLY=1` subset uses a fresh HOME and does not contact Clerk or TTS Buddy. The authenticated cases below are development-only and require the local bridge plus an existing test account or a genuinely new development identity; never paste the email code or returned credential into a receipt.
 
 | # | Command | Expected | Exit |
 |---|---------|----------|------|
@@ -82,6 +82,8 @@ The automated `AUTH_ONLY=1` subset uses a fresh HOME and does not contact Clerk 
 | AUTH.5 | `tb auth logout --local-only` with no stored session | Idempotent signed-out result; no network request | 0 |
 | AUTH.6 | `tb auth login` against the reviewed development endpoints | Email-code login succeeds and stores one expiring `ttsc_` session without printing the code, Clerk proof, or credential | 0 |
 | AUTH.6a | `tb auth email` against the reviewed development endpoints | Matches the `auth login` email-code compatibility behavior | 0 |
+| AUTH.6a1 | `tb auth email --signup` with a genuinely new development identity | Sends exactly one verification email, completes signup in the terminal, initializes the standard Free account through the existing exchange, and stores one expiring `ttsc_` session without printing the code, Clerk proof, or credential | 0 |
+| AUTH.6a2 | `tb auth login --signup` with a fresh new identity | Accepts the compatibility alias and follows the same signup path as `auth email --signup` | 0 |
 | AUTH.6b | `tb auth browser` against the reviewed development OAuth app and bridge | Opens Clerk, completes PKCE through the loopback callback, and stores one expiring `ttsc_` session without printing OAuth or CLI credentials | 0 |
 | AUTH.7 | `tb auth status` and `tb --json auth status` | Reports active/usable state and expiry; never returns the bearer credential | 0 |
 | AUTH.8 | `tb speak "CLI session acceptance" --no-download` | Uses the CLI session when no permanent key override exists | 0 |
@@ -93,6 +95,9 @@ Development bridge negative and concurrency cases (use only the existing develop
 | # | Case | Expected |
 |---|------|----------|
 | AUTH.11 | Known account, correct fresh code | Login succeeds once |
+| AUTH.11a | Signup identity, correct fresh code | Signup succeeds once and returns an active session proof through the same session/task checks as login |
+| AUTH.11b | Signup identity with required legal acceptance, CAPTCHA, MFA, or another missing field | CLI refuses to infer or bypass the requirement and directs the user to browser authentication; no credential is issued |
+| AUTH.11c | Existing email passed to `auth email --signup` | Safe guidance directs the user to ordinary `auth email`; no automatic second attempt or second verification email |
 | AUTH.12 | Unknown account | Same generic post-challenge message; no account enumeration and no credential |
 | AUTH.13 | Incorrect code, then expired code | Generic failure; no proof or CLI credential |
 | AUTH.14 | Account/session requiring MFA | Exchange rejects the proof; no credential |

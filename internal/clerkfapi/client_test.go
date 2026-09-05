@@ -1136,6 +1136,204 @@ func TestCloseClearsLocalState(t *testing.T) {
 	}
 }
 
+func TestStartAndVerifyEmailSignUpMintsSessionProof(t *testing.T) {
+	srv := newScriptedServer(t, []scriptedResponse{
+		{
+			validate: validateFormRequest(http.MethodPost, "/v1/client", "", map[string]string{}),
+			cookies:  []http.Cookie{{Name: "__client", Value: "client-1"}},
+			bodyJSON: map[string]any{"request_id": "req_client", "response": map[string]any{"id": "client_123"}},
+		},
+		{
+			validate: validateFormRequest(http.MethodPost, "/v1/client/sign_ups", "client-1", map[string]string{
+				"email_address": "new@example.com",
+			}),
+			cookies: []http.Cookie{{Name: "__client", Value: "client-2"}},
+			bodyJSON: map[string]any{
+				"request_id": "req_signup",
+				"response": map[string]any{
+					"id": "su_123", "status": string(SignUpMissingRequirements),
+					"unverified_fields": []string{"email_address"},
+				},
+			},
+		},
+		{
+			validate: validateFormRequest(http.MethodPost, "/v1/client/sign_ups/su_123/prepare_verification", "client-2", map[string]string{
+				"strategy": "email_code",
+			}),
+			cookies: []http.Cookie{{Name: "__client", Value: "client-3"}},
+			bodyJSON: map[string]any{"request_id": "req_prepare_signup", "response": map[string]any{
+				"id": "su_123", "status": string(SignUpMissingRequirements),
+				"unverified_fields": []string{"email_address"},
+			}},
+		},
+		{
+			validate: validateFormRequest(http.MethodPost, "/v1/client/sign_ups/su_123/attempt_verification", "client-3", map[string]string{
+				"strategy": "email_code",
+				"code":     "654321",
+			}),
+			cookies: []http.Cookie{{Name: "__client", Value: "client-4"}},
+			bodyJSON: map[string]any{"request_id": "req_attempt_signup", "response": map[string]any{
+				"id": "su_123", "status": string(SignUpComplete), "created_session_id": "sess_123",
+			}},
+		},
+		{
+			validate: validateRequest(http.MethodGet, "/v1/client/sessions/sess_123", "client-4"),
+			cookies:  []http.Cookie{{Name: "__client", Value: "client-5"}},
+			bodyJSON: map[string]any{"request_id": "req_session", "response": map[string]any{
+				"id": "sess_123", "status": "active",
+			}},
+		},
+		{
+			validate: validateFormRequest(http.MethodPost, "/v1/client/sessions/sess_123/tokens", "client-5", map[string]string{}),
+			cookies:  []http.Cookie{{Name: "__client", Value: "client-6"}},
+			bodyJSON: map[string]any{"request_id": "req_token", "jwt": "jwt_signup_token"},
+		},
+	})
+	defer srv.Close()
+
+	client, err := New(srv.URL, "test")
+	if err != nil {
+		t.Fatalf("New() error: %v", err)
+	}
+	challenge, err := client.StartEmailSignUp(context.Background(), "new@example.com")
+	if err != nil {
+		t.Fatalf("StartEmailSignUp() error: %v", err)
+	}
+	if challenge.SignUpID != "su_123" {
+		t.Fatalf("SignUpID = %q, want su_123", challenge.SignUpID)
+	}
+
+	proof, err := client.VerifyEmailSignUp(context.Background(), *challenge, "654321")
+	if err != nil {
+		t.Fatalf("VerifyEmailSignUp() error: %v", err)
+	}
+	if proof.SessionID != "sess_123" || proof.Token != "jwt_signup_token" {
+		t.Fatalf("proof = %#v", proof)
+	}
+	if client.nativeClientToken != "client-6" || client.createdSessionID != "sess_123" {
+		t.Fatalf("client state token=%q session=%q", client.nativeClientToken, client.createdSessionID)
+	}
+	if got := client.RequestIDs(); len(got) != 6 || got[1] != "req_signup" || got[2] != "req_prepare_signup" || got[5] != "req_token" {
+		t.Fatalf("RequestIDs() = %v", got)
+	}
+}
+
+func TestStartEmailSignUpDoesNotSilentlyFillRequirements(t *testing.T) {
+	srv := newScriptedServer(t, []scriptedResponse{
+		{
+			validate: validateFormRequest(http.MethodPost, "/v1/client", "", map[string]string{}),
+			cookies:  []http.Cookie{{Name: "__client", Value: "client-1"}},
+			bodyJSON: map[string]any{"response": map[string]any{"id": "client_123"}},
+		},
+		{
+			validate: validateFormRequest(http.MethodPost, "/v1/client/sign_ups", "client-1", map[string]string{"email_address": "new@example.com"}),
+			cookies:  []http.Cookie{{Name: "__client", Value: "client-2"}},
+			bodyJSON: map[string]any{"response": map[string]any{
+				"id": "su_123", "status": string(SignUpMissingRequirements),
+				"missing_fields":    []string{"legal_accepted"},
+				"unverified_fields": []string{"email_address"},
+			}},
+		},
+	})
+	defer srv.Close()
+
+	client, err := New(srv.URL, "test")
+	if err != nil {
+		t.Fatalf("New() error: %v", err)
+	}
+	_, err = client.StartEmailSignUp(context.Background(), "new@example.com")
+	if err == nil || err.Error() != "email signup requires browser authentication" {
+		t.Fatalf("expected browser fallback, got %v", err)
+	}
+}
+
+func TestStartEmailSignUpExistingEmailDirectsToLogin(t *testing.T) {
+	srv := newScriptedServer(t, []scriptedResponse{
+		{
+			validate: validateFormRequest(http.MethodPost, "/v1/client", "", map[string]string{}),
+			cookies:  []http.Cookie{{Name: "__client", Value: "client-1"}},
+			bodyJSON: map[string]any{"response": map[string]any{"id": "client_123"}},
+		},
+		{
+			validate: validateFormRequest(http.MethodPost, "/v1/client/sign_ups", "client-1", map[string]string{"email_address": "existing@example.com"}),
+			status:   http.StatusUnprocessableEntity,
+			bodyJSON: map[string]any{"errors": []map[string]any{{"code": "form_identifier_exists", "long_message": "existing@example.com"}}},
+		},
+	})
+	defer srv.Close()
+
+	client, err := New(srv.URL, "test")
+	if err != nil {
+		t.Fatalf("New() error: %v", err)
+	}
+	_, err = client.StartEmailSignUp(context.Background(), "existing@example.com")
+	if err == nil || err.Error() != "email already has a TTS Buddy account; run ttsbuddy auth email" {
+		t.Fatalf("expected login guidance, got %v", err)
+	}
+	if strings.Contains(err.Error(), "existing@example.com") {
+		t.Fatal("existing email leaked in error")
+	}
+}
+
+func TestVerifyEmailSignUpRejectsInvalidCodesWithoutLeakingThem(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		code string
+		err  string
+	}{
+		{name: "incorrect", code: "123456", err: "incorrect"},
+		{name: "expired", code: "654321", err: "expired"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				validateFormRequest(http.MethodPost, "/v1/client/sign_ups/su_123/attempt_verification", "client-3", map[string]string{
+					"strategy": "email_code", "code": tt.code,
+				})(t, r)
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"errors":   []map[string]any{{"code": "form_code_" + tt.err, "long_message": "otp=" + tt.code}},
+					"response": map[string]any{"id": "su_123", "status": string(SignUpMissingRequirements)},
+				})
+			}))
+			defer srv.Close()
+
+			client, err := New(srv.URL, "test")
+			if err != nil {
+				t.Fatalf("New() error: %v", err)
+			}
+			client.nativeClientToken = "client-3"
+			_, err = client.VerifyEmailSignUp(context.Background(), SignUpChallenge{SignUpID: "su_123"}, tt.code)
+			if err == nil || !strings.Contains(err.Error(), tt.err) {
+				t.Fatalf("expected %q error, got %v", tt.err, err)
+			}
+			if strings.Contains(err.Error(), tt.code) {
+				t.Fatalf("code leaked in error: %v", err)
+			}
+		})
+	}
+}
+
+func TestVerifyEmailSignUpRejectsInvalidChallengeBeforeNetwork(t *testing.T) {
+	client, err := New("https://clerk.ttsbuddy.com", "test")
+	if err != nil {
+		t.Fatalf("New() error: %v", err)
+	}
+	for _, tt := range []struct {
+		name      string
+		challenge SignUpChallenge
+		code      string
+	}{
+		{name: "missing signup id", code: "123456"},
+		{name: "missing code", challenge: SignUpChallenge{SignUpID: "su_123"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := client.VerifyEmailSignUp(context.Background(), tt.challenge, tt.code)
+			if err == nil || !strings.Contains(err.Error(), "invalid Clerk email signup challenge") {
+				t.Fatalf("expected invalid challenge error, got %v", err)
+			}
+		})
+	}
+}
+
 type scriptedResponse struct {
 	validate func(*testing.T, *http.Request)
 	status   int

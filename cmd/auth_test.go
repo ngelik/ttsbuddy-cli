@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -95,6 +96,100 @@ func TestAuthEmailKeepsLoginCompatibilityOutput(t *testing.T) {
 	email := runCLIInput(t, "", env, "auth", "email")
 	if login.ExitCode != email.ExitCode || login.Stdout != email.Stdout || login.Stderr != email.Stderr {
 		t.Fatalf("login=%#v email=%#v", login, email)
+	}
+}
+
+func TestAuthEmailSignupUsesSignupEndpointsAndStoresCLISession(t *testing.T) {
+	issued := authFixtureToken()
+	var clerkPaths []string
+	clerk := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		clerkPaths = append(clerkPaths, r.URL.Path)
+		switch r.URL.Path {
+		case "/v1/client":
+			http.SetCookie(w, &http.Cookie{Name: "__client", Value: "client-1"})
+			_ = json.NewEncoder(w).Encode(map[string]any{"response": map[string]any{"id": "client_123"}})
+		case "/v1/client/sign_ups":
+			if err := r.ParseForm(); err != nil || r.PostForm.Get("email_address") != "new@example.com" {
+				t.Fatalf("signup form = %#v", r.PostForm)
+			}
+			http.SetCookie(w, &http.Cookie{Name: "__client", Value: "client-2"})
+			_ = json.NewEncoder(w).Encode(map[string]any{"response": map[string]any{
+				"id": "su_123", "status": "missing_requirements", "unverified_fields": []string{"email_address"},
+			}})
+		case "/v1/client/sign_ups/su_123/prepare_verification":
+			if err := r.ParseForm(); err != nil || r.PostForm.Get("strategy") != "email_code" {
+				t.Fatalf("prepare form = %#v", r.PostForm)
+			}
+			http.SetCookie(w, &http.Cookie{Name: "__client", Value: "client-3"})
+			_ = json.NewEncoder(w).Encode(map[string]any{"response": map[string]any{
+				"id": "su_123", "status": "missing_requirements", "unverified_fields": []string{"email_address"},
+			}})
+		case "/v1/client/sign_ups/su_123/attempt_verification":
+			if err := r.ParseForm(); err != nil || r.PostForm.Get("strategy") != "email_code" || r.PostForm.Get("code") != "654321" {
+				t.Fatalf("attempt form = %#v", r.PostForm)
+			}
+			http.SetCookie(w, &http.Cookie{Name: "__client", Value: "client-4"})
+			_ = json.NewEncoder(w).Encode(map[string]any{"response": map[string]any{
+				"id": "su_123", "status": "complete", "created_session_id": "sess_123",
+			}})
+		case "/v1/client/sessions/sess_123":
+			http.SetCookie(w, &http.Cookie{Name: "__client", Value: "client-5"})
+			_ = json.NewEncoder(w).Encode(map[string]any{"response": map[string]any{"id": "sess_123", "status": "active"}})
+		case "/v1/client/sessions/sess_123/tokens":
+			http.SetCookie(w, &http.Cookie{Name: "__client", Value: "client-6"})
+			_ = json.NewEncoder(w).Encode(map[string]any{"jwt": "jwt_signup_proof"})
+		default:
+			t.Fatalf("unexpected Clerk path %s", r.URL.Path)
+		}
+	}))
+	defer clerk.Close()
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.Header.Get("Authorization") != "Bearer jwt_signup_proof" {
+			t.Fatalf("backend request method=%s auth=%q", r.Method, r.Header.Get("Authorization"))
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"success": true,
+			"credential": map[string]any{
+				"token": issued, "type": "cli_session", "scope": "agent_tts",
+				"expires_at": time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
+			},
+		})
+	}))
+	defer backend.Close()
+
+	home := t.TempDir()
+	result := runCLIInput(t, "new@example.com\n654321\n", []string{
+		"HOME=" + home,
+		"TTSBUDDY_CLI_AUTH_URL=" + backend.URL + "/v1/cli-auth",
+		"TTSBUDDY_CLERK_FRONTEND_API_URL=" + clerk.URL,
+		"TTSBUDDY_ALLOW_CUSTOM_API_URL=true",
+	}, "auth", "email", "--signup")
+	if result.ExitCode != 0 {
+		t.Fatalf("result=%#v", result)
+	}
+	if strings.Contains(result.Stdout+result.Stderr, issued) || strings.Contains(result.Stdout+result.Stderr, "jwt_signup_proof") {
+		t.Fatal("signup credential or proof leaked")
+	}
+	wantPaths := []string{"/v1/client", "/v1/client/sign_ups", "/v1/client/sign_ups/su_123/prepare_verification", "/v1/client/sign_ups/su_123/attempt_verification", "/v1/client/sessions/sess_123", "/v1/client/sessions/sess_123/tokens"}
+	if strings.Join(clerkPaths, "|") != strings.Join(wantPaths, "|") {
+		t.Fatalf("Clerk paths = %v, want %v", clerkPaths, wantPaths)
+	}
+	configBody, err := os.ReadFile(filepath.Join(home, ".ttsbuddy", "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(configBody), issued) {
+		t.Fatalf("CLI session was not stored: %s", configBody)
+	}
+}
+
+func TestAuthSignupFlagIsAcceptedByLoginAlias(t *testing.T) {
+	for _, command := range []string{"login", "email"} {
+		result := runCLIInput(t, "", []string{"HOME=" + t.TempDir()}, "auth", command, "--signup")
+		if result.ExitCode == 2 && strings.Contains(result.Stderr, "unknown flag") {
+			t.Fatalf("%s did not register --signup: %#v", command, result)
+		}
 	}
 }
 

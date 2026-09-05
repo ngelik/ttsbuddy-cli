@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"os"
 	"os/signal"
@@ -21,6 +22,9 @@ import (
 const frontendAPIEnv = "TTSBUDDY_CLERK_FRONTEND_API_URL"
 
 func main() {
+	signup := flag.Bool("signup", false, "exercise the email signup flow instead of existing-account login")
+	flag.Parse()
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -41,19 +45,31 @@ func main() {
 	}
 	defer client.Close()
 
-	email, err := promptLine("Email (existing development account): ")
+	prompt := "Email (existing development account): "
+	if *signup {
+		prompt = "Email (new development account): "
+	}
+	email, err := promptLine(prompt)
 	if err != nil {
 		writeJSON(map[string]any{"stage": "input_email", "ok": false, "error": "unable to read email"})
 		os.Exit(1)
 	}
 
-	challenge, err := client.StartEmailCode(ctx, email)
+	var challenge *clerkfapi.Challenge
+	var signupChallenge *clerkfapi.SignUpChallenge
+	stage := "start_email_code"
+	if *signup {
+		signupChallenge, err = client.StartEmailSignUp(ctx, email)
+		stage = "start_email_signup"
+	} else {
+		challenge, err = client.StartEmailCode(ctx, email)
+	}
 	if err != nil {
-		writeFailure("start_email_code", err, client)
+		writeFailure(stage, err, client)
 		os.Exit(1)
 	}
 	writeJSON(map[string]any{
-		"stage":             "start_email_code",
+		"stage":             stage,
 		"ok":                true,
 		"fapi_version":      clerkfapi.APIVersion,
 		"request_headers":   []string{"Clerk-API-Version", "User-Agent", "Authorization"},
@@ -67,15 +83,22 @@ func main() {
 		os.Exit(1)
 	}
 
-	proof, err := client.VerifyEmailCode(ctx, *challenge, code)
+	verifyStage := "verify_email_code"
+	var proof *clerkfapi.SessionProof
+	if *signup {
+		proof, err = client.VerifyEmailSignUp(ctx, *signupChallenge, code)
+		verifyStage = "verify_email_signup"
+	} else {
+		proof, err = client.VerifyEmailCode(ctx, *challenge, code)
+	}
 	if err != nil {
-		writeFailure("verify_email_code", err, client)
+		writeFailure(verifyStage, err, client)
 		os.Exit(1)
 	}
 
 	claimTypes := summarizeJWTClaimTypes(proof.Token)
 	writeJSON(map[string]any{
-		"stage":             "verify_email_code",
+		"stage":             verifyStage,
 		"ok":                true,
 		"session_id_issued": proof.SessionID != "",
 		"jwt_claim_types":   claimTypes,

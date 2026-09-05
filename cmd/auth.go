@@ -46,6 +46,8 @@ var authLogoutCmd = &cobra.Command{Use: "logout", Short: "Sign out the CLI sessi
 
 func init() {
 	authLogoutCmd.Flags().BoolVar(&authLocalOnly, "local-only", false, "remove local session without server revocation")
+	authLoginCmd.Flags().Bool("signup", false, "create a new account using email verification")
+	authEmailCmd.Flags().Bool("signup", false, "create a new account using email verification")
 	authCmd.AddCommand(authLoginCmd, authEmailCmd, authBrowserCmd, authStatusCmd, authLogoutCmd)
 	rootCmd.AddCommand(authCmd)
 }
@@ -69,6 +71,10 @@ func validateAuthURL(resolved *config.ResolvedConfig) error {
 
 func runAuthLogin(cmd *cobra.Command, _ []string) error {
 	if err := rejectAuthGlobalCredentialFlags(cmd, true); err != nil {
+		return err
+	}
+	signup, err := cmd.Flags().GetBool("signup")
+	if err != nil {
 		return err
 	}
 	if err := validateAuthURL(resolvedCfg); err != nil {
@@ -107,8 +113,18 @@ func runAuthLogin(cmd *cobra.Command, _ []string) error {
 		}
 	}()
 	ctx := cmd.Context()
-	fmt.Fprintln(os.Stderr, "If this address belongs to an eligible TTS Buddy account, check your email for a code.")
-	challenge, err := clerk.StartEmailCode(ctx, email)
+	if signup {
+		fmt.Fprintln(os.Stderr, "Create a TTS Buddy account using email verification.")
+	} else {
+		fmt.Fprintln(os.Stderr, "If this address belongs to an eligible TTS Buddy account, check your email for a code.")
+	}
+	var challenge *clerkfapi.Challenge
+	var signupChallenge *clerkfapi.SignUpChallenge
+	if signup {
+		signupChallenge, err = clerk.StartEmailSignUp(ctx, email)
+	} else {
+		challenge, err = clerk.StartEmailCode(ctx, email)
+	}
 	if err != nil {
 		return err
 	}
@@ -119,7 +135,12 @@ func runAuthLogin(cmd *cobra.Command, _ []string) error {
 	if !regexp.MustCompile(`^[0-9]{6}$`).MatchString(code) {
 		return &exitError{code: 2, msg: "code must be exactly six digits"}
 	}
-	proof, err := clerk.VerifyEmailCode(ctx, *challenge, code)
+	var proof *clerkfapi.SessionProof
+	if signup {
+		proof, err = clerk.VerifyEmailSignUp(ctx, *signupChallenge, code)
+	} else {
+		proof, err = clerk.VerifyEmailCode(ctx, *challenge, code)
+	}
 	if err != nil {
 		return err
 	}

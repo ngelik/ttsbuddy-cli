@@ -17,6 +17,21 @@ type Challenge struct {
 	EmailAddressID string
 }
 
+// SignUpChallenge identifies a pending email-code signup attempt. It contains
+// only the opaque Clerk attempt id; the caller keeps the email and code out of
+// this value so they cannot accidentally be logged or serialized.
+type SignUpChallenge struct {
+	SignUpID string
+}
+
+type SignUpState string
+
+const (
+	SignUpMissingRequirements SignUpState = "missing_requirements"
+	SignUpComplete            SignUpState = "complete"
+	SignUpAbandoned           SignUpState = "abandoned"
+)
+
 type SessionProof struct {
 	Token     string
 	SessionID string
@@ -82,6 +97,17 @@ type signInResponse struct {
 	SupportedFirstFactors []firstFactorResponse `json:"supported_first_factors"`
 	CurrentTask           *sessionTaskResponse  `json:"current_task"`
 	Tasks                 []sessionTaskResponse `json:"tasks"`
+}
+
+type signUpResponse struct {
+	ID               string                `json:"id"`
+	Status           SignUpState           `json:"status"`
+	CreatedSessionID string                `json:"created_session_id"`
+	RequiredFields   []string              `json:"required_fields"`
+	MissingFields    []string              `json:"missing_fields"`
+	UnverifiedFields []string              `json:"unverified_fields"`
+	CurrentTask      *sessionTaskResponse  `json:"current_task"`
+	Tasks            []sessionTaskResponse `json:"tasks"`
 }
 
 type firstFactorResponse struct {
