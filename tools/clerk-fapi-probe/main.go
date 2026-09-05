@@ -157,6 +157,9 @@ func writeFailure(stage string, err error, client *clerkfapi.Client) {
 	if protocolStage := clerkfapi.FailureStage(err); protocolStage != "" {
 		record["protocol_stage"] = protocolStage
 	}
+	if protocolCode := clerkfapi.FailureCode(err); protocolCode != "" {
+		record["protocol_error_code"] = protocolCode
+	}
 	var requestErr *clerkfapi.RequestError
 	if errors.As(err, &requestErr) && requestErr.RetryAfterSeconds > 0 {
 		record["retry_after_seconds"] = requestErr.RetryAfterSeconds

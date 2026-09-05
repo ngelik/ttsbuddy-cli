@@ -476,6 +476,20 @@ func TestFailureStageUnwrapsWithoutChangingPublicError(t *testing.T) {
 	}
 }
 
+func TestFailureCodeOnlyReturnsAllowlistedRequestCodes(t *testing.T) {
+	known := &RequestError{StatusCode: http.StatusUnprocessableEntity, Code: "form_code_incorrect"}
+	if got := FailureCode(wrapFlowError("attempt_email_code", known)); got != "form_code_incorrect" {
+		t.Fatalf("FailureCode(known) = %q, want form_code_incorrect", got)
+	}
+	unknown := &RequestError{StatusCode: http.StatusUnprocessableEntity, Code: "account_secret_123"}
+	if got := FailureCode(unknown); got != "" {
+		t.Fatalf("FailureCode(unknown) = %q, want empty", got)
+	}
+	if got := FailureCode(errors.New("plain")); got != "" {
+		t.Fatalf("FailureCode(plain) = %q, want empty", got)
+	}
+}
+
 func TestRequestsPreserveNativeClientTokenWhenResponseOmitsRotation(t *testing.T) {
 	var seenAuth []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

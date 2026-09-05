@@ -18,6 +18,7 @@ What the probe records:
 - decoded JWT claim keys and JSON value types only
 - UTC timestamps and Clerk request ids when the server supplies them
 - a fixed internal protocol-stage label on failure (`attempt_first_factor`, `validate_sign_in`, `create_sign_up`, `validate_sign_up`, `prepare_sign_up_verification`, `attempt_sign_up_verification`, `get_session`, `validate_session`, or `create_session_token`)
+- an allowlisted protocol error code on failure when Clerk supplies one (for example `form_code_incorrect` or `form_code_expired`); unknown provider codes are omitted
 
 What the probe does not record:
 

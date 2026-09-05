@@ -3,6 +3,7 @@ package clerkfapi
 import (
 	"errors"
 	"fmt"
+	"strings"
 )
 
 var (
@@ -72,6 +73,42 @@ func FailureStage(err error) string {
 		return flowErr.stage
 	}
 	return ""
+}
+
+// FailureCode returns an allowlisted Clerk protocol error code for
+// development diagnostics. Unknown codes are intentionally omitted so a
+// provider response can never become an account- or credential-bearing log.
+func FailureCode(err error) string {
+	var requestErr *RequestError
+	if !errors.As(err, &requestErr) {
+		return ""
+	}
+	code := strings.ToLower(strings.TrimSpace(requestErr.Code))
+	if _, ok := allowlistedFailureCodes[code]; !ok {
+		return ""
+	}
+	return code
+}
+
+var allowlistedFailureCodes = map[string]struct{}{
+	"captcha_required":          {},
+	"email_address_exists":      {},
+	"email_exists":              {},
+	"form_code_expired":         {},
+	"form_code_incorrect":       {},
+	"form_code_invalid":         {},
+	"form_identifier_exists":    {},
+	"form_identifier_not_found": {},
+	"form_param_format_invalid": {},
+	"form_param_missing":        {},
+	"identifier_exists":         {},
+	"legal_acceptance_required": {},
+	"legal_accepted_required":   {},
+	"mfa_required":              {},
+	"multi_factor_required":     {},
+	"rate_limit_exceeded":       {},
+	"second_factor_required":    {},
+	"too_many_requests":         {},
 }
 
 // APIVersion is the pinned Clerk Frontend API contract used by this package.
