@@ -130,11 +130,14 @@ func runAuthLogin(cmd *cobra.Command, _ []string) error {
 		}
 		signUpChallenge = started
 	} else {
-		fmt.Fprintln(os.Stderr, "If this address belongs to an eligible TTS Buddy account, check your email for a code.")
 		started, startErr := clerk.StartEmailCode(ctx, email)
 		if startErr != nil {
+			if clerkfapi.FailureCode(startErr) == "form_identifier_not_found" {
+				return &exitError{code: 1, msg: "No TTS Buddy account was found for this email. To create one, run: ttsbuddy auth email --signup"}
+			}
 			return startErr
 		}
+		fmt.Fprintln(os.Stderr, "If this address belongs to an eligible TTS Buddy account, check your email for a code.")
 		signInChallenge = started
 	}
 	code, err := p.Secret("Code: ", 6)

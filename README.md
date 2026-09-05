@@ -70,6 +70,13 @@ verified session to TTS Buddy. Each method stores the same seven-day `ttsc_`
 CLI session. A new login replaces the prior CLI session. There is no refresh;
 login again after expiry.
 
+On v0.11.0, `ttsbuddy auth email` may show `Clerk request returned status 422`
+immediately after the email prompt, before a code prompt, when Clerk reports
+that no account was found for the identifier. Check the address, or run
+`ttsbuddy auth email --signup` to create an account. The pending v0.11.1 patch
+makes that guidance explicit only for Clerk's allowlisted
+`form_identifier_not_found` response; other provider failures remain generic.
+
 The signup prompt is intentionally conditional: an address that is already
 registered may still reach Clerk's verification prompt under strict
 enumeration protection, or may be rejected later by the provider. That prompt
