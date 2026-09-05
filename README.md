@@ -70,6 +70,11 @@ verified session to TTS Buddy. Each method stores the same seven-day `ttsc_`
 CLI session. A new login replaces the prior CLI session. There is no refresh;
 login again after expiry.
 
+If `ttsbuddy auth email` reports that no TTS Buddy account was found, Clerk
+explicitly rejected that identifier. Check the address, or run
+`ttsbuddy auth email --signup` to create an account. Other provider failures
+remain generic and are not treated as proof of account state.
+
 The signup prompt is intentionally conditional: an address that is already
 registered may still reach Clerk's verification prompt under strict
 enumeration protection, or may be rejected later by the provider. That prompt

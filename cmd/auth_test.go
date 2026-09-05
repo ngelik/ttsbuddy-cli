@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -187,6 +188,135 @@ func TestAuthEmailSignupExchangesAndStoresCLIOnly(t *testing.T) {
 	}
 	if got := clerkStep.Load(); got != 6 {
 		t.Fatalf("Clerk steps=%d, want 6", got)
+	}
+}
+
+func TestAuthEmailMissingIdentifierGuidesToSignupBeforeCodePrompt(t *testing.T) {
+	for _, command := range []string{"email", "login"} {
+		t.Run(command, func(t *testing.T) {
+			var clerkSteps atomic.Int32
+			clerkServer := startMockAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				step := clerkSteps.Add(1)
+				if r.URL.Query().Get("_is_native") != "true" || r.Header.Get("Clerk-API-Version") != "2026-05-12" {
+					t.Fatalf("missing pinned native request headers: url=%s version=%q", r.URL.String(), r.Header.Get("Clerk-API-Version"))
+				}
+				switch step {
+				case 1:
+					if r.Method != http.MethodPost || r.URL.Path != "/v1/client" || r.Header.Get("Authorization") != "" {
+						t.Fatalf("create client request=%s %s authorization=%q", r.Method, r.URL.Path, r.Header.Get("Authorization"))
+					}
+					w.Header().Set("Authorization", "client-1")
+					_ = json.NewEncoder(w).Encode(map[string]any{"response": map[string]any{"id": "client_123"}})
+				case 2:
+					if r.Method != http.MethodPost || r.URL.Path != "/v1/client/sign_ins" || r.Header.Get("Authorization") != "Bearer client-1" {
+						t.Fatalf("create sign-in request=%s %s authorization=%q", r.Method, r.URL.Path, r.Header.Get("Authorization"))
+					}
+					body, _ := io.ReadAll(r.Body)
+					values, err := url.ParseQuery(string(body))
+					if err != nil || values.Get("identifier") != "missing@example.com" {
+						t.Fatalf("sign-in identifier=%q parse error=%v", values.Get("identifier"), err)
+					}
+					w.Header().Set("Authorization", "client-2")
+					w.WriteHeader(http.StatusUnprocessableEntity)
+					_ = json.NewEncoder(w).Encode(map[string]any{"errors": []map[string]any{{
+						"code":         "form_identifier_not_found",
+						"long_message": "missing@example.com does not exist; provider detail must not leak",
+					}}})
+				case 3:
+					if r.Method != http.MethodDelete || r.URL.Path != "/v1/client" || r.Header.Get("Authorization") != "Bearer client-2" {
+						t.Fatalf("cleanup request=%s %s authorization=%q", r.Method, r.URL.Path, r.Header.Get("Authorization"))
+					}
+					w.WriteHeader(http.StatusNoContent)
+				default:
+					t.Fatalf("unexpected Clerk step %d: %s %s", step, r.Method, r.URL.Path)
+				}
+			}))
+			var backendCalls atomic.Int32
+			backendServer := startMockAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				backendCalls.Add(1)
+				t.Fatalf("backend exchange should not run: %s %s", r.Method, r.URL.Path)
+			}))
+
+			home := t.TempDir()
+			result := runCLIInput(t, "missing@example.com\n", []string{
+				"HOME=" + home,
+				"TTSBUDDY_CLERK_FRONTEND_API_URL=" + clerkServer,
+				"TTSBUDDY_CLI_AUTH_URL=" + backendServer + "/v1/cli-auth",
+				"TTSBUDDY_ALLOW_CUSTOM_API_URL=true",
+			}, "auth", command)
+			if result.ExitCode != 1 {
+				t.Fatalf("result=%#v", result)
+			}
+			const guidance = "No TTS Buddy account was found for this email. To create one, run: ttsbuddy auth email --signup"
+			if !strings.Contains(result.Stderr, guidance) {
+				t.Fatalf("missing signup guidance: %s", result.Stderr)
+			}
+			if strings.Contains(result.Stderr, "If this address belongs to an eligible TTS Buddy account") || strings.Contains(result.Stderr, "Code:") {
+				t.Fatalf("prompted for verification after identifier rejection: %s", result.Stderr)
+			}
+			if strings.Contains(result.Stdout+result.Stderr, "missing@example.com does not exist") || strings.Contains(result.Stdout+result.Stderr, "form_identifier_not_found") {
+				t.Fatalf("leaked Clerk response detail: stdout=%s stderr=%s", result.Stdout, result.Stderr)
+			}
+			if got := clerkSteps.Load(); got != 3 {
+				t.Fatalf("Clerk steps=%d, want client, sign-in rejection, and cleanup", got)
+			}
+			if got := backendCalls.Load(); got != 0 {
+				t.Fatalf("backend exchange calls=%d, want zero", got)
+			}
+			if _, err := os.Stat(filepath.Join(home, ".ttsbuddy", "config.json")); !os.IsNotExist(err) {
+				t.Fatalf("unexpected config state, stat error=%v", err)
+			}
+		})
+	}
+}
+
+func TestAuthEmailUnexpected422RemainsGeneric(t *testing.T) {
+	var clerkSteps atomic.Int32
+	clerkServer := startMockAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		step := clerkSteps.Add(1)
+		switch step {
+		case 1:
+			if r.URL.Path != "/v1/client" || r.Method != http.MethodPost {
+				t.Fatalf("create client request=%s %s", r.Method, r.URL.Path)
+			}
+			w.Header().Set("Authorization", "client-1")
+			_ = json.NewEncoder(w).Encode(map[string]any{"response": map[string]any{"id": "client_123"}})
+		case 2:
+			if r.URL.Path != "/v1/client/sign_ins" || r.Method != http.MethodPost {
+				t.Fatalf("create sign-in request=%s %s", r.Method, r.URL.Path)
+			}
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			_ = json.NewEncoder(w).Encode(map[string]any{"errors": []map[string]any{{
+				"code":         "form_param_format_invalid",
+				"long_message": "provider detail must not leak",
+			}}})
+		case 3:
+			if r.Method != http.MethodDelete || r.URL.Path != "/v1/client" {
+				t.Fatalf("cleanup request=%s %s", r.Method, r.URL.Path)
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Fatalf("unexpected Clerk step %d: %s %s", step, r.Method, r.URL.Path)
+		}
+	}))
+
+	result := runCLIInput(t, "invalid@example.com\n", []string{
+		"HOME=" + t.TempDir(),
+		"TTSBUDDY_CLERK_FRONTEND_API_URL=" + clerkServer,
+		"TTSBUDDY_CLI_AUTH_URL=" + clerkServer + "/v1/cli-auth",
+		"TTSBUDDY_ALLOW_CUSTOM_API_URL=true",
+	}, "auth", "email")
+	if result.ExitCode != 1 || !strings.Contains(result.Stderr, "Clerk request returned status 422") {
+		t.Fatalf("unexpected generic 422 result=%#v", result)
+	}
+	if strings.Contains(result.Stderr, "No TTS Buddy account was found") || strings.Contains(result.Stderr, "provider detail must not leak") {
+		t.Fatalf("unexpected account-state claim/detail: %s", result.Stderr)
+	}
+	if strings.Contains(result.Stderr, "Code:") {
+		t.Fatalf("prompted for verification after rejection: %s", result.Stderr)
+	}
+	if got := clerkSteps.Load(); got != 3 {
+		t.Fatalf("Clerk steps=%d, want client, sign-in rejection, and cleanup", got)
 	}
 }
 
