@@ -73,7 +73,7 @@ login again after expiry.
 On v0.11.0, `ttsbuddy auth email` may show `Clerk request returned status 422`
 immediately after the email prompt, before a code prompt, when Clerk reports
 that no account was found for the identifier. Check the address, or run
-`ttsbuddy auth email --signup` to create an account. The pending v0.11.1 patch
+`ttsbuddy auth email --signup` to create an account. In v0.11.1 and newer, the CLI
 makes that guidance explicit only for Clerk's allowlisted
 `form_identifier_not_found` response; other provider failures remain generic.
 
