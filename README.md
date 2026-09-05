@@ -77,6 +77,10 @@ that no account was found for the identifier. Check the address, or run
 makes that guidance explicit only for Clerk's allowlisted
 `form_identifier_not_found` response; other provider failures remain generic.
 
+In v0.11.2 and newer, signup addresses rejected by Clerk's
+`form_email_address_blocked` policy receive direct guidance to use a different,
+non-disposable email address and rerun `ttsbuddy auth email --signup`.
+
 The signup prompt is intentionally conditional: an address that is already
 registered may still reach Clerk's verification prompt under strict
 enumeration protection, or may be rejected later by the provider. That prompt
