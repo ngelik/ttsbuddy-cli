@@ -320,6 +320,141 @@ func TestAuthEmailUnexpected422RemainsGeneric(t *testing.T) {
 	}
 }
 
+func TestAuthEmailSignupBlockedAddressGuidesToDifferentEmailBeforeCodePrompt(t *testing.T) {
+	for _, command := range []string{"email", "login"} {
+		t.Run(command, func(t *testing.T) {
+			var clerkSteps atomic.Int32
+			clerkServer := startMockAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				step := clerkSteps.Add(1)
+				switch step {
+				case 1:
+					if r.Method != http.MethodPost || r.URL.Path != "/v1/client" || r.Header.Get("Authorization") != "" {
+						t.Fatalf("create client request=%s %s authorization=%q", r.Method, r.URL.Path, r.Header.Get("Authorization"))
+					}
+					w.Header().Set("Authorization", "client-1")
+					_ = json.NewEncoder(w).Encode(map[string]any{"response": map[string]any{"id": "client_123"}})
+				case 2:
+					if r.Method != http.MethodPost || r.URL.Path != "/v1/client/sign_ups" || r.Header.Get("Authorization") != "Bearer client-1" {
+						t.Fatalf("create signup request=%s %s authorization=%q", r.Method, r.URL.Path, r.Header.Get("Authorization"))
+					}
+					body, _ := io.ReadAll(r.Body)
+					values, err := url.ParseQuery(string(body))
+					if err != nil || values.Get("email_address") != "blocked@example.com" {
+						t.Fatalf("signup email=%q parse error=%v", values.Get("email_address"), err)
+					}
+					w.WriteHeader(http.StatusForbidden)
+					_ = json.NewEncoder(w).Encode(map[string]any{"errors": []map[string]any{{
+						"code":         "form_email_address_blocked",
+						"long_message": "blocked@example.com is disposable; provider detail must not leak",
+					}}})
+				case 3:
+					if r.Method != http.MethodDelete || r.URL.Path != "/v1/client" || r.Header.Get("Authorization") != "Bearer client-1" {
+						t.Fatalf("cleanup request=%s %s authorization=%q", r.Method, r.URL.Path, r.Header.Get("Authorization"))
+					}
+					w.WriteHeader(http.StatusNoContent)
+				default:
+					t.Fatalf("unexpected Clerk step %d: %s %s", step, r.Method, r.URL.Path)
+				}
+			}))
+			var backendCalls atomic.Int32
+			backendServer := startMockAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				backendCalls.Add(1)
+				t.Fatalf("backend exchange should not run: %s %s", r.Method, r.URL.Path)
+			}))
+
+			home := t.TempDir()
+			result := runCLIInput(t, "blocked@example.com\n", []string{
+				"HOME=" + home,
+				"TTSBUDDY_CLERK_FRONTEND_API_URL=" + clerkServer,
+				"TTSBUDDY_CLI_AUTH_URL=" + backendServer + "/v1/cli-auth",
+				"TTSBUDDY_ALLOW_CUSTOM_API_URL=true",
+			}, "auth", command, "--signup")
+			if result.ExitCode != 1 {
+				t.Fatalf("result=%#v", result)
+			}
+			const guidance = "This email address is not allowed for signup. Use a different, non-disposable email address and run: ttsbuddy auth email --signup"
+			if !strings.Contains(result.Stderr, guidance) {
+				t.Fatalf("missing blocked-address guidance: %s", result.Stderr)
+			}
+			for _, prompt := range []string{
+				"If this is a new eligible address, check your email for a verification code.",
+				"Already registered? Run: ttsbuddy auth email",
+				"Code:",
+			} {
+				if strings.Contains(result.Stderr, prompt) {
+					t.Fatalf("unexpected prompt %q after blocked-address rejection: %s", prompt, result.Stderr)
+				}
+			}
+			if strings.Contains(result.Stdout+result.Stderr, "blocked@example.com is disposable") || strings.Contains(result.Stdout+result.Stderr, "form_email_address_blocked") {
+				t.Fatalf("leaked Clerk response detail: stdout=%s stderr=%s", result.Stdout, result.Stderr)
+			}
+			if got := clerkSteps.Load(); got != 3 {
+				t.Fatalf("Clerk steps=%d, want client, signup rejection, and cleanup", got)
+			}
+			if got := backendCalls.Load(); got != 0 {
+				t.Fatalf("backend exchange calls=%d, want zero", got)
+			}
+			if _, err := os.Stat(filepath.Join(home, ".ttsbuddy", "config.json")); !os.IsNotExist(err) {
+				t.Fatalf("unexpected config state, stat error=%v", err)
+			}
+		})
+	}
+}
+
+func TestAuthEmailSignupUnexpected403RemainsGeneric(t *testing.T) {
+	var clerkSteps atomic.Int32
+	clerkServer := startMockAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		step := clerkSteps.Add(1)
+		switch step {
+		case 1:
+			if r.Method != http.MethodPost || r.URL.Path != "/v1/client" {
+				t.Fatalf("create client request=%s %s", r.Method, r.URL.Path)
+			}
+			w.Header().Set("Authorization", "client-1")
+			_ = json.NewEncoder(w).Encode(map[string]any{"response": map[string]any{"id": "client_123"}})
+		case 2:
+			if r.Method != http.MethodPost || r.URL.Path != "/v1/client/sign_ups" {
+				t.Fatalf("create signup request=%s %s", r.Method, r.URL.Path)
+			}
+			w.WriteHeader(http.StatusForbidden)
+			_ = json.NewEncoder(w).Encode(map[string]any{"errors": []map[string]any{{
+				"code":         "account_restricted",
+				"long_message": "provider detail must not leak",
+			}}})
+		case 3:
+			if r.Method != http.MethodDelete || r.URL.Path != "/v1/client" {
+				t.Fatalf("cleanup request=%s %s", r.Method, r.URL.Path)
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Fatalf("unexpected Clerk step %d: %s %s", step, r.Method, r.URL.Path)
+		}
+	}))
+
+	result := runCLIInput(t, "blocked@example.com\n", []string{
+		"HOME=" + t.TempDir(),
+		"TTSBUDDY_CLERK_FRONTEND_API_URL=" + clerkServer,
+		"TTSBUDDY_CLI_AUTH_URL=" + clerkServer + "/v1/cli-auth",
+		"TTSBUDDY_ALLOW_CUSTOM_API_URL=true",
+	}, "auth", "email", "--signup")
+	if result.ExitCode != 1 || !strings.Contains(result.Stderr, "Clerk request was forbidden") {
+		t.Fatalf("unexpected generic 403 result=%#v", result)
+	}
+	for _, detail := range []string{
+		"This email address is not allowed for signup",
+		"provider detail must not leak",
+		"If this is a new eligible address, check your email for a verification code.",
+		"Code:",
+	} {
+		if strings.Contains(result.Stderr, detail) {
+			t.Fatalf("unexpected signup detail/prompt %q: %s", detail, result.Stderr)
+		}
+	}
+	if got := clerkSteps.Load(); got != 3 {
+		t.Fatalf("Clerk steps=%d, want client, signup rejection, and cleanup", got)
+	}
+}
+
 func TestAuthEmailSignupBrowserFallbackGuidesToBrowser(t *testing.T) {
 	tests := []struct {
 		name     string

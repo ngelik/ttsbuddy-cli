@@ -20,6 +20,11 @@ import (
 
 var authLocalOnly bool
 
+const (
+	signupEmailAddressBlockedCode    = "form_email_address_blocked"
+	signupEmailAddressBlockedMessage = "This email address is not allowed for signup. Use a different, non-disposable email address and run: ttsbuddy auth email --signup"
+)
+
 // ClerkOAuthClientID is public configuration. Keeping the production client ID
 // as the source default makes browser authentication work for `go install`
 // builds, while release builds can still inject and verify the same value.
@@ -116,10 +121,11 @@ func runAuthLogin(cmd *cobra.Command, _ []string) error {
 	var signUpChallenge *clerkfapi.SignUpChallenge
 	var signInChallenge *clerkfapi.Challenge
 	if signup {
-		fmt.Fprintln(os.Stderr, "If this is a new eligible address, check your email for a verification code.")
-		fmt.Fprintln(os.Stderr, "Already registered? Run: ttsbuddy auth email")
 		started, startErr := clerk.StartEmailSignUp(ctx, email)
 		if startErr != nil {
+			if clerkfapi.FailureCode(startErr) == signupEmailAddressBlockedCode {
+				return &exitError{code: 1, msg: signupEmailAddressBlockedMessage}
+			}
 			if clerkfapi.IsSignupEmailExists(startErr) {
 				return &exitError{code: 1, msg: "An account already exists for this email. Run: ttsbuddy auth email"}
 			}
@@ -128,6 +134,8 @@ func runAuthLogin(cmd *cobra.Command, _ []string) error {
 			}
 			return startErr
 		}
+		fmt.Fprintln(os.Stderr, "If this is a new eligible address, check your email for a verification code.")
+		fmt.Fprintln(os.Stderr, "Already registered? Run: ttsbuddy auth email")
 		signUpChallenge = started
 	} else {
 		started, startErr := clerk.StartEmailCode(ctx, email)
@@ -154,6 +162,9 @@ func runAuthLogin(cmd *cobra.Command, _ []string) error {
 		proof, err = clerk.VerifyEmailCode(ctx, *signInChallenge, code)
 	}
 	if err != nil {
+		if signup && clerkfapi.FailureCode(err) == signupEmailAddressBlockedCode {
+			return &exitError{code: 1, msg: signupEmailAddressBlockedMessage}
+		}
 		if signup && clerkfapi.IsSignupEmailExists(err) {
 			return &exitError{code: 1, msg: "An account already exists for this email. Run: ttsbuddy auth email"}
 		}
