@@ -390,6 +390,86 @@ func TestVerifyEmailSignUpMapsIncorrectAndExpiredCodes(t *testing.T) {
 	}
 }
 
+func TestVerifyEmailSignUpMapsRequirementFailuresToBrowserFallback(t *testing.T) {
+	for _, code := range []string{"captcha_required", "captcha_invalid", "mfa_required", "legal_acceptance_required"} {
+		t.Run(code, func(t *testing.T) {
+			srv := newScriptedServer(t, []scriptedResponse{
+				{
+					validate: validateFormRequest(http.MethodPost, "/v1/client/sign_ups/su_123/attempt_verification", "client-3", map[string]string{
+						"strategy": "email_code", "code": testIssuedEmailCode(),
+					}),
+					status:   http.StatusUnprocessableEntity,
+					cookies:  []http.Cookie{{Name: "__client", Value: "client-4"}},
+					bodyJSON: map[string]any{"errors": []map[string]any{{"code": code}}},
+				},
+				{
+					validate: validateRequest(http.MethodDelete, "/v1/client", "client-4"),
+					status:   http.StatusNoContent,
+				},
+			})
+			defer srv.Close()
+
+			client, err := New(srv.URL, "test")
+			if err != nil {
+				t.Fatalf("New() error: %v", err)
+			}
+			client.nativeClientToken = "client-3"
+			_, err = client.VerifyEmailSignUp(context.Background(), SignUpChallenge{SignUpID: "su_123"}, testIssuedEmailCode())
+			if !IsSignupBrowserFallback(err) {
+				t.Fatalf("expected browser fallback, got %v", err)
+			}
+			if client.createdSessionID != "" {
+				t.Fatalf("unexpected created session: %q", client.createdSessionID)
+			}
+			if err := client.Cleanup(context.Background()); err != nil {
+				t.Fatalf("Cleanup() error: %v", err)
+			}
+		})
+	}
+}
+
+func TestVerifyEmailSignUpMapsPendingSessionTaskToBrowserFallback(t *testing.T) {
+	srv := newScriptedServer(t, []scriptedResponse{
+		{
+			validate: validateFormRequest(http.MethodPost, "/v1/client/sign_ups/su_123/attempt_verification", "client-3", map[string]string{
+				"strategy": "email_code", "code": testIssuedEmailCode(),
+			}),
+			cookies: []http.Cookie{{Name: "__client", Value: "client-4"}},
+			bodyJSON: map[string]any{"response": map[string]any{
+				"id": "su_123", "status": string(SignUpComplete), "created_session_id": "sess_123",
+			}},
+		},
+		{
+			validate: validateRequest(http.MethodGet, "/v1/client/sessions/sess_123", "client-4"),
+			cookies:  []http.Cookie{{Name: "__client", Value: "client-5"}},
+			bodyJSON: map[string]any{"response": map[string]any{
+				"id": "sess_123", "status": "active", "current_task": map[string]any{"key": "verify_email_address"},
+			}},
+		},
+		{
+			validate: validateRequest(http.MethodPost, "/v1/client/sessions/sess_123/end", "client-5"),
+			status:   http.StatusNoContent,
+		},
+	})
+	defer srv.Close()
+
+	client, err := New(srv.URL, "test")
+	if err != nil {
+		t.Fatalf("New() error: %v", err)
+	}
+	client.nativeClientToken = "client-3"
+	_, err = client.VerifyEmailSignUp(context.Background(), SignUpChallenge{SignUpID: "su_123"}, testIssuedEmailCode())
+	if !IsSignupBrowserFallback(err) {
+		t.Fatalf("expected browser fallback, got %v", err)
+	}
+	if client.createdSessionID != "sess_123" {
+		t.Fatalf("createdSessionID = %q, want tracked session", client.createdSessionID)
+	}
+	if err := client.Cleanup(context.Background()); err != nil {
+		t.Fatalf("Cleanup() error: %v", err)
+	}
+}
+
 func TestVerifyEmailSignUpTracksCreatedSessionBeforeLaterValidationFailure(t *testing.T) {
 	srv := newScriptedServer(t, []scriptedResponse{
 		{

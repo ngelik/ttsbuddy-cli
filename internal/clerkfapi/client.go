@@ -195,6 +195,9 @@ func (c *Client) VerifyEmailSignUp(ctx context.Context, challenge SignUpChalleng
 
 	signUp, err := c.attemptSignUpVerification(ctx, challenge, code)
 	if err != nil {
+		if isSignupBrowserFallback(err) {
+			return nil, wrapFlowError("attempt_sign_up_verification", errSignupBrowserFallback)
+		}
 		return nil, wrapFlowError("attempt_sign_up_verification", err)
 	}
 	if signUp != nil && signUp.CreatedSessionID != "" {
@@ -208,7 +211,11 @@ func (c *Client) VerifyEmailSignUp(ctx context.Context, challenge SignUpChalleng
 	if err := validateSignUpForEmailCode(signUp, true); err != nil {
 		return nil, wrapFlowError("validate_sign_up", err)
 	}
-	return c.sessionProof(ctx, signUp.CreatedSessionID)
+	proof, proofErr := c.sessionProof(ctx, signUp.CreatedSessionID)
+	if isPendingSessionTask(proofErr) {
+		return nil, wrapFlowError("validate_session", errSignupBrowserFallback)
+	}
+	return proof, proofErr
 }
 
 func (c *Client) sessionProof(ctx context.Context, sessionID string) (*SessionProof, error) {
@@ -221,7 +228,7 @@ func (c *Client) sessionProof(ctx context.Context, sessionID string) (*SessionPr
 		return nil, wrapFlowError("get_session", err)
 	}
 	if session.CurrentTask != nil || len(session.Tasks) > 0 {
-		return nil, wrapFlowError("validate_session", errors.New("pending session task blocks CLI login"))
+		return nil, wrapFlowError("validate_session", errPendingSessionTask)
 	}
 	if !strings.EqualFold(session.Status, "active") {
 		return nil, wrapFlowError("validate_session", errors.New("inactive session cannot be exchanged"))
@@ -323,6 +330,9 @@ func (c *Client) attemptSignUpVerification(ctx context.Context, challenge SignUp
 	if err != nil {
 		var requestErr *RequestError
 		if errors.As(err, &requestErr) {
+			if isSignupBrowserFallback(requestErr) {
+				return nil, errSignupBrowserFallback
+			}
 			if strings.Contains(strings.ToLower(requestErr.Code), "expired") {
 				return nil, errors.New("email code expired")
 			}

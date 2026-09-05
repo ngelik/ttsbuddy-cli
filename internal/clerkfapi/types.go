@@ -9,6 +9,7 @@ import (
 var (
 	errSignupEmailExists     = errors.New("that email is already registered")
 	errSignupBrowserFallback = errors.New("clerk signup requires browser authentication")
+	errPendingSessionTask    = errors.New("pending session task blocks CLI login")
 )
 
 // IsSignupEmailExists reports the safe, fixed error returned when signup is
@@ -18,6 +19,8 @@ func IsSignupEmailExists(err error) bool { return errors.Is(err, errSignupEmailE
 // IsSignupBrowserFallback reports that terminal signup cannot satisfy the
 // provider's requirements and must continue in a browser.
 func IsSignupBrowserFallback(err error) bool { return errors.Is(err, errSignupBrowserFallback) }
+
+func isPendingSessionTask(err error) bool { return errors.Is(err, errPendingSessionTask) }
 
 type SignInState string
 
