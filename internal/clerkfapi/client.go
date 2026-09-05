@@ -142,18 +142,98 @@ func (c *Client) VerifyEmailCode(ctx context.Context, challenge Challenge, code 
 		return nil, wrapFlowError("validate_sign_in", errors.New("clerk sign-in response missing created_session_id"))
 	}
 	c.createdSessionID = signIn.CreatedSessionID
+	return c.sessionProof(ctx, signIn.CreatedSessionID)
+}
 
-	session, err := c.getSession(ctx, signIn.CreatedSessionID)
+// StartEmailSignUp creates a new Clerk signup attempt and prepares one email
+// verification challenge. It only supports the fields that can be collected
+// safely in the terminal; any additional registration requirement fails closed
+// and should be completed through browser authentication.
+func (c *Client) StartEmailSignUp(ctx context.Context, email string) (*SignUpChallenge, error) {
+	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
+	defer cancel()
+	if strings.TrimSpace(email) == "" {
+		return nil, errors.New("unable to start Clerk email signup")
+	}
+
+	if err := c.createNativeClient(ctx); err != nil {
+		return nil, err
+	}
+
+	signUp, err := c.createSignUp(ctx, email)
+	if err != nil {
+		if isSignupEmailExists(err) {
+			return nil, wrapFlowError("create_sign_up", errSignupEmailExists)
+		}
+		if isSignupBrowserFallback(err) {
+			return nil, wrapFlowError("create_sign_up", errSignupBrowserFallback)
+		}
+		return nil, err
+	}
+	if err := validateSignUpForEmailCode(signUp, false); err != nil {
+		return nil, wrapFlowError("validate_sign_up", err)
+	}
+
+	challenge := SignUpChallenge{SignUpID: signUp.ID}
+	if err := c.prepareSignUpVerification(ctx, challenge); err != nil {
+		if isSignupBrowserFallback(err) {
+			return nil, wrapFlowError("prepare_sign_up_verification", errSignupBrowserFallback)
+		}
+		return nil, wrapFlowError("prepare_sign_up_verification", err)
+	}
+	return &challenge, nil
+}
+
+// VerifyEmailSignUp completes the email verification and returns the same
+// active-session proof used by ordinary email login.
+func (c *Client) VerifyEmailSignUp(ctx context.Context, challenge SignUpChallenge, code string) (*SessionProof, error) {
+	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
+	defer cancel()
+	if strings.TrimSpace(challenge.SignUpID) == "" || strings.TrimSpace(code) == "" {
+		return nil, errors.New("invalid Clerk email signup challenge")
+	}
+
+	signUp, err := c.attemptSignUpVerification(ctx, challenge, code)
+	if err != nil {
+		if isSignupBrowserFallback(err) {
+			return nil, wrapFlowError("attempt_sign_up_verification", errSignupBrowserFallback)
+		}
+		return nil, wrapFlowError("attempt_sign_up_verification", err)
+	}
+	if signUp != nil && signUp.CreatedSessionID != "" {
+		// Track the exact session before validating the rest of the response so
+		// Cleanup can end it if a later proof check fails.
+		c.createdSessionID = signUp.CreatedSessionID
+	}
+	if signUp == nil || signUp.ID != challenge.SignUpID {
+		return nil, wrapFlowError("validate_sign_up", errors.New("clerk sign-up response did not match challenge"))
+	}
+	if err := validateSignUpForEmailCode(signUp, true); err != nil {
+		return nil, wrapFlowError("validate_sign_up", err)
+	}
+	proof, proofErr := c.sessionProof(ctx, signUp.CreatedSessionID)
+	if isPendingSessionTask(proofErr) {
+		return nil, wrapFlowError("validate_session", errSignupBrowserFallback)
+	}
+	return proof, proofErr
+}
+
+func (c *Client) sessionProof(ctx context.Context, sessionID string) (*SessionProof, error) {
+	if strings.TrimSpace(sessionID) == "" {
+		return nil, wrapFlowError("validate_session", errors.New("clerk session id is required"))
+	}
+
+	session, err := c.getSession(ctx, sessionID)
 	if err != nil {
 		return nil, wrapFlowError("get_session", err)
 	}
 	if session.CurrentTask != nil || len(session.Tasks) > 0 {
-		return nil, wrapFlowError("validate_session", errors.New("pending session task blocks CLI login"))
+		return nil, wrapFlowError("validate_session", errPendingSessionTask)
 	}
 	if !strings.EqualFold(session.Status, "active") {
 		return nil, wrapFlowError("validate_session", errors.New("inactive session cannot be exchanged"))
 	}
-	if session.ID == "" || session.ID != signIn.CreatedSessionID {
+	if session.ID == "" || session.ID != sessionID {
 		return nil, wrapFlowError("validate_session", errors.New("clerk session response did not match created session"))
 	}
 
@@ -213,6 +293,122 @@ func (c *Client) createSignIn(ctx context.Context, email string) (*signInRespons
 		return nil, err
 	}
 	return decodeResponse[signInResponse](env)
+}
+
+func (c *Client) createSignUp(ctx context.Context, email string) (*signUpResponse, error) {
+	env, err := c.doFormRequest(ctx, http.MethodPost, "/v1/client/sign_ups", url.Values{
+		"email_address": {email},
+	}, false)
+	if err != nil {
+		return nil, err
+	}
+	return decodeResponse[signUpResponse](env)
+}
+
+func (c *Client) prepareSignUpVerification(ctx context.Context, challenge SignUpChallenge) error {
+	env, err := c.doFormRequest(ctx, http.MethodPost, "/v1/client/sign_ups/"+url.PathEscape(challenge.SignUpID)+"/prepare_verification", url.Values{
+		"strategy": {"email_code"},
+	}, false)
+	if err != nil {
+		return err
+	}
+	signUp, err := decodeResponse[signUpResponse](env)
+	if err != nil {
+		return err
+	}
+	if signUp.ID != "" && signUp.ID != challenge.SignUpID {
+		return errors.New("clerk sign-up response did not match challenge")
+	}
+	return validateSignUpForEmailCode(signUp, false)
+}
+
+func (c *Client) attemptSignUpVerification(ctx context.Context, challenge SignUpChallenge, code string) (*signUpResponse, error) {
+	env, err := c.doFormRequest(ctx, http.MethodPost, "/v1/client/sign_ups/"+url.PathEscape(challenge.SignUpID)+"/attempt_verification", url.Values{
+		"strategy": {"email_code"},
+		"code":     {code},
+	}, false)
+	if err != nil {
+		var requestErr *RequestError
+		if errors.As(err, &requestErr) {
+			if isSignupEmailExists(requestErr) {
+				return nil, errSignupEmailExists
+			}
+			if isSignupBrowserFallback(requestErr) {
+				return nil, errSignupBrowserFallback
+			}
+			if strings.Contains(strings.ToLower(requestErr.Code), "expired") {
+				return nil, errors.New("email code expired")
+			}
+			if strings.Contains(strings.ToLower(requestErr.Code), "incorrect") || strings.Contains(strings.ToLower(requestErr.Code), "invalid") {
+				return nil, errors.New("email code incorrect")
+			}
+		}
+		return nil, err
+	}
+	return decodeResponse[signUpResponse](env)
+}
+
+func validateSignUpForEmailCode(signUp *signUpResponse, complete bool) error {
+	if signUp == nil || signUp.ID == "" {
+		return errors.New("clerk sign-up response missing id")
+	}
+	if complete {
+		if signUp.Status != SignUpComplete {
+			return errSignupBrowserFallback
+		}
+		if len(signUp.MissingFields) > 0 || len(signUp.UnverifiedFields) > 0 {
+			return errSignupBrowserFallback
+		}
+		if signUp.CreatedSessionID == "" {
+			return errors.New("clerk sign-up response missing created_session_id")
+		}
+		return nil
+	}
+	if signUp.Status != SignUpMissingRequirements {
+		return errSignupBrowserFallback
+	}
+	if len(signUp.MissingFields) > 0 {
+		return errSignupBrowserFallback
+	}
+	if len(signUp.UnverifiedFields) != 1 || signUp.UnverifiedFields[0] != "email_address" {
+		return errSignupBrowserFallback
+	}
+	if signUp.Verifications.EmailAddress != nil && !containsString(signUp.Verifications.EmailAddress.SupportedStrategies, "email_code") {
+		return errSignupBrowserFallback
+	}
+	return nil
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func isSignupEmailExists(err error) bool {
+	var requestErr *RequestError
+	if !errors.As(err, &requestErr) {
+		return false
+	}
+	code := strings.ToLower(requestErr.Code)
+	return strings.Contains(code, "identifier_exists") || strings.Contains(code, "email_address_exists") || strings.Contains(code, "email_exists")
+}
+
+func isSignupBrowserFallback(err error) bool {
+	var requestErr *RequestError
+	if !errors.As(err, &requestErr) {
+		return false
+	}
+	code := strings.ToLower(requestErr.Code)
+	for _, fragment := range []string{"captcha", "legal", "mfa", "multi_factor", "second_factor"} {
+		if strings.Contains(code, fragment) {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Client) prepareFirstFactor(ctx context.Context, challenge Challenge) error {

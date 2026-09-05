@@ -83,12 +83,13 @@ The automated `AUTH_ONLY=1` subset uses a fresh HOME and does not contact Clerk 
 | AUTH.6 | `tb auth login` against the reviewed development endpoints | Email-code login succeeds and stores one expiring `ttsc_` session without printing the code, Clerk proof, or credential | 0 |
 | AUTH.6a | `tb auth email` against the reviewed development endpoints | Matches the `auth login` email-code compatibility behavior | 0 |
 | AUTH.6b | `tb auth browser` against the reviewed development OAuth app and bridge | Opens Clerk, completes PKCE through the loopback callback, and stores one expiring `ttsc_` session without printing OAuth or CLI credentials | 0 |
+| AUTH.6c | `tb auth email --signup` against the reviewed development endpoints with a fresh identity | Creates the Clerk user after one email-code verification, exchanges the active session, and stores one expiring `ttsc_` session; no code, Clerk proof, or credential is printed | 0 |
 | AUTH.7 | `tb auth status` and `tb --json auth status` | Reports active/usable state and expiry; never returns the bearer credential | 0 |
 | AUTH.8 | `tb speak "CLI session acceptance" --no-download` | Uses the CLI session when no permanent key override exists | 0 |
 | AUTH.9 | `tb auth logout` then repeat it | First call confirms remote revocation and clears local state; second call is idempotent | 0 |
 | AUTH.10 | `tb auth logout --local-only` with a stored development session | Clears only local state and warns that remote validity may remain until expiry | 0 |
 
-Development bridge negative and concurrency cases (use only the existing development account; unknown-account input must be synthetic and must not create a user):
+Development bridge negative and concurrency cases (use the approved development identity; unknown-account input must be synthetic and must not create a user):
 
 | # | Case | Expected |
 |---|------|----------|
@@ -102,6 +103,14 @@ Development bridge negative and concurrency cases (use only the existing develop
 | AUTH.18 | Two fresh logins | Second reports replacement only after saving; first CLI credential becomes unusable |
 | AUTH.19 | Login → speak → status → logout → reuse | Speak/status work before logout; revoked credential is rejected afterward |
 | AUTH.20 | Permanent key exists throughout login/logout | Stored `api_key` is byte-for-byte unchanged |
+
+Signup-specific negatives:
+
+| # | Case | Expected |
+|---|------|----------|
+| AUTH.21 | Existing email with `tb auth email --signup` | Always offers ordinary `auth email`; if the provider discloses an existing-email error at start or verification, the CLI gives the fixed login route; strict enumeration may instead show a generic verification prompt/notification, which is not proof of a new account; no automatic login attempt or second verification code |
+| AUTH.22 | Signup requiring legal acceptance, CAPTCHA, MFA, or another missing field | Browser-auth fallback; no proof or CLI credential |
+| AUTH.23 | Incorrect/expired signup code or failed backend exchange | No local credential write; temporary Clerk session is cleaned up; an already-created Clerk user is retained for later ordinary login |
 
 Development gate cases:
 

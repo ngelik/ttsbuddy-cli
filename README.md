@@ -59,11 +59,23 @@ ttsbuddy speak "Hello from TTS Buddy"
 ttsbuddy auth status
 ```
 
-`ttsbuddy auth browser` signs in through Clerk in your browser. For terminals
-without a browser, use `ttsbuddy auth email`; `ttsbuddy auth login` remains a
-backward-compatible alias for the email-code flow. Each method stores the same
-seven-day `ttsc_` CLI session. A new login replaces the prior CLI session.
-There is no refresh; login again after expiry.
+`ttsbuddy auth browser` can sign in an existing Clerk account or create a new
+one through Clerk's hosted page. On a new account's first successful consent,
+TTS Buddy initializes the standard Free plan before issuing the CLI session.
+`ttsbuddy auth email` signs in an existing account; add `--signup` to create a
+new account with email verification entirely in the terminal. The signup flow
+initializes the same standard Free plan before issuing the CLI session. Clerk
+owns identity creation and verification, while the CLI only submits the
+verified session to TTS Buddy. Each method stores the same seven-day `ttsc_`
+CLI session. A new login replaces the prior CLI session. There is no refresh;
+login again after expiry.
+
+The signup prompt is intentionally conditional: an address that is already
+registered may still reach Clerk's verification prompt under strict
+enumeration protection, or may be rejected later by the provider. That prompt
+does not prove a new account was created. For an existing account, use
+`ttsbuddy auth email`; the CLI never turns a signup attempt into an automatic
+login.
 
 ```bash
 # 1. Set your API key (create one in Dashboard -> Settings)
@@ -91,10 +103,17 @@ The script builds `ttsbuddy` when needed and uses only the public demo key and a
 ## Authentication
 
 Use `ttsbuddy auth browser` for interactive terminal work, or `ttsbuddy auth
-email` when a browser is unavailable. Use a permanent `ttsb_` key for CI and
-unattended automation. Login/logout store the CLI session separately and never
-overwrite `api_key`. Effective precedence is `--key` > `TTSBUDDY_API_KEY` >
-active CLI session > stored permanent key.
+email` when a browser is unavailable. Use `ttsbuddy auth email --signup` to
+create a new account by entering the verification code from email. If the
+signup needs legal acceptance, CAPTCHA, MFA, or another field, use browser
+authentication instead; the CLI never fills those requirements implicitly.
+If the address is already registered, run `ttsbuddy auth email`; provider
+enumeration protection can defer that determination until verification, so a
+signup verification prompt is not evidence of a new identity.
+Use a permanent `ttsb_` key for CI and unattended automation. Login/logout
+store the CLI session separately and never overwrite `api_key`. Effective
+precedence is `--key` > `TTSBUDDY_API_KEY` > active CLI session > stored
+permanent key.
 
 `ttsbuddy auth logout` revokes the stored session before clearing it. A network
 or server failure retains the local session so the command can be retried.

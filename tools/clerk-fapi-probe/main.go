@@ -40,11 +40,61 @@ func main() {
 		os.Exit(1)
 	}
 	defer client.Close()
+	signup := len(os.Args) > 1 && os.Args[1] == "--signup"
+	if len(os.Args) > 1 && !signup {
+		writeHardGate("unsupported probe mode")
+		os.Exit(2)
+	}
 
-	email, err := promptLine("Email (existing development account): ")
+	emailPrompt := "Email (existing development account): "
+	if signup {
+		emailPrompt = "Email (new development account): "
+	}
+	email, err := promptLine(emailPrompt)
 	if err != nil {
 		writeJSON(map[string]any{"stage": "input_email", "ok": false, "error": "unable to read email"})
 		os.Exit(1)
+	}
+
+	if signup {
+		challenge, err := client.StartEmailSignUp(ctx, email)
+		if err != nil {
+			writeFailure("start_email_signup", err, client)
+			os.Exit(1)
+		}
+		writeJSON(map[string]any{
+			"stage":             "start_email_signup",
+			"ok":                true,
+			"fapi_version":      clerkfapi.APIVersion,
+			"request_headers":   []string{"Clerk-API-Version", "User-Agent", "Authorization"},
+			"native_query_flag": "_is_native=true",
+			"request_ids":       client.RequestIDs(),
+		})
+
+		code, err := promptHidden("Email code: ")
+		if err != nil {
+			writeFailure("read_email_code", err, client)
+			os.Exit(1)
+		}
+
+		proof, err := client.VerifyEmailSignUp(ctx, *challenge, code)
+		if err != nil {
+			writeFailure("verify_email_signup", err, client)
+			os.Exit(1)
+		}
+		writeJSON(map[string]any{
+			"stage":             "verify_email_signup",
+			"ok":                true,
+			"session_id_issued": proof.SessionID != "",
+			"jwt_claim_types":   summarizeJWTClaimTypes(proof.Token),
+			"request_ids":       client.RequestIDs(),
+		})
+		if err := cleanup(client); err != nil {
+			writeJSON(map[string]any{"stage": "cleanup", "ok": false, "error": "cleanup failed"})
+			os.Exit(1)
+		}
+		writeJSON(map[string]any{"stage": "cleanup", "ok": true})
+		return
 	}
 
 	challenge, err := client.StartEmailCode(ctx, email)
@@ -106,6 +156,9 @@ func writeFailure(stage string, err error, client *clerkfapi.Client) {
 	}
 	if protocolStage := clerkfapi.FailureStage(err); protocolStage != "" {
 		record["protocol_stage"] = protocolStage
+	}
+	if protocolCode := clerkfapi.FailureCode(err); protocolCode != "" {
+		record["protocol_error_code"] = protocolCode
 	}
 	var requestErr *clerkfapi.RequestError
 	if errors.As(err, &requestErr) && requestErr.RetryAfterSeconds > 0 {

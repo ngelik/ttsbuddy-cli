@@ -89,6 +89,411 @@ func TestAuthHelpListsEmailAndBrowserMethods(t *testing.T) {
 	}
 }
 
+func TestAuthSignupFlagRegisteredForEmailAndLogin(t *testing.T) {
+	for _, command := range []string{"email", "login"} {
+		result := runCLI(t, []string{"HOME=" + t.TempDir()}, "auth", command, "--help")
+		if result.ExitCode != 0 || !strings.Contains(result.Stdout, "--signup") {
+			t.Fatalf("%s help=%#v", command, result)
+		}
+	}
+}
+
+func TestAuthEmailSignupExchangesAndStoresCLIOnly(t *testing.T) {
+	issued := authFixtureToken()
+	var clerkStep atomic.Int32
+	clerkServer := startMockAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		step := clerkStep.Add(1)
+		if r.URL.Query().Get("_is_native") != "true" || r.Header.Get("Clerk-API-Version") != "2026-05-12" {
+			t.Fatalf("missing pinned native request headers: url=%s version=%q", r.URL.String(), r.Header.Get("Clerk-API-Version"))
+		}
+		if step == 1 {
+			if r.URL.Path != "/v1/client" || r.Method != http.MethodPost {
+				t.Fatalf("step 1=%s %s", r.Method, r.URL.Path)
+			}
+			w.Header().Set("Authorization", "client-1")
+			_ = json.NewEncoder(w).Encode(map[string]any{"response": map[string]any{"id": "client_123"}})
+			return
+		}
+		token := "client-" + string(rune('0'+step-1))
+		if r.Header.Get("Authorization") != "Bearer "+token {
+			t.Fatalf("step %d authorization=%q want Bearer %s", step, r.Header.Get("Authorization"), token)
+		}
+		switch {
+		case step == 2 && r.URL.Path == "/v1/client/sign_ups":
+			w.Header().Set("Authorization", "client-2")
+			_ = json.NewEncoder(w).Encode(map[string]any{"response": map[string]any{
+				"id": "su_123", "status": "missing_requirements", "unverified_fields": []string{"email_address"},
+				"verifications": map[string]any{"email_address": map[string]any{"supported_strategies": []string{"email_code"}}},
+			}})
+		case step == 3 && r.URL.Path == "/v1/client/sign_ups/su_123/prepare_verification":
+			w.Header().Set("Authorization", "client-3")
+			_ = json.NewEncoder(w).Encode(map[string]any{"response": map[string]any{
+				"id": "su_123", "status": "missing_requirements", "unverified_fields": []string{"email_address"},
+			}})
+		case step == 4 && r.URL.Path == "/v1/client/sign_ups/su_123/attempt_verification":
+			body, _ := io.ReadAll(r.Body)
+			if !strings.Contains(string(body), "code=654321") {
+				t.Fatalf("signup code was not sent to Clerk request")
+			}
+			w.Header().Set("Authorization", "client-4")
+			_ = json.NewEncoder(w).Encode(map[string]any{"response": map[string]any{
+				"id": "su_123", "status": "complete", "created_session_id": "sess_123", "unverified_fields": []string{},
+			}})
+		case step == 5 && r.URL.Path == "/v1/client/sessions/sess_123":
+			w.Header().Set("Authorization", "client-5")
+			_ = json.NewEncoder(w).Encode(map[string]any{"response": map[string]any{"id": "sess_123", "status": "active"}})
+		case step == 6 && r.URL.Path == "/v1/client/sessions/sess_123/tokens":
+			w.Header().Set("Authorization", "client-6")
+			_ = json.NewEncoder(w).Encode(map[string]any{"jwt": "jwt-private-proof"})
+		default:
+			t.Fatalf("unexpected Clerk step %d: %s %s", step, r.Method, r.URL.Path)
+		}
+	}))
+	backendServer := startMockAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.Header.Get("Authorization") != "Bearer jwt-private-proof" {
+			t.Fatalf("backend exchange method=%s authorization=%q", r.Method, r.Header.Get("Authorization"))
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"success":    true,
+			"credential": map[string]any{"token": issued, "type": "cli_session", "scope": "agent_tts", "expires_at": time.Now().Add(time.Hour).UTC().Format(time.RFC3339)},
+		})
+	}))
+
+	home := t.TempDir()
+	result := runCLIInput(t, "new@example.com\n654321\n", []string{
+		"HOME=" + home,
+		"TTSBUDDY_CLERK_FRONTEND_API_URL=" + clerkServer,
+		"TTSBUDDY_CLI_AUTH_URL=" + backendServer + "/v1/cli-auth",
+		"TTSBUDDY_ALLOW_CUSTOM_API_URL=true",
+	}, "auth", "email", "--signup")
+	if result.ExitCode != 0 {
+		t.Fatalf("signup result=%#v", result)
+	}
+	if strings.Contains(result.Stdout+result.Stderr, "jwt-private-proof") || strings.Contains(result.Stdout+result.Stderr, issued) || strings.Contains(result.Stdout+result.Stderr, "654321") {
+		t.Fatal("signup leaked proof, credential, or code")
+	}
+	if !strings.Contains(result.Stderr, "If this is a new eligible address, check your email for a verification code.") {
+		t.Fatalf("signup prompt was not conditional: %s", result.Stderr)
+	}
+	if !strings.Contains(result.Stderr, "Already registered? Run: ttsbuddy auth email") {
+		t.Fatalf("signup prompt omitted ordinary-login guidance: %s", result.Stderr)
+	}
+	body, err := os.ReadFile(filepath.Join(home, ".ttsbuddy", "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), issued) || strings.Contains(string(body), "jwt-private-proof") {
+		t.Fatalf("stored config=%s", body)
+	}
+	if got := clerkStep.Load(); got != 6 {
+		t.Fatalf("Clerk steps=%d, want 6", got)
+	}
+}
+
+func TestAuthEmailSignupBrowserFallbackGuidesToBrowser(t *testing.T) {
+	tests := []struct {
+		name     string
+		response map[string]any
+		status   int
+	}{
+		{
+			name: "missing requirements",
+			response: map[string]any{"response": map[string]any{
+				"id": "su_123", "status": "missing_requirements",
+				"missing_fields": []string{"legal_accepted"}, "unverified_fields": []string{"email_address"},
+			}},
+		},
+		{
+			name:     "captcha",
+			status:   http.StatusUnprocessableEntity,
+			response: map[string]any{"errors": []map[string]any{{"code": "captcha_required"}}},
+		},
+		{
+			name:     "mfa",
+			status:   http.StatusUnprocessableEntity,
+			response: map[string]any{"errors": []map[string]any{{"code": "mfa_required"}}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var step atomic.Int32
+			clerkServer := startMockAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				current := step.Add(1)
+				switch current {
+				case 1:
+					if r.Method != http.MethodPost || r.URL.Path != "/v1/client" {
+						t.Fatalf("step 1=%s %s", r.Method, r.URL.Path)
+					}
+					w.Header().Set("Authorization", "client-1")
+					_ = json.NewEncoder(w).Encode(map[string]any{"response": map[string]any{"id": "client_123"}})
+				case 2:
+					if r.Method != http.MethodPost || r.URL.Path != "/v1/client/sign_ups" {
+						t.Fatalf("step 2=%s %s", r.Method, r.URL.Path)
+					}
+					if tt.status != 0 {
+						w.WriteHeader(tt.status)
+					}
+					_ = json.NewEncoder(w).Encode(tt.response)
+				case 3:
+					if r.Method != http.MethodDelete || r.URL.Path != "/v1/client" {
+						t.Fatalf("cleanup=%s %s", r.Method, r.URL.Path)
+					}
+					w.WriteHeader(http.StatusNoContent)
+				default:
+					t.Fatalf("unexpected extra Clerk request: %s %s", r.Method, r.URL.Path)
+				}
+			}))
+			result := runCLIInput(t, "new@example.com\n", []string{
+				"HOME=" + t.TempDir(),
+				"TTSBUDDY_CLERK_FRONTEND_API_URL=" + clerkServer,
+				"TTSBUDDY_CLI_AUTH_URL=" + clerkServer + "/v1/cli-auth",
+				"TTSBUDDY_ALLOW_CUSTOM_API_URL=true",
+			}, "auth", "email", "--signup")
+			if result.ExitCode != 1 {
+				t.Fatalf("result=%#v", result)
+			}
+			if !strings.Contains(result.Stderr, "ttsbuddy auth browser") {
+				t.Fatalf("fallback did not direct to browser: %s", result.Stderr)
+			}
+			if got := step.Load(); got != 3 {
+				t.Fatalf("Clerk steps=%d, want signup rejection plus cleanup only", got)
+			}
+		})
+	}
+}
+
+func TestAuthEmailSignupVerificationRequirementGuidesToBrowser(t *testing.T) {
+	var step atomic.Int32
+	var backendCalls atomic.Int32
+	clerkServer := startMockAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		current := step.Add(1)
+		switch current {
+		case 1:
+			if r.Method != http.MethodPost || r.URL.Path != "/v1/client" {
+				t.Fatalf("step 1=%s %s", r.Method, r.URL.Path)
+			}
+			w.Header().Set("Authorization", "client-1")
+			_ = json.NewEncoder(w).Encode(map[string]any{"response": map[string]any{"id": "client_123"}})
+		case 2:
+			if r.Method != http.MethodPost || r.URL.Path != "/v1/client/sign_ups" {
+				t.Fatalf("step 2=%s %s", r.Method, r.URL.Path)
+			}
+			w.Header().Set("Authorization", "client-2")
+			_ = json.NewEncoder(w).Encode(map[string]any{"response": map[string]any{
+				"id": "su_123", "status": "missing_requirements", "unverified_fields": []string{"email_address"},
+				"verifications": map[string]any{"email_address": map[string]any{"supported_strategies": []string{"email_code"}}},
+			}})
+		case 3:
+			if r.Method != http.MethodPost || r.URL.Path != "/v1/client/sign_ups/su_123/prepare_verification" {
+				t.Fatalf("step 3=%s %s", r.Method, r.URL.Path)
+			}
+			w.Header().Set("Authorization", "client-3")
+			_ = json.NewEncoder(w).Encode(map[string]any{"response": map[string]any{
+				"id": "su_123", "status": "missing_requirements", "unverified_fields": []string{"email_address"},
+			}})
+		case 4:
+			if r.Method != http.MethodPost || r.URL.Path != "/v1/client/sign_ups/su_123/attempt_verification" {
+				t.Fatalf("step 4=%s %s", r.Method, r.URL.Path)
+			}
+			w.Header().Set("Authorization", "client-4")
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			_ = json.NewEncoder(w).Encode(map[string]any{"errors": []map[string]any{{"code": "captcha_required"}}})
+		case 5:
+			if r.Method != http.MethodDelete || r.URL.Path != "/v1/client" {
+				t.Fatalf("cleanup=%s %s", r.Method, r.URL.Path)
+			}
+			if got := r.Header.Get("Authorization"); got != "Bearer client-4" {
+				t.Fatalf("cleanup authorization=%q", got)
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Fatalf("unexpected Clerk step %d: %s %s", current, r.Method, r.URL.Path)
+		}
+	}))
+	backendServer := startMockAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		backendCalls.Add(1)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+
+	home := t.TempDir()
+	result := runCLIInput(t, "new@example.com\n654321\n", []string{
+		"HOME=" + home,
+		"TTSBUDDY_CLERK_FRONTEND_API_URL=" + clerkServer,
+		"TTSBUDDY_CLI_AUTH_URL=" + backendServer + "/v1/cli-auth",
+		"TTSBUDDY_ALLOW_CUSTOM_API_URL=true",
+	}, "auth", "email", "--signup")
+	if result.ExitCode != 1 || !strings.Contains(result.Stderr, "ttsbuddy auth browser") {
+		t.Fatalf("result=%#v", result)
+	}
+	if got := step.Load(); got != 5 {
+		t.Fatalf("Clerk steps=%d, want attempt plus client cleanup", got)
+	}
+	if backendCalls.Load() != 0 {
+		t.Fatalf("backend exchange calls=%d, want zero", backendCalls.Load())
+	}
+	if _, err := os.Stat(filepath.Join(home, ".ttsbuddy", "config.json")); !os.IsNotExist(err) {
+		t.Fatalf("unexpected config state, stat error=%v", err)
+	}
+}
+
+func TestAuthEmailSignupVerificationExistingEmailGuidesToLogin(t *testing.T) {
+	var step atomic.Int32
+	var backendCalls atomic.Int32
+	clerkServer := startMockAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		current := step.Add(1)
+		switch current {
+		case 1:
+			if r.Method != http.MethodPost || r.URL.Path != "/v1/client" {
+				t.Fatalf("step 1=%s %s", r.Method, r.URL.Path)
+			}
+			w.Header().Set("Authorization", "client-1")
+			_ = json.NewEncoder(w).Encode(map[string]any{"response": map[string]any{"id": "client_123"}})
+		case 2:
+			if r.Method != http.MethodPost || r.URL.Path != "/v1/client/sign_ups" {
+				t.Fatalf("step 2=%s %s", r.Method, r.URL.Path)
+			}
+			w.Header().Set("Authorization", "client-2")
+			_ = json.NewEncoder(w).Encode(map[string]any{"response": map[string]any{
+				"id": "su_123", "status": "missing_requirements", "unverified_fields": []string{"email_address"},
+				"verifications": map[string]any{"email_address": map[string]any{"supported_strategies": []string{"email_code"}}},
+			}})
+		case 3:
+			if r.Method != http.MethodPost || r.URL.Path != "/v1/client/sign_ups/su_123/prepare_verification" {
+				t.Fatalf("step 3=%s %s", r.Method, r.URL.Path)
+			}
+			w.Header().Set("Authorization", "client-3")
+			_ = json.NewEncoder(w).Encode(map[string]any{"response": map[string]any{
+				"id": "su_123", "status": "missing_requirements", "unverified_fields": []string{"email_address"},
+			}})
+		case 4:
+			if r.Method != http.MethodPost || r.URL.Path != "/v1/client/sign_ups/su_123/attempt_verification" {
+				t.Fatalf("step 4=%s %s", r.Method, r.URL.Path)
+			}
+			w.Header().Set("Authorization", "client-4")
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			_ = json.NewEncoder(w).Encode(map[string]any{"errors": []map[string]any{{"code": "form_identifier_exists"}}})
+		case 5:
+			if r.Method != http.MethodDelete || r.URL.Path != "/v1/client" {
+				t.Fatalf("cleanup=%s %s", r.Method, r.URL.Path)
+			}
+			if got := r.Header.Get("Authorization"); got != "Bearer client-4" {
+				t.Fatalf("cleanup authorization=%q", got)
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Fatalf("unexpected Clerk step %d: %s %s", current, r.Method, r.URL.Path)
+		}
+	}))
+	backendServer := startMockAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		backendCalls.Add(1)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+
+	home := t.TempDir()
+	result := runCLIInput(t, "existing@example.com\n654321\n", []string{
+		"HOME=" + home,
+		"TTSBUDDY_CLERK_FRONTEND_API_URL=" + clerkServer,
+		"TTSBUDDY_CLI_AUTH_URL=" + backendServer + "/v1/cli-auth",
+		"TTSBUDDY_ALLOW_CUSTOM_API_URL=true",
+	}, "auth", "email", "--signup")
+	if result.ExitCode != 1 || !strings.Contains(result.Stderr, "An account already exists for this email. Run: ttsbuddy auth email") {
+		t.Fatalf("result=%#v", result)
+	}
+	if got := step.Load(); got != 5 {
+		t.Fatalf("Clerk steps=%d, want attempt plus client cleanup", got)
+	}
+	if backendCalls.Load() != 0 {
+		t.Fatalf("backend exchange calls=%d, want zero", backendCalls.Load())
+	}
+	if _, err := os.Stat(filepath.Join(home, ".ttsbuddy", "config.json")); !os.IsNotExist(err) {
+		t.Fatalf("unexpected config state, stat error=%v", err)
+	}
+}
+
+func TestAuthEmailSignupPendingSessionTaskGuidesToBrowserWithoutTokenOrExchange(t *testing.T) {
+	var step atomic.Int32
+	var backendCalls atomic.Int32
+	clerkServer := startMockAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		current := step.Add(1)
+		switch current {
+		case 1:
+			if r.Method != http.MethodPost || r.URL.Path != "/v1/client" {
+				t.Fatalf("step 1=%s %s", r.Method, r.URL.Path)
+			}
+			w.Header().Set("Authorization", "client-1")
+			_ = json.NewEncoder(w).Encode(map[string]any{"response": map[string]any{"id": "client_123"}})
+		case 2:
+			if r.Method != http.MethodPost || r.URL.Path != "/v1/client/sign_ups" {
+				t.Fatalf("step 2=%s %s", r.Method, r.URL.Path)
+			}
+			w.Header().Set("Authorization", "client-2")
+			_ = json.NewEncoder(w).Encode(map[string]any{"response": map[string]any{
+				"id": "su_123", "status": "missing_requirements", "unverified_fields": []string{"email_address"},
+				"verifications": map[string]any{"email_address": map[string]any{"supported_strategies": []string{"email_code"}}},
+			}})
+		case 3:
+			if r.Method != http.MethodPost || r.URL.Path != "/v1/client/sign_ups/su_123/prepare_verification" {
+				t.Fatalf("step 3=%s %s", r.Method, r.URL.Path)
+			}
+			w.Header().Set("Authorization", "client-3")
+			_ = json.NewEncoder(w).Encode(map[string]any{"response": map[string]any{
+				"id": "su_123", "status": "missing_requirements", "unverified_fields": []string{"email_address"},
+			}})
+		case 4:
+			if r.Method != http.MethodPost || r.URL.Path != "/v1/client/sign_ups/su_123/attempt_verification" {
+				t.Fatalf("step 4=%s %s", r.Method, r.URL.Path)
+			}
+			w.Header().Set("Authorization", "client-3")
+			_ = json.NewEncoder(w).Encode(map[string]any{"response": map[string]any{
+				"id": "su_123", "status": "complete", "created_session_id": "sess_123",
+			}})
+		case 5:
+			if r.Method != http.MethodGet || r.URL.Path != "/v1/client/sessions/sess_123" {
+				t.Fatalf("step 5=%s %s", r.Method, r.URL.Path)
+			}
+			w.Header().Set("Authorization", "client-4")
+			_ = json.NewEncoder(w).Encode(map[string]any{"response": map[string]any{
+				"id": "sess_123", "status": "active", "current_task": map[string]any{"key": "verify_email_address"},
+			}})
+		case 6:
+			if r.Method != http.MethodPost || r.URL.Path != "/v1/client/sessions/sess_123/end" {
+				t.Fatalf("cleanup=%s %s", r.Method, r.URL.Path)
+			}
+			if got := r.Header.Get("Authorization"); got != "Bearer client-4" {
+				t.Fatalf("cleanup authorization=%q", got)
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Fatalf("unexpected Clerk step %d: %s %s", current, r.Method, r.URL.Path)
+		}
+	}))
+	backendServer := startMockAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		backendCalls.Add(1)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+
+	home := t.TempDir()
+	result := runCLIInput(t, "new@example.com\n654321\n", []string{
+		"HOME=" + home,
+		"TTSBUDDY_CLERK_FRONTEND_API_URL=" + clerkServer,
+		"TTSBUDDY_CLI_AUTH_URL=" + backendServer + "/v1/cli-auth",
+		"TTSBUDDY_ALLOW_CUSTOM_API_URL=true",
+	}, "auth", "email", "--signup")
+	if result.ExitCode != 1 || !strings.Contains(result.Stderr, "ttsbuddy auth browser") {
+		t.Fatalf("result=%#v", result)
+	}
+	if got := step.Load(); got != 6 {
+		t.Fatalf("Clerk steps=%d, want session retrieval plus cleanup", got)
+	}
+	if backendCalls.Load() != 0 {
+		t.Fatalf("backend exchange calls=%d, want zero", backendCalls.Load())
+	}
+	if _, err := os.Stat(filepath.Join(home, ".ttsbuddy", "config.json")); !os.IsNotExist(err) {
+		t.Fatalf("unexpected config state, stat error=%v", err)
+	}
+}
+
 func TestAuthEmailKeepsLoginCompatibilityOutput(t *testing.T) {
 	env := []string{"HOME=" + t.TempDir()}
 	login := runCLIInput(t, "", env, "auth", "login")

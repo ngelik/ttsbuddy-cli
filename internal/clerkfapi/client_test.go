@@ -158,6 +158,391 @@ func TestStartEmailCodeRejectsMissingNativeClientToken(t *testing.T) {
 	}
 }
 
+func TestStartEmailSignUpCreatesNativeClientAndPreparesEmailVerification(t *testing.T) {
+	srv := newScriptedServer(t, []scriptedResponse{
+		{
+			validate: validateFormRequest(http.MethodPost, "/v1/client", "", map[string]string{}),
+			cookies:  []http.Cookie{{Name: "__client", Value: "client-1"}},
+			bodyJSON: map[string]any{"request_id": "req_client", "response": map[string]any{"id": "client_123"}},
+		},
+		{
+			validate: validateFormRequest(http.MethodPost, "/v1/client/sign_ups", "client-1", map[string]string{"email_address": "new@example.com"}),
+			cookies:  []http.Cookie{{Name: "__client", Value: "client-2"}},
+			bodyJSON: map[string]any{"request_id": "req_signup", "response": map[string]any{
+				"id": "su_123", "status": string(SignUpMissingRequirements),
+				"unverified_fields": []string{"email_address"},
+				"verifications": map[string]any{"email_address": map[string]any{
+					"next_action": "needs_prepare", "supported_strategies": []string{"email_code"},
+				}},
+			}},
+		},
+		{
+			validate: validateFormRequest(http.MethodPost, "/v1/client/sign_ups/su_123/prepare_verification", "client-2", map[string]string{"strategy": "email_code"}),
+			cookies:  []http.Cookie{{Name: "__client", Value: "client-3"}},
+			bodyJSON: map[string]any{"request_id": "req_prepare", "response": map[string]any{
+				"id": "su_123", "status": string(SignUpMissingRequirements),
+				"unverified_fields": []string{"email_address"},
+			}},
+		},
+	})
+	defer srv.Close()
+
+	client, err := New(srv.URL, "test")
+	if err != nil {
+		t.Fatalf("New() error: %v", err)
+	}
+	challenge, err := client.StartEmailSignUp(context.Background(), "new@example.com")
+	if err != nil {
+		t.Fatalf("StartEmailSignUp() error: %v", err)
+	}
+	if challenge.SignUpID != "su_123" {
+		t.Fatalf("SignUpID = %q, want %q", challenge.SignUpID, "su_123")
+	}
+	if client.nativeClientToken != "client-3" {
+		t.Fatalf("nativeClientToken = %q, want %q", client.nativeClientToken, "client-3")
+	}
+	if got := client.RequestIDs(); len(got) != 3 || got[0] != "req_client" || got[2] != "req_prepare" {
+		t.Fatalf("RequestIDs() = %v, want three ordered ids", got)
+	}
+}
+
+func TestVerifyEmailSignUpMintsSessionProofAndRotatesToken(t *testing.T) {
+	srv := newScriptedServer(t, []scriptedResponse{
+		{
+			validate: validateFormRequest(http.MethodPost, "/v1/client/sign_ups/su_123/attempt_verification", "client-3", map[string]string{
+				"strategy": "email_code", "code": testIssuedEmailCode(),
+			}),
+			cookies: []http.Cookie{{Name: "__client", Value: "client-4"}},
+			bodyJSON: map[string]any{"request_id": "req_attempt", "response": map[string]any{
+				"id": "su_123", "status": string(SignUpComplete), "created_session_id": "sess_123",
+				"unverified_fields": []string{},
+			}},
+		},
+		{
+			validate: validateRequest(http.MethodGet, "/v1/client/sessions/sess_123", "client-4"),
+			cookies:  []http.Cookie{{Name: "__client", Value: "client-5"}},
+			bodyJSON: map[string]any{"request_id": "req_session", "response": map[string]any{"id": "sess_123", "status": "active"}},
+		},
+		{
+			validate: validateFormRequest(http.MethodPost, "/v1/client/sessions/sess_123/tokens", "client-5", map[string]string{}),
+			cookies:  []http.Cookie{{Name: "__client", Value: "client-6"}},
+			bodyJSON: map[string]any{"request_id": "req_token", "jwt": "jwt_signup_token"},
+		},
+	})
+	defer srv.Close()
+
+	client, err := New(srv.URL, "test")
+	if err != nil {
+		t.Fatalf("New() error: %v", err)
+	}
+	client.nativeClientToken = "client-3"
+	proof, err := client.VerifyEmailSignUp(context.Background(), SignUpChallenge{SignUpID: "su_123"}, testIssuedEmailCode())
+	if err != nil {
+		t.Fatalf("VerifyEmailSignUp() error: %v", err)
+	}
+	if proof.SessionID != "sess_123" || proof.Token != "jwt_signup_token" {
+		t.Fatalf("proof = %#v, want session and token", proof)
+	}
+	if client.createdSessionID != "sess_123" || client.nativeClientToken != "client-6" {
+		t.Fatalf("cleanup state = session %q token %q", client.createdSessionID, client.nativeClientToken)
+	}
+}
+
+func TestStartEmailSignUpRejectsAdditionalRequirements(t *testing.T) {
+	srv := newScriptedServer(t, []scriptedResponse{
+		{
+			validate: validateFormRequest(http.MethodPost, "/v1/client", "", map[string]string{}),
+			cookies:  []http.Cookie{{Name: "__client", Value: "client-1"}},
+			bodyJSON: map[string]any{"response": map[string]any{"id": "client_123"}},
+		},
+		{
+			validate: validateFormRequest(http.MethodPost, "/v1/client/sign_ups", "client-1", map[string]string{"email_address": "new@example.com"}),
+			bodyJSON: map[string]any{"response": map[string]any{
+				"id": "su_123", "status": string(SignUpMissingRequirements),
+				"missing_fields": []string{"legal_accepted"}, "unverified_fields": []string{"email_address"},
+			}},
+		},
+	})
+	defer srv.Close()
+
+	client, err := New(srv.URL, "test")
+	if err != nil {
+		t.Fatalf("New() error: %v", err)
+	}
+	_, err = client.StartEmailSignUp(context.Background(), "new@example.com")
+	if err == nil || !strings.Contains(err.Error(), "browser authentication") {
+		t.Fatalf("expected browser fallback, got %v", err)
+	}
+}
+
+func TestStartEmailSignUpRejectsAdditionalUnverifiedFieldsBeforePreparing(t *testing.T) {
+	srv := newScriptedServer(t, []scriptedResponse{
+		{
+			validate: validateFormRequest(http.MethodPost, "/v1/client", "", map[string]string{}),
+			cookies:  []http.Cookie{{Name: "__client", Value: "client-1"}},
+			bodyJSON: map[string]any{"response": map[string]any{"id": "client_123"}},
+		},
+		{
+			validate: validateFormRequest(http.MethodPost, "/v1/client/sign_ups", "client-1", map[string]string{"email_address": "new@example.com"}),
+			bodyJSON: map[string]any{"response": map[string]any{
+				"id": "su_123", "status": string(SignUpMissingRequirements),
+				"unverified_fields": []string{"email_address", "phone_number"},
+			}},
+		},
+	})
+	defer srv.Close()
+
+	client, err := New(srv.URL, "test")
+	if err != nil {
+		t.Fatalf("New() error: %v", err)
+	}
+	_, err = client.StartEmailSignUp(context.Background(), "new@example.com")
+	if err == nil || !IsSignupBrowserFallback(err) {
+		t.Fatalf("expected browser fallback, got %v", err)
+	}
+}
+
+func TestStartEmailSignUpIdentifiesExistingEmailWithoutLeakingDetails(t *testing.T) {
+	srv := newScriptedServer(t, []scriptedResponse{
+		{
+			validate: validateFormRequest(http.MethodPost, "/v1/client", "", map[string]string{}),
+			cookies:  []http.Cookie{{Name: "__client", Value: "client-1"}},
+			bodyJSON: map[string]any{"response": map[string]any{"id": "client_123"}},
+		},
+		{
+			validate: validateFormRequest(http.MethodPost, "/v1/client/sign_ups", "client-1", map[string]string{"email_address": "existing@example.com"}),
+			status:   http.StatusUnprocessableEntity,
+			bodyJSON: map[string]any{"errors": []map[string]any{{"code": "form_identifier_exists", "long_message": "existing@example.com"}}},
+		},
+	})
+	defer srv.Close()
+
+	client, err := New(srv.URL, "test")
+	if err != nil {
+		t.Fatalf("New() error: %v", err)
+	}
+	_, err = client.StartEmailSignUp(context.Background(), "existing@example.com")
+	if !IsSignupEmailExists(err) {
+		t.Fatalf("expected existing-email sentinel, got %v", err)
+	}
+	if strings.Contains(err.Error(), "existing@example.com") || strings.Contains(err.Error(), "form_identifier_exists") {
+		t.Fatalf("error leaked account detail: %v", err)
+	}
+}
+
+func TestStartEmailSignUpMapsCaptchaFailureToBrowserFallback(t *testing.T) {
+	srv := newScriptedServer(t, []scriptedResponse{
+		{
+			validate: validateFormRequest(http.MethodPost, "/v1/client", "", map[string]string{}),
+			cookies:  []http.Cookie{{Name: "__client", Value: "client-1"}},
+			bodyJSON: map[string]any{"response": map[string]any{"id": "client_123"}},
+		},
+		{
+			validate: validateFormRequest(http.MethodPost, "/v1/client/sign_ups", "client-1", map[string]string{"email_address": "new@example.com"}),
+			status:   http.StatusUnprocessableEntity,
+			bodyJSON: map[string]any{"errors": []map[string]any{{"code": "captcha_required"}}},
+		},
+	})
+	defer srv.Close()
+
+	client, err := New(srv.URL, "test")
+	if err != nil {
+		t.Fatalf("New() error: %v", err)
+	}
+	_, err = client.StartEmailSignUp(context.Background(), "new@example.com")
+	if err == nil || !strings.Contains(err.Error(), "browser authentication") {
+		t.Fatalf("expected browser fallback, got %v", err)
+	}
+}
+
+func TestVerifyEmailSignUpMapsIncorrectAndExpiredCodes(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		code string
+	}{
+		{name: "incorrect", code: "form_code_incorrect"},
+		{name: "expired", code: "form_code_expired"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := newScriptedServer(t, []scriptedResponse{
+				{
+					validate: validateFormRequest(http.MethodPost, "/v1/client/sign_ups/su_123/attempt_verification", "client-3", map[string]string{
+						"strategy": "email_code", "code": testIssuedEmailCode(),
+					}),
+					status:   http.StatusUnprocessableEntity,
+					bodyJSON: map[string]any{"errors": []map[string]any{{"code": tt.code, "long_message": "otp secret"}}},
+				},
+			})
+			defer srv.Close()
+			client, err := New(srv.URL, "test")
+			if err != nil {
+				t.Fatalf("New() error: %v", err)
+			}
+			client.nativeClientToken = "client-3"
+			_, err = client.VerifyEmailSignUp(context.Background(), SignUpChallenge{SignUpID: "su_123"}, testIssuedEmailCode())
+			if err == nil || !strings.Contains(strings.ToLower(err.Error()), tt.name) {
+				t.Fatalf("expected %s error, got %v", tt.name, err)
+			}
+			if strings.Contains(err.Error(), "otp secret") || strings.Contains(err.Error(), testIssuedEmailCode()) {
+				t.Fatalf("error leaked code/details: %v", err)
+			}
+		})
+	}
+}
+
+func TestVerifyEmailSignUpMapsExistingEmailAtVerification(t *testing.T) {
+	srv := newScriptedServer(t, []scriptedResponse{
+		{
+			validate: validateFormRequest(http.MethodPost, "/v1/client/sign_ups/su_123/attempt_verification", "client-3", map[string]string{
+				"strategy": "email_code", "code": testIssuedEmailCode(),
+			}),
+			status:   http.StatusUnprocessableEntity,
+			cookies:  []http.Cookie{{Name: "__client", Value: "client-4"}},
+			bodyJSON: map[string]any{"errors": []map[string]any{{"code": "form_identifier_exists"}}},
+		},
+		{
+			validate: validateRequest(http.MethodDelete, "/v1/client", "client-4"),
+			status:   http.StatusNoContent,
+		},
+	})
+	defer srv.Close()
+
+	client, err := New(srv.URL, "test")
+	if err != nil {
+		t.Fatalf("New() error: %v", err)
+	}
+	client.nativeClientToken = "client-3"
+	_, err = client.VerifyEmailSignUp(context.Background(), SignUpChallenge{SignUpID: "su_123"}, testIssuedEmailCode())
+	if !IsSignupEmailExists(err) {
+		t.Fatalf("expected existing-email sentinel, got %v", err)
+	}
+	if strings.Contains(err.Error(), "form_identifier_exists") || strings.Contains(err.Error(), "email@example.com") {
+		t.Fatalf("error leaked provider/account detail: %v", err)
+	}
+	if client.createdSessionID != "" {
+		t.Fatalf("unexpected created session: %q", client.createdSessionID)
+	}
+	if err := client.Cleanup(context.Background()); err != nil {
+		t.Fatalf("Cleanup() error: %v", err)
+	}
+}
+
+func TestVerifyEmailSignUpMapsRequirementFailuresToBrowserFallback(t *testing.T) {
+	for _, code := range []string{"captcha_required", "captcha_invalid", "mfa_required", "legal_acceptance_required"} {
+		t.Run(code, func(t *testing.T) {
+			srv := newScriptedServer(t, []scriptedResponse{
+				{
+					validate: validateFormRequest(http.MethodPost, "/v1/client/sign_ups/su_123/attempt_verification", "client-3", map[string]string{
+						"strategy": "email_code", "code": testIssuedEmailCode(),
+					}),
+					status:   http.StatusUnprocessableEntity,
+					cookies:  []http.Cookie{{Name: "__client", Value: "client-4"}},
+					bodyJSON: map[string]any{"errors": []map[string]any{{"code": code}}},
+				},
+				{
+					validate: validateRequest(http.MethodDelete, "/v1/client", "client-4"),
+					status:   http.StatusNoContent,
+				},
+			})
+			defer srv.Close()
+
+			client, err := New(srv.URL, "test")
+			if err != nil {
+				t.Fatalf("New() error: %v", err)
+			}
+			client.nativeClientToken = "client-3"
+			_, err = client.VerifyEmailSignUp(context.Background(), SignUpChallenge{SignUpID: "su_123"}, testIssuedEmailCode())
+			if !IsSignupBrowserFallback(err) {
+				t.Fatalf("expected browser fallback, got %v", err)
+			}
+			if client.createdSessionID != "" {
+				t.Fatalf("unexpected created session: %q", client.createdSessionID)
+			}
+			if err := client.Cleanup(context.Background()); err != nil {
+				t.Fatalf("Cleanup() error: %v", err)
+			}
+		})
+	}
+}
+
+func TestVerifyEmailSignUpMapsPendingSessionTaskToBrowserFallback(t *testing.T) {
+	srv := newScriptedServer(t, []scriptedResponse{
+		{
+			validate: validateFormRequest(http.MethodPost, "/v1/client/sign_ups/su_123/attempt_verification", "client-3", map[string]string{
+				"strategy": "email_code", "code": testIssuedEmailCode(),
+			}),
+			cookies: []http.Cookie{{Name: "__client", Value: "client-4"}},
+			bodyJSON: map[string]any{"response": map[string]any{
+				"id": "su_123", "status": string(SignUpComplete), "created_session_id": "sess_123",
+			}},
+		},
+		{
+			validate: validateRequest(http.MethodGet, "/v1/client/sessions/sess_123", "client-4"),
+			cookies:  []http.Cookie{{Name: "__client", Value: "client-5"}},
+			bodyJSON: map[string]any{"response": map[string]any{
+				"id": "sess_123", "status": "active", "current_task": map[string]any{"key": "verify_email_address"},
+			}},
+		},
+		{
+			validate: validateRequest(http.MethodPost, "/v1/client/sessions/sess_123/end", "client-5"),
+			status:   http.StatusNoContent,
+		},
+	})
+	defer srv.Close()
+
+	client, err := New(srv.URL, "test")
+	if err != nil {
+		t.Fatalf("New() error: %v", err)
+	}
+	client.nativeClientToken = "client-3"
+	_, err = client.VerifyEmailSignUp(context.Background(), SignUpChallenge{SignUpID: "su_123"}, testIssuedEmailCode())
+	if !IsSignupBrowserFallback(err) {
+		t.Fatalf("expected browser fallback, got %v", err)
+	}
+	if client.createdSessionID != "sess_123" {
+		t.Fatalf("createdSessionID = %q, want tracked session", client.createdSessionID)
+	}
+	if err := client.Cleanup(context.Background()); err != nil {
+		t.Fatalf("Cleanup() error: %v", err)
+	}
+}
+
+func TestVerifyEmailSignUpTracksCreatedSessionBeforeLaterValidationFailure(t *testing.T) {
+	srv := newScriptedServer(t, []scriptedResponse{
+		{
+			validate: validateFormRequest(http.MethodPost, "/v1/client/sign_ups/su_123/attempt_verification", "client-3", map[string]string{
+				"strategy": "email_code", "code": testIssuedEmailCode(),
+			}),
+			cookies: []http.Cookie{{Name: "__client", Value: "client-4"}},
+			bodyJSON: map[string]any{"response": map[string]any{
+				"id": "su_123", "status": string(SignUpComplete), "created_session_id": "sess_123",
+				"unverified_fields": []string{"email_address"},
+			}},
+		},
+		{
+			validate: validateRequest(http.MethodPost, "/v1/client/sessions/sess_123/end", "client-4"),
+			cookies:  []http.Cookie{{Name: "__client", Value: "client-5"}},
+			bodyJSON: map[string]any{"response": map[string]any{"id": "sess_123", "status": "ended"}},
+		},
+	})
+	defer srv.Close()
+
+	client, err := New(srv.URL, "test")
+	if err != nil {
+		t.Fatalf("New() error: %v", err)
+	}
+	client.nativeClientToken = "client-3"
+	if _, err := client.VerifyEmailSignUp(context.Background(), SignUpChallenge{SignUpID: "su_123"}, testIssuedEmailCode()); err == nil {
+		t.Fatal("expected pending requirement error")
+	}
+	if client.createdSessionID != "sess_123" {
+		t.Fatalf("createdSessionID = %q, want tracked session", client.createdSessionID)
+	}
+	if err := client.Cleanup(context.Background()); err != nil {
+		t.Fatalf("Cleanup() error: %v", err)
+	}
+}
+
 func TestCaptureNativeClientTokenAcceptsRawAuthorizationHeader(t *testing.T) {
 	client, err := New("https://clerk.ttsbuddy.com", "test")
 	if err != nil {
@@ -205,6 +590,20 @@ func TestFailureStageUnwrapsWithoutChangingPublicError(t *testing.T) {
 	}
 	if got := FailureStage(errors.New("plain")); got != "" {
 		t.Fatalf("FailureStage(plain) = %q, want empty", got)
+	}
+}
+
+func TestFailureCodeOnlyReturnsAllowlistedRequestCodes(t *testing.T) {
+	known := &RequestError{StatusCode: http.StatusUnprocessableEntity, Code: "form_code_incorrect"}
+	if got := FailureCode(wrapFlowError("attempt_email_code", known)); got != "form_code_incorrect" {
+		t.Fatalf("FailureCode(known) = %q, want form_code_incorrect", got)
+	}
+	unknown := &RequestError{StatusCode: http.StatusUnprocessableEntity, Code: "account_secret_123"}
+	if got := FailureCode(unknown); got != "" {
+		t.Fatalf("FailureCode(unknown) = %q, want empty", got)
+	}
+	if got := FailureCode(errors.New("plain")); got != "" {
+		t.Fatalf("FailureCode(plain) = %q, want empty", got)
 	}
 }
 

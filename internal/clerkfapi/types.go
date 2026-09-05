@@ -3,7 +3,24 @@ package clerkfapi
 import (
 	"errors"
 	"fmt"
+	"strings"
 )
+
+var (
+	errSignupEmailExists     = errors.New("that email is already registered")
+	errSignupBrowserFallback = errors.New("clerk signup requires browser authentication")
+	errPendingSessionTask    = errors.New("pending session task blocks CLI login")
+)
+
+// IsSignupEmailExists reports the safe, fixed error returned when signup is
+// attempted for an existing identifier. It never exposes Clerk response text.
+func IsSignupEmailExists(err error) bool { return errors.Is(err, errSignupEmailExists) }
+
+// IsSignupBrowserFallback reports that terminal signup cannot satisfy the
+// provider's requirements and must continue in a browser.
+func IsSignupBrowserFallback(err error) bool { return errors.Is(err, errSignupBrowserFallback) }
+
+func isPendingSessionTask(err error) bool { return errors.Is(err, errPendingSessionTask) }
 
 type SignInState string
 
@@ -12,9 +29,23 @@ const (
 	SignInComplete         SignInState = "complete"
 )
 
+type SignUpState string
+
+const (
+	SignUpMissingRequirements SignUpState = "missing_requirements"
+	SignUpComplete            SignUpState = "complete"
+)
+
 type Challenge struct {
 	SignInID       string
 	EmailAddressID string
+}
+
+// SignUpChallenge identifies a native email-code signup attempt. The
+// native-client token remains private to Client and is carried across all
+// requests until a SessionProof is created or Cleanup is called.
+type SignUpChallenge struct {
+	SignUpID string
 }
 
 type SessionProof struct {
@@ -45,6 +76,42 @@ func FailureStage(err error) string {
 		return flowErr.stage
 	}
 	return ""
+}
+
+// FailureCode returns an allowlisted Clerk protocol error code for
+// development diagnostics. Unknown codes are intentionally omitted so a
+// provider response can never become an account- or credential-bearing log.
+func FailureCode(err error) string {
+	var requestErr *RequestError
+	if !errors.As(err, &requestErr) {
+		return ""
+	}
+	code := strings.ToLower(strings.TrimSpace(requestErr.Code))
+	if _, ok := allowlistedFailureCodes[code]; !ok {
+		return ""
+	}
+	return code
+}
+
+var allowlistedFailureCodes = map[string]struct{}{
+	"captcha_required":          {},
+	"email_address_exists":      {},
+	"email_exists":              {},
+	"form_code_expired":         {},
+	"form_code_incorrect":       {},
+	"form_code_invalid":         {},
+	"form_identifier_exists":    {},
+	"form_identifier_not_found": {},
+	"form_param_format_invalid": {},
+	"form_param_missing":        {},
+	"identifier_exists":         {},
+	"legal_acceptance_required": {},
+	"legal_accepted_required":   {},
+	"mfa_required":              {},
+	"multi_factor_required":     {},
+	"rate_limit_exceeded":       {},
+	"second_factor_required":    {},
+	"too_many_requests":         {},
 }
 
 // APIVersion is the pinned Clerk Frontend API contract used by this package.
@@ -82,6 +149,25 @@ type signInResponse struct {
 	SupportedFirstFactors []firstFactorResponse `json:"supported_first_factors"`
 	CurrentTask           *sessionTaskResponse  `json:"current_task"`
 	Tasks                 []sessionTaskResponse `json:"tasks"`
+}
+
+type signUpResponse struct {
+	ID               string              `json:"id"`
+	Status           SignUpState         `json:"status"`
+	RequiredFields   []string            `json:"required_fields"`
+	MissingFields    []string            `json:"missing_fields"`
+	UnverifiedFields []string            `json:"unverified_fields"`
+	Verifications    signUpVerifications `json:"verifications"`
+	CreatedSessionID string              `json:"created_session_id"`
+}
+
+type signUpVerifications struct {
+	EmailAddress *signUpVerification `json:"email_address"`
+}
+
+type signUpVerification struct {
+	NextAction          string   `json:"next_action"`
+	SupportedStrategies []string `json:"supported_strategies"`
 }
 
 type firstFactorResponse struct {
