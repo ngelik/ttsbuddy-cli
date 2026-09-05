@@ -8,6 +8,14 @@ Required inputs:
 - an approved development mailbox that can receive Clerk email OTP messages; default login mode uses an already-existing account, while `--signup` requires a genuinely new identity and may create one
 - an interactive terminal for entering the email address and hidden OTP
 
+Strict enumeration protection can accept an existing address far enough to show
+a generic signup verification prompt or provider notification instead of
+returning an immediate existing-email error. Treat that prompt as non-evidence
+of a new identity: do not enter a code for an existing address, and use
+`ttsbuddy auth email` for ordinary sign-in. If Clerk does disclose an
+existing-email error at the verification stage, the CLI reports the same fixed
+ordinary-login route without exposing the provider code or account details.
+
 If `TTSBUDDY_CLERK_FRONTEND_API_URL` is absent, the probe exits with a development-only hard gate report. That record keeps the live gate closed and prints only sanitized booleans plus the missing-variable reason. Protocol failures are reported as the generic `probe failed` outcome so an unknown email cannot be distinguished from an eligible one by CLI output.
 
 What the probe records:

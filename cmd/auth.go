@@ -116,7 +116,8 @@ func runAuthLogin(cmd *cobra.Command, _ []string) error {
 	var signUpChallenge *clerkfapi.SignUpChallenge
 	var signInChallenge *clerkfapi.Challenge
 	if signup {
-		fmt.Fprintln(os.Stderr, "Check your email for a verification code.")
+		fmt.Fprintln(os.Stderr, "If this is a new eligible address, check your email for a verification code.")
+		fmt.Fprintln(os.Stderr, "Already registered? Run: ttsbuddy auth email")
 		started, startErr := clerk.StartEmailSignUp(ctx, email)
 		if startErr != nil {
 			if clerkfapi.IsSignupEmailExists(startErr) {
@@ -150,6 +151,9 @@ func runAuthLogin(cmd *cobra.Command, _ []string) error {
 		proof, err = clerk.VerifyEmailCode(ctx, *signInChallenge, code)
 	}
 	if err != nil {
+		if signup && clerkfapi.IsSignupEmailExists(err) {
+			return &exitError{code: 1, msg: "An account already exists for this email. Run: ttsbuddy auth email"}
+		}
 		if signup && clerkfapi.IsSignupBrowserFallback(err) {
 			return &exitError{code: 1, msg: "CLI signup requires browser authentication. Run: ttsbuddy auth browser"}
 		}

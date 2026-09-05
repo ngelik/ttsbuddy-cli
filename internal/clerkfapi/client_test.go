@@ -390,6 +390,43 @@ func TestVerifyEmailSignUpMapsIncorrectAndExpiredCodes(t *testing.T) {
 	}
 }
 
+func TestVerifyEmailSignUpMapsExistingEmailAtVerification(t *testing.T) {
+	srv := newScriptedServer(t, []scriptedResponse{
+		{
+			validate: validateFormRequest(http.MethodPost, "/v1/client/sign_ups/su_123/attempt_verification", "client-3", map[string]string{
+				"strategy": "email_code", "code": testIssuedEmailCode(),
+			}),
+			status:   http.StatusUnprocessableEntity,
+			cookies:  []http.Cookie{{Name: "__client", Value: "client-4"}},
+			bodyJSON: map[string]any{"errors": []map[string]any{{"code": "form_identifier_exists"}}},
+		},
+		{
+			validate: validateRequest(http.MethodDelete, "/v1/client", "client-4"),
+			status:   http.StatusNoContent,
+		},
+	})
+	defer srv.Close()
+
+	client, err := New(srv.URL, "test")
+	if err != nil {
+		t.Fatalf("New() error: %v", err)
+	}
+	client.nativeClientToken = "client-3"
+	_, err = client.VerifyEmailSignUp(context.Background(), SignUpChallenge{SignUpID: "su_123"}, testIssuedEmailCode())
+	if !IsSignupEmailExists(err) {
+		t.Fatalf("expected existing-email sentinel, got %v", err)
+	}
+	if strings.Contains(err.Error(), "form_identifier_exists") || strings.Contains(err.Error(), "email@example.com") {
+		t.Fatalf("error leaked provider/account detail: %v", err)
+	}
+	if client.createdSessionID != "" {
+		t.Fatalf("unexpected created session: %q", client.createdSessionID)
+	}
+	if err := client.Cleanup(context.Background()); err != nil {
+		t.Fatalf("Cleanup() error: %v", err)
+	}
+}
+
 func TestVerifyEmailSignUpMapsRequirementFailuresToBrowserFallback(t *testing.T) {
 	for _, code := range []string{"captcha_required", "captcha_invalid", "mfa_required", "legal_acceptance_required"} {
 		t.Run(code, func(t *testing.T) {

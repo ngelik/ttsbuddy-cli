@@ -330,6 +330,9 @@ func (c *Client) attemptSignUpVerification(ctx context.Context, challenge SignUp
 	if err != nil {
 		var requestErr *RequestError
 		if errors.As(err, &requestErr) {
+			if isSignupEmailExists(requestErr) {
+				return nil, errSignupEmailExists
+			}
 			if isSignupBrowserFallback(requestErr) {
 				return nil, errSignupBrowserFallback
 			}

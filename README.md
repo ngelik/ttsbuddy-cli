@@ -70,6 +70,13 @@ verified session to TTS Buddy. Each method stores the same seven-day `ttsc_`
 CLI session. A new login replaces the prior CLI session. There is no refresh;
 login again after expiry.
 
+The signup prompt is intentionally conditional: an address that is already
+registered may still reach Clerk's verification prompt under strict
+enumeration protection, or may be rejected later by the provider. That prompt
+does not prove a new account was created. For an existing account, use
+`ttsbuddy auth email`; the CLI never turns a signup attempt into an automatic
+login.
+
 ```bash
 # 1. Set your API key (create one in Dashboard -> Settings)
 ttsbuddy config set key ttsb_your_key_here
@@ -100,6 +107,9 @@ email` when a browser is unavailable. Use `ttsbuddy auth email --signup` to
 create a new account by entering the verification code from email. If the
 signup needs legal acceptance, CAPTCHA, MFA, or another field, use browser
 authentication instead; the CLI never fills those requirements implicitly.
+If the address is already registered, run `ttsbuddy auth email`; provider
+enumeration protection can defer that determination until verification, so a
+signup verification prompt is not evidence of a new identity.
 Use a permanent `ttsb_` key for CI and unattended automation. Login/logout
 store the CLI session separately and never overwrite `api_key`. Effective
 precedence is `--key` > `TTSBUDDY_API_KEY` > active CLI session > stored

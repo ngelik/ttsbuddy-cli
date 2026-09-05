@@ -108,7 +108,7 @@ Signup-specific negatives:
 
 | # | Case | Expected |
 |---|------|----------|
-| AUTH.21 | Existing email with `tb auth email --signup` | Directs the user to ordinary `auth email`; no automatic login attempt or second verification email |
+| AUTH.21 | Existing email with `tb auth email --signup` | Always offers ordinary `auth email`; if the provider discloses an existing-email error at start or verification, the CLI gives the fixed login route; strict enumeration may instead show a generic verification prompt/notification, which is not proof of a new account; no automatic login attempt or second verification code |
 | AUTH.22 | Signup requiring legal acceptance, CAPTCHA, MFA, or another missing field | Browser-auth fallback; no proof or CLI credential |
 | AUTH.23 | Incorrect/expired signup code or failed backend exchange | No local credential write; temporary Clerk session is cleaned up; an already-created Clerk user is retained for later ordinary login |
 
