@@ -409,7 +409,7 @@ func ActiveCLISession(cfg *Config, now time.Time) (*StoredCLISession, string) {
 		return nil, "stored CLI session expiry is malformed; ignoring it"
 	}
 	if !expires.After(now) {
-		return nil, "stored CLI session has expired; run: ttsbuddy auth browser"
+		return nil, "stored CLI session has expired; run either: ttsbuddy auth email or ttsbuddy auth browser"
 	}
 	copy := *cfg.CLISession
 	return &copy, ""

@@ -127,7 +127,7 @@ func runAuthLogin(cmd *cobra.Command, _ []string) error {
 				return &exitError{code: 1, msg: signupEmailAddressBlockedMessage}
 			}
 			if clerkfapi.IsSignupEmailExists(startErr) {
-				return &exitError{code: 1, msg: "An account already exists for this email. Run: ttsbuddy auth email"}
+				return &exitError{code: 1, msg: "An account already exists for this email. " + authMethodSuggestion}
 			}
 			if clerkfapi.IsSignupBrowserFallback(startErr) {
 				return &exitError{code: 1, msg: "CLI signup requires browser authentication. Run: ttsbuddy auth browser"}
@@ -135,7 +135,7 @@ func runAuthLogin(cmd *cobra.Command, _ []string) error {
 			return startErr
 		}
 		fmt.Fprintln(os.Stderr, "If this is a new eligible address, check your email for a verification code.")
-		fmt.Fprintln(os.Stderr, "Already registered? Run: ttsbuddy auth email")
+		fmt.Fprintln(os.Stderr, "Already registered? "+authMethodSuggestion)
 		signUpChallenge = started
 	} else {
 		started, startErr := clerk.StartEmailCode(ctx, email)
@@ -166,7 +166,7 @@ func runAuthLogin(cmd *cobra.Command, _ []string) error {
 			return &exitError{code: 1, msg: signupEmailAddressBlockedMessage}
 		}
 		if signup && clerkfapi.IsSignupEmailExists(err) {
-			return &exitError{code: 1, msg: "An account already exists for this email. Run: ttsbuddy auth email"}
+			return &exitError{code: 1, msg: "An account already exists for this email. " + authMethodSuggestion}
 		}
 		if signup && clerkfapi.IsSignupBrowserFallback(err) {
 			return &exitError{code: 1, msg: "CLI signup requires browser authentication. Run: ttsbuddy auth browser"}
@@ -290,7 +290,7 @@ func runAuthStatus(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	if session == nil {
-		return &exitError{code: 1, msg: "Not signed in. Run: ttsbuddy auth browser"}
+		return &exitError{code: 1, msg: "Not signed in. " + authMethodSuggestion}
 	}
 	if err := validateAuthURL(resolvedCfg); err != nil {
 		return err

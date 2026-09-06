@@ -18,7 +18,9 @@ var (
 	Date    = "unknown"
 )
 
-const missingAPIKeyMessage = "no credential configured. Run: ttsbuddy auth browser. For CI or automation, create a permanent key at https://ttsbuddy.com/dashboard and run: ttsbuddy config set key <your-key>"
+const authMethodSuggestion = "Run either: ttsbuddy auth email or ttsbuddy auth browser"
+
+const missingAPIKeyMessage = "no credential configured. " + authMethodSuggestion + ". For CI or automation, create a permanent key at https://ttsbuddy.com/dashboard and run: ttsbuddy config set key <your-key>"
 
 // Global flag values.
 var (
