@@ -74,8 +74,11 @@ func TestAuthCommandsRegisteredAndSignedOutLifecycle(t *testing.T) {
 		}
 	}
 	status := runCLI(t, []string{"HOME=" + home}, "auth", "status")
-	if status.ExitCode != 1 || !strings.Contains(status.Stderr, "Not signed in") {
+	if status.ExitCode != 1 || !strings.Contains(status.Stderr, "Not signed in") || !strings.Contains(status.Stderr, "ttsbuddy auth email") || !strings.Contains(status.Stderr, "ttsbuddy auth browser") {
 		t.Fatalf("status=%#v", status)
+	}
+	if strings.Contains(status.Stderr, "auth email | auth browser") {
+		t.Fatalf("status emitted a shell-pipe suggestion: %s", status.Stderr)
 	}
 	logout := runCLI(t, []string{"HOME=" + home}, "--json", "auth", "logout")
 	if logout.ExitCode != 0 || strings.TrimSpace(logout.Stdout) != `{"status":"signed_out","success":true}` {
@@ -176,7 +179,7 @@ func TestAuthEmailSignupExchangesAndStoresCLIOnly(t *testing.T) {
 	if !strings.Contains(result.Stderr, "If this is a new eligible address, check your email for a verification code.") {
 		t.Fatalf("signup prompt was not conditional: %s", result.Stderr)
 	}
-	if !strings.Contains(result.Stderr, "Already registered? Run: ttsbuddy auth email") {
+	if !strings.Contains(result.Stderr, "Already registered? Run either: ttsbuddy auth email or ttsbuddy auth browser") {
 		t.Fatalf("signup prompt omitted ordinary-login guidance: %s", result.Stderr)
 	}
 	body, err := os.ReadFile(filepath.Join(home, ".ttsbuddy", "config.json"))
@@ -378,7 +381,7 @@ func TestAuthEmailSignupBlockedAddressGuidesToDifferentEmailBeforeCodePrompt(t *
 			}
 			for _, prompt := range []string{
 				"If this is a new eligible address, check your email for a verification code.",
-				"Already registered? Run: ttsbuddy auth email",
+				"Already registered? Run either: ttsbuddy auth email or ttsbuddy auth browser",
 				"Code:",
 			} {
 				if strings.Contains(result.Stderr, prompt) {
@@ -662,7 +665,7 @@ func TestAuthEmailSignupVerificationExistingEmailGuidesToLogin(t *testing.T) {
 		"TTSBUDDY_CLI_AUTH_URL=" + backendServer + "/v1/cli-auth",
 		"TTSBUDDY_ALLOW_CUSTOM_API_URL=true",
 	}, "auth", "email", "--signup")
-	if result.ExitCode != 1 || !strings.Contains(result.Stderr, "An account already exists for this email. Run: ttsbuddy auth email") {
+	if result.ExitCode != 1 || !strings.Contains(result.Stderr, "An account already exists for this email. Run either: ttsbuddy auth email or ttsbuddy auth browser") {
 		t.Fatalf("result=%#v", result)
 	}
 	if got := step.Load(); got != 5 {

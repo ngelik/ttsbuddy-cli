@@ -84,9 +84,9 @@ non-disposable email address and rerun `ttsbuddy auth email --signup`.
 The signup prompt is intentionally conditional: an address that is already
 registered may still reach Clerk's verification prompt under strict
 enumeration protection, or may be rejected later by the provider. That prompt
-does not prove a new account was created. For an existing account, use
-`ttsbuddy auth email`; the CLI never turns a signup attempt into an automatic
-login.
+does not prove a new account was created. For an existing account, use either
+`ttsbuddy auth email` or `ttsbuddy auth browser`; the CLI never turns a signup
+attempt into an automatic login.
 
 ```bash
 # 1. Set your API key (create one in Dashboard -> Settings)
@@ -118,13 +118,18 @@ email` when a browser is unavailable. Use `ttsbuddy auth email --signup` to
 create a new account by entering the verification code from email. If the
 signup needs legal acceptance, CAPTCHA, MFA, or another field, use browser
 authentication instead; the CLI never fills those requirements implicitly.
-If the address is already registered, run `ttsbuddy auth email`; provider
+If the address is already registered, run either `ttsbuddy auth email` or
+`ttsbuddy auth browser`; provider
 enumeration protection can defer that determination until verification, so a
 signup verification prompt is not evidence of a new identity.
 Use a permanent `ttsb_` key for CI and unattended automation. Login/logout
 store the CLI session separately and never overwrite `api_key`. Effective
 precedence is `--key` > `TTSBUDDY_API_KEY` > active CLI session > stored
 permanent key.
+
+In v0.11.3 and newer, generic signed-out, missing-credential, invalid-credential,
+and expired-session messages point to both interactive methods: `ttsbuddy auth
+email` or `ttsbuddy auth browser`.
 
 `ttsbuddy auth logout` revokes the stored session before clearing it. A network
 or server failure retains the local session so the command can be retried.

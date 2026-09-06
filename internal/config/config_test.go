@@ -187,6 +187,14 @@ func TestActiveCLISessionValidation(t *testing.T) {
 			if session != nil || warning == "" {
 				t.Fatalf("session=%v warning=%q", session, warning)
 			}
+			if name == "expired" {
+				if !strings.Contains(warning, "ttsbuddy auth email") || !strings.Contains(warning, "ttsbuddy auth browser") {
+					t.Fatalf("expired warning=%q, want both email and browser login methods", warning)
+				}
+				if strings.Contains(warning, "auth email | auth browser") {
+					t.Fatalf("expired warning emitted a shell-pipe suggestion: %q", warning)
+				}
+			}
 		})
 	}
 	session, warning := ActiveCLISession(&Config{CLISession: &StoredCLISession{Credential: valid, ExpiresAt: now.Add(time.Hour).Format(time.RFC3339)}}, now)
