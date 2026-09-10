@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"regexp"
 	"time"
@@ -301,6 +302,9 @@ func runAuthStatus(cmd *cobra.Command, _ []string) error {
 	}
 	response, status, err := client.Status(cmd.Context())
 	if err != nil {
+		if status == http.StatusUnauthorized {
+			return &exitError{code: 1, msg: "CLI session is no longer valid. " + authMethodSuggestion}
+		}
 		return &exitError{code: 1, msg: fmt.Sprintf("CLI session status failed (status %d)", status)}
 	}
 	if response == nil || !response.Success || response.Credential == nil || response.Entitlement == nil {

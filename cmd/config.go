@@ -10,6 +10,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+const validConfigKeysMessage = "Valid keys: key, api_key, voice, language, default_language, speed, timeout, output_dir, api_url, cli_auth_url, tts_api_base_url, allow_custom_api_url"
+
 var configCmd = &cobra.Command{
 	Use:   "config",
 	Short: "Show or set configuration",
@@ -20,7 +22,7 @@ Usage:
   ttsbuddy config get <key>          Show a single value
   ttsbuddy config set <key> <value>  Set a value
 
-Valid keys: key, voice, language, speed, timeout, output_dir, api_url, cli_auth_url, tts_api_base_url, allow_custom_api_url`,
+` + validConfigKeysMessage,
 	Args: noArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Show resolved values (file + env + defaults) for consistency
@@ -59,7 +61,7 @@ var configGetCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		key := args[0]
 		if !config.IsValidKey(key) {
-			return &exitError{code: 2, msg: fmt.Sprintf("unknown config key: %s\nValid keys: key, voice, language, speed, timeout, output_dir, api_url, cli_auth_url, tts_api_base_url, allow_custom_api_url", key)}
+			return &exitError{code: 2, msg: fmt.Sprintf("unknown config key: %s\n%s", key, validConfigKeysMessage)}
 		}
 		resolved := resolvedCfg
 		if resolved == nil {
@@ -79,7 +81,7 @@ var configSetCmd = &cobra.Command{
 		key, value := args[0], args[1]
 
 		if !config.IsValidKey(key) {
-			return &exitError{code: 2, msg: fmt.Sprintf("unknown config key: %s\nValid keys: key, voice, language, speed, timeout, output_dir, api_url, cli_auth_url, tts_api_base_url, allow_custom_api_url", key)}
+			return &exitError{code: 2, msg: fmt.Sprintf("unknown config key: %s\n%s", key, validConfigKeysMessage)}
 		}
 
 		if (key == "key" || key == "api_key") && !strings.HasPrefix(value, "ttsb_") {
