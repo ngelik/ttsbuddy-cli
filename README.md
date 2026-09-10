@@ -70,6 +70,8 @@ verified session to TTS Buddy. Each method stores the same seven-day `ttsc_`
 CLI session. A new login replaces the prior CLI session. There is no refresh;
 login again after expiry.
 
+`ttsbuddy auth login` is an alias for `ttsbuddy auth email`.
+
 On v0.11.0, `ttsbuddy auth email` may show `Clerk request returned status 422`
 immediately after the email prompt, before a code prompt, when Clerk reports
 that no account was found for the identifier. Check the address, or run
@@ -279,7 +281,7 @@ ttsbuddy config set timeout 5m
 ttsbuddy config set allow_custom_api_url true
 ```
 
-Valid keys: `key`, `voice`, `language`, `speed`, `timeout`, `output_dir`, `api_url`, `cli_auth_url`, `tts_api_base_url`, `allow_custom_api_url`
+Valid keys: `key`, `api_key`, `voice`, `language`, `default_language`, `speed`, `timeout`, `output_dir`, `api_url`, `cli_auth_url`, `tts_api_base_url`, `allow_custom_api_url`. `api_key` aliases `key`, and `default_language` aliases `language`.
 
 ### version
 
@@ -351,7 +353,7 @@ These work on any command:
 | Default `speak` | nothing (file saved to disk) | spinner, status, "Saved to ...", final stats |
 | `--json` | JSON response | nothing |
 | `-o -` | raw MP3 bytes | spinner (if TTY) |
-| `--quiet` | nothing | nothing |
+| `--quiet` | nothing | suppresses progress; data output such as a `--no-download` audio URL remains |
 | `--no-download` | nothing | audio URL and final stats |
 
 `--json` and `-o -` are mutually exclusive (both write to stdout) — combining them exits with code 2.
@@ -388,8 +390,8 @@ Generation speed: 39 chars/sec
 ## Pipe Examples
 
 ```bash
-# Convert and play immediately (macOS)
-ttsbuddy speak "Hello" -o - | afplay -
+# Save and play immediately (macOS)
+ttsbuddy speak "Hello" -o hello.mp3 && afplay hello.mp3
 
 # Batch convert markdown files
 for f in docs/*.md; do
@@ -416,7 +418,7 @@ For full API details, see the [API Reference](https://ttsbuddy.com/docs/develope
 
 | Error | Fix |
 |-------|-----|
-| "Invalid API key" | Run `ttsbuddy config set key <your-key>` |
+| "Invalid API key or CLI session" | Run either `ttsbuddy auth email` or `ttsbuddy auth browser`; for automation, set a permanent key with `ttsbuddy config set key <your-key>` |
 | "Subscription inactive" | Reactivate at [ttsbuddy.com/billing](https://ttsbuddy.com/billing) |
 | "Rate limited" | Wait and retry (automatic with backoff) |
 | "Monthly minutes exhausted" | Upgrade plan or wait for reset |

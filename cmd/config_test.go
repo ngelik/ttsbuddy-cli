@@ -22,6 +22,13 @@ func TestConfigShowResolved(t *testing.T) {
 	assertNotContains(t, r.Stdout, strings.Repeat("b", 48), "stdout should not contain secret")
 }
 
+func TestConfigHelpListsAcceptedAliases(t *testing.T) {
+	result := runCLI(t, []string{"HOME=" + t.TempDir()}, "config", "--help")
+	assertExitCode(t, result, 0)
+	assertContains(t, result.Stdout, "api_key", "stdout")
+	assertContains(t, result.Stdout, "default_language", "stdout")
+}
+
 func TestConfigJSON(t *testing.T) {
 	home := t.TempDir()
 	r := runCLI(t, envForTest(home, "", "ttsb_test_abc"), "config", "--json")

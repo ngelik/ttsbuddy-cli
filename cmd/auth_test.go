@@ -62,6 +62,29 @@ func TestAuthStatusChecksRemoteEvenWhenLocalExpiryPassed(t *testing.T) {
 	}
 }
 
+func TestAuthStatusUnauthorizedGuidesToLoginMethods(t *testing.T) {
+	server := startMockAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_ = json.NewEncoder(w).Encode(map[string]any{"success": false})
+	}))
+	home := t.TempDir()
+	writeAuthConfig(t, home)
+	result := runCLI(t, []string{
+		"HOME=" + home,
+		"TTSBUDDY_CLI_AUTH_URL=" + server + "/v1/cli-auth",
+		"TTSBUDDY_ALLOW_CUSTOM_API_URL=true",
+	}, "auth", "status")
+	if result.ExitCode != 1 || !strings.Contains(result.Stderr, "CLI session is no longer valid") {
+		t.Fatalf("result=%#v", result)
+	}
+	if !strings.Contains(result.Stderr, "ttsbuddy auth email") || !strings.Contains(result.Stderr, "ttsbuddy auth browser") {
+		t.Fatalf("missing login methods: %s", result.Stderr)
+	}
+	if strings.Contains(result.Stderr, "auth email | auth browser") {
+		t.Fatalf("status emitted a shell-pipe suggestion: %s", result.Stderr)
+	}
+}
+
 func TestAuthCommandsRegisteredAndSignedOutLifecycle(t *testing.T) {
 	home := t.TempDir()
 	for _, args := range [][]string{{"auth", "--help"}, {"auth", "login", "extra"}, {"auth", "email", "extra"}, {"auth", "browser", "extra"}, {"auth", "status", "extra"}} {

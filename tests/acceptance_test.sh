@@ -432,7 +432,7 @@ echo "📋 P. POST Tests (${POST_DELAY}s pacing, 5 tests)"
 echo "  ⚠️  Estimated ~$((POST_DELAY * 5))s (~$((POST_DELAY * 5 / 60))min)"
 
 # P.1: file save + --quiet (covers: file output, --quiet suppresses stderr)
-post_test "P.1 speak → file (quiet)" 0 tb speak "Hi" -o "$TB_OUT/t1.mp3" --quiet
+post_test "P.1 speak → file (quiet)" 0 tb speak "Hi" -o "$TB_OUT/t1.mp3" --quiet --idempotency-key "accept-test-${ACCEPTANCE_RUN_ID}-p1"
 file_exists=false
 stderr_empty=false
 [ -s "$TB_OUT/t1.mp3" ] && file_exists=true
@@ -444,7 +444,7 @@ else
 fi
 
 # P.2: JSON output (covers: --json mode, captures job_id for status tests)
-post_test "P.2 speak --json" 0 tb speak "Ok" --json
+post_test "P.2 speak --json" 0 tb speak "Ok" --json --idempotency-key "accept-test-${ACCEPTANCE_RUN_ID}-p2"
 cp "$TB_OUT/_stdout" "$TB_OUT/t2.json"
 if jq -e '.status' "$TB_OUT/t2.json" >/dev/null 2>&1; then
     JOB_ID=$(jq -r '.job_id' "$TB_OUT/t2.json")
@@ -481,7 +481,7 @@ else
 fi
 
 # P.4: markdown file (covers: -f flag, .md preprocessing)
-post_test "P.4 speak -f .md" 0 tb speak -f "$TB_OUT/test.md" -o "$TB_OUT/t4.mp3"
+post_test "P.4 speak -f .md" 0 tb speak -f "$TB_OUT/test.md" -o "$TB_OUT/t4.mp3" --idempotency-key "accept-test-${ACCEPTANCE_RUN_ID}-p4"
 if [ -s "$TB_OUT/t4.mp3" ]; then pass "P.4 md file exists"; else fail "P.4 md file exists" "missing"; fi
 
 # P.5: stdout + custom voice/speed (covers: -o -, -v, -s, --idempotency-key)
