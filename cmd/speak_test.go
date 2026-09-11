@@ -341,6 +341,53 @@ func TestSpeakJSONPreservesProgressAndStats(t *testing.T) {
 	}
 }
 
+func TestSpeakOutputJSONDownloadsAndAddsLocalMetadata(t *testing.T) {
+	const audio = "speak-json-download-bytes"
+	audioSrv := startMockAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "audio/mpeg")
+		_, _ = w.Write([]byte(audio))
+	}))
+	apiSrv := startMockAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"success":   true,
+			"status":    "completed",
+			"job_id":    "speak-json-download-job",
+			"audio_url": audioSrv + "/audio.mp3",
+			"audio": map[string]any{
+				"format":           "mp3",
+				"voice":            "st_m1",
+				"speed":            1.2,
+				"duration_seconds": 4.25,
+				"duration_source":  "estimated",
+			},
+			"stats": map[string]any{"speech_length_seconds": 4.25, "duration_source": "estimated"},
+		})
+	}))
+	home := t.TempDir()
+	out := filepath.Join(home, "speak.mp3")
+	r := runCLI(t, envForTest(home, apiSrv, "ttsb_test_key"), "speak", "hello", "--output", out, "--json")
+	assertExitCode(t, r, 0)
+	assertValidJSON(t, r.Stdout)
+	if r.Stderr != "" {
+		t.Fatalf("JSON output should not write stderr: %q", r.Stderr)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(r.Stdout), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["status"] != "completed" || payload["audio_url"] == nil || payload["download"] == nil {
+		t.Fatalf("unexpected combined JSON: %#v", payload)
+	}
+	download := payload["download"].(map[string]any)
+	absOut, _ := filepath.Abs(out)
+	if download["path"] != absOut || int(download["bytes"].(float64)) != len(audio) {
+		t.Fatalf("download metadata=%#v", download)
+	}
+	if got, err := os.ReadFile(out); err != nil || string(got) != audio {
+		t.Fatalf("saved bytes=%q err=%v", got, err)
+	}
+}
+
 func TestSpeakNoDownload(t *testing.T) {
 	audioSrv := startMockAPI(t, mockAudioHandler())
 	apiSrv := startMockAPI(t, mockCompletedHandler(audioSrv))
@@ -349,6 +396,22 @@ func TestSpeakNoDownload(t *testing.T) {
 	r := runCLI(t, envForTest(home, apiSrv, "ttsb_test_key"), "speak", "hello", "--no-download")
 	assertExitCode(t, r, 0)
 	assertContains(t, r.Stderr, audioSrv, "stderr should contain audio URL")
+}
+
+func TestSpeakRejectsNoDownloadWithOutputBeforeSubmission(t *testing.T) {
+	var posts atomic.Int32
+	apiSrv := startMockAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			posts.Add(1)
+		}
+	}))
+	home := t.TempDir()
+	r := runCLI(t, envForTest(home, apiSrv, "ttsb_test_key"), "speak", "hello", "--no-download", "--output", filepath.Join(home, "audio.mp3"))
+	assertExitCode(t, r, 2)
+	assertContains(t, r.Stderr, "mutually exclusive", "stderr")
+	if posts.Load() != 0 {
+		t.Fatal("conflicting flags reached synthesis")
+	}
 }
 
 func TestSpeakNoDownloadShowsFriendlyStats(t *testing.T) {

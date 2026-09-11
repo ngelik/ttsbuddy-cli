@@ -59,7 +59,9 @@ type Progress struct {
 // AudioInfo contains audio file metadata. All fields except Format may be absent.
 type AudioInfo struct {
 	DurationSeconds *float64 `json:"duration_seconds,omitempty"`
+	DurationSource  string   `json:"duration_source,omitempty"`
 	FileSizeBytes   *int64   `json:"file_size_bytes,omitempty"`
+	FileSizeSource  string   `json:"file_size_source,omitempty"`
 	Format          string   `json:"format"`
 	Voice           string   `json:"voice"`
 	Speed           float64  `json:"speed"`
@@ -70,7 +72,9 @@ type AudioInfo struct {
 type Stats struct {
 	CharactersCount          *int     `json:"characters_count,omitempty"`
 	SpeechLengthSeconds      *float64 `json:"speech_length_seconds,omitempty"`
+	DurationSource           string   `json:"duration_source,omitempty"`
 	FileSizeBytes            *int64   `json:"file_size_bytes,omitempty"`
+	FileSizeSource           string   `json:"file_size_source,omitempty"`
 	GenerationSeconds        *float64 `json:"generation_seconds,omitempty"`
 	GenerationCharsPerSecond *float64 `json:"generation_chars_per_second,omitempty"`
 }
@@ -134,18 +138,29 @@ type CLIError struct {
 // recovery fields are additive so existing consumers can continue reading
 // error.code and error.message.
 type CLIErrorDetail struct {
-	Code                string `json:"code"`
-	Message             string `json:"message"`
-	ServerCode          string `json:"server_code,omitempty"`
-	Reason              string `json:"reason,omitempty"`
-	Retryable           bool   `json:"retryable"`
-	RetryAfterSeconds   int    `json:"retry_after_seconds,omitempty"`
-	NextAction          string `json:"next_action,omitempty"`
-	HumanActionRequired bool   `json:"human_action_required,omitempty"`
+	Code                string     `json:"code"`
+	Message             string     `json:"message"`
+	ServerCode          string     `json:"server_code,omitempty"`
+	Reason              string     `json:"reason,omitempty"`
+	Retryable           bool       `json:"retryable"`
+	RetryAfterSeconds   int        `json:"retry_after_seconds,omitempty"`
+	NextAction          string     `json:"next_action,omitempty"`
+	Action              *CLIAction `json:"action,omitempty"`
+	HumanActionRequired bool       `json:"human_action_required,omitempty"`
 	// IdempotencyKey is returned only when a submission outcome is ambiguous,
 	// allowing an operator to retry the identical request without guessing a
 	// new identity. It is never a credential or a copy of input text.
 	IdempotencyKey string `json:"idempotency_key,omitempty"`
+}
+
+// CLIAction is an optional machine-readable recovery action. Argv is only
+// populated when the CLI can construct a complete, safe command from known
+// state; callers must provide any values listed in RequiredInputs.
+type CLIAction struct {
+	Type           string   `json:"type"`
+	Argv           []string `json:"argv,omitempty"`
+	RequiredInputs []string `json:"required_inputs,omitempty"`
+	URL            string   `json:"url,omitempty"`
 }
 
 // NewCLIError creates a CLIError for local failures.

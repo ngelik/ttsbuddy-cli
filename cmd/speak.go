@@ -52,6 +52,9 @@ Input can be provided as:
 		if flagJSON && speakOutput == "-" {
 			return &exitError{code: 2, msg: "--json and -o - are mutually exclusive (both write to stdout)"}
 		}
+		if speakNoDownload && speakOutput != "" {
+			return &exitError{code: 2, msg: "--no-download and --output are mutually exclusive"}
+		}
 		return nil
 	},
 
@@ -197,6 +200,7 @@ func runSpeak(cmd *cobra.Command, args []string) error {
 			}
 			mapped := structuredExitError(130, "interrupted while submitting the request", "CLI_ERROR", "REQUEST_INTERRUPTED", "Retry the same request with --idempotency-key <same-value>.", true, 0)
 			mapped.idempotencyKey = retryResult.EffectiveKey
+			mapped.action = submissionRetryAction()
 			return mapped
 		}
 		return classifyAPIErrorWithKey(err, status, retryResult.EffectiveKey)
@@ -229,14 +233,14 @@ func handleSpeakResponse(ctx context.Context, client *api.Client, req api.SpeakR
 		renderTranslationMeta(resp)
 		return pollUntilComplete(ctx, client, resp, resolved, func(done *api.TTSResponse) error {
 			return handleCompletedWithFreshRetry(ctx, client, req, done, resolved, allowFreshDownloadRetry)
-		})
+		}, statusAction)
 
 	default:
 		return &exitError{code: 1, msg: fmt.Sprintf("unexpected response status: %s", resp.Status)}
 	}
 }
 
-func pollUntilComplete(ctx context.Context, client *api.Client, initial *api.TTSResponse, resolved *config.ResolvedConfig, onCompleted func(*api.TTSResponse) error) error {
+func pollUntilComplete(ctx context.Context, client *api.Client, initial *api.TTSResponse, resolved *config.ResolvedConfig, onCompleted func(*api.TTSResponse) error, recoveryAction func(string) *api.CLIAction) error {
 	jobID := initial.JobID
 	spin := display.New()
 	if !flagJSON && !flagQuiet {
@@ -251,7 +255,9 @@ func pollUntilComplete(ctx context.Context, client *api.Client, initial *api.TTS
 	// Parse timeout — fail fast on invalid values instead of silently defaulting
 	timeout, err := time.ParseDuration(resolved.PollTimeout)
 	if err != nil {
-		return structuredExitError(2, fmt.Sprintf("invalid timeout value: %s (use Go duration syntax like 30s, 2m, 10m)", resolved.PollTimeout), "CLI_ERROR", "INVALID_TIMEOUT", "Use Go duration syntax such as 30s, 2m, or 10m.", false, 0)
+		invalid := structuredExitError(2, fmt.Sprintf("invalid timeout value: %s (use Go duration syntax like 30s, 2m, 10m)", resolved.PollTimeout), "CLI_ERROR", "INVALID_TIMEOUT", "Use Go duration syntax such as 30s, 2m, or 10m.", false, 0)
+		invalid.action = recoveryAction(jobID)
+		return invalid
 	}
 
 	deadline := time.Now().Add(timeout)
@@ -267,9 +273,12 @@ func pollUntilComplete(ctx context.Context, client *api.Client, initial *api.TTS
 	for {
 		// Check timeout
 		if time.Now().After(deadline) {
-			return structuredExitError(1, fmt.Sprintf("polling timed out after %s. Resume with: ttsbuddy status %s", resolved.PollTimeout, jobID), "CLI_ERROR", "POLL_TIMEOUT", fmt.Sprintf("Resume with: ttsbuddy status %s", jobID), true, 0)
+			timedOut := structuredExitError(1, fmt.Sprintf("polling timed out after %s. Resume with: ttsbuddy status %s", resolved.PollTimeout, jobID), "CLI_ERROR", "POLL_TIMEOUT", fmt.Sprintf("Resume with: ttsbuddy status %s", jobID), true, 0)
+			timedOut.action = recoveryAction(jobID)
+			return timedOut
 		}
 		if timeoutErr := pollDelayDeadlineError(jobID, deadline, delay, delayHint); timeoutErr != nil {
+			timeoutErr.action = recoveryAction(jobID)
 			return timeoutErr
 		}
 
@@ -280,7 +289,9 @@ func pollUntilComplete(ctx context.Context, client *api.Client, initial *api.TTS
 			if !flagJSON {
 				fmt.Fprintf(os.Stderr, "\nInterrupted. Resume with: ttsbuddy status %s\n", jobID)
 			}
-			return structuredExitError(130, fmt.Sprintf("interrupted while polling job %s", jobID), "CLI_ERROR", "POLL_INTERRUPTED", fmt.Sprintf("Resume with: ttsbuddy status %s", jobID), true, 0)
+			interrupted := structuredExitError(130, fmt.Sprintf("interrupted while polling job %s", jobID), "CLI_ERROR", "POLL_INTERRUPTED", fmt.Sprintf("Resume with: ttsbuddy status %s", jobID), true, 0)
+			interrupted.action = recoveryAction(jobID)
+			return interrupted
 		case <-time.After(delay):
 		}
 
@@ -288,6 +299,9 @@ func pollUntilComplete(ctx context.Context, client *api.Client, initial *api.TTS
 		resp, pollStatus, err := client.GetStatus(ctx, jobID)
 		if err != nil {
 			if isPermanentError(err, pollStatus) {
+				// A permanent response is authoritative. Preserve classifier
+				// actions (for example authenticate/account/input correction)
+				// rather than replacing them with a known-job recovery command.
 				return handleAPIError(err, pollStatus)
 			}
 			stderrMsg("Status check failed (HTTP %d), retrying...\n", pollStatus)
@@ -295,6 +309,7 @@ func pollUntilComplete(ctx context.Context, client *api.Client, initial *api.TTS
 				delay = time.Duration(*resp.RetryAfterSeconds) * time.Second
 				delayHint = resp.RetryAfterSeconds
 				if timeoutErr := pollDelayDeadlineError(jobID, deadline, delay, resp.RetryAfterSeconds); timeoutErr != nil {
+					timeoutErr.action = recoveryAction(jobID)
 					return timeoutErr
 				}
 			} else {
@@ -308,9 +323,17 @@ func pollUntilComplete(ctx context.Context, client *api.Client, initial *api.TTS
 		case "completed":
 			return onCompleted(resp)
 		case "expired":
-			return structuredExitError(1, fmt.Sprintf("job %s: audio file has expired. Submit a new request.", jobID), "CLI_ERROR", "AUDIO_EXPIRED", "Submit a new request with a fresh idempotency key.", false, 0)
+			expired := structuredExitError(1, fmt.Sprintf("job %s: audio file has expired. Submit a new request.", jobID), "CLI_ERROR", "AUDIO_EXPIRED", "Submit a new request with a fresh idempotency key.", false, 0)
+			expired.action = submissionRetryAction()
+			return expired
 		case "failed":
-			return classifyTerminalResponse(resp, jobID)
+			// Terminal failures use their own classifier action (if any),
+			// never a download/status recovery for the already-finished job.
+			failed := classifyTerminalResponse(resp, jobID)
+			if failed.action == nil {
+				failed.action = submissionRetryAction()
+			}
+			return failed
 		case "processing":
 			if resp.RetryAfterSeconds != nil {
 				delay = time.Duration(*resp.RetryAfterSeconds) * time.Second
@@ -322,7 +345,9 @@ func pollUntilComplete(ctx context.Context, client *api.Client, initial *api.TTS
 			elapsed := time.Since(deadline.Add(-timeout))
 			spin.Update(renderProgress(resp, elapsed))
 		default:
-			return &exitError{code: 1, msg: fmt.Sprintf("unexpected job status %q from API. Job ID: %s", resp.Status, jobID)}
+			unexpected := &exitError{code: 1, msg: fmt.Sprintf("unexpected job status %q from API. Job ID: %s", resp.Status, jobID)}
+			unexpected.action = recoveryAction(jobID)
+			return unexpected
 		}
 	}
 }
@@ -348,8 +373,9 @@ func handleCompleted(ctx context.Context, client *api.Client, resp *api.TTSRespo
 		return err
 	}
 
-	// --json mode: emit raw API response
-	if flagJSON {
+	// Bare --json mode remains the raw API response and does not download.
+	// An explicit output path opts into download metadata below.
+	if flagJSON && speakOutput == "" {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		return enc.Encode(resp)
@@ -363,56 +389,26 @@ func handleCompleted(ctx context.Context, client *api.Client, resp *api.TTSRespo
 		return nil
 	}
 
-	// Determine voice for filename
-	voice := resolved.Voice
-	if resp.Audio != nil && resp.Audio.Voice != "" {
-		voice = resp.Audio.Voice
+	result, err := downloadCompletedAudio(ctx, client, resp, resolved, speakOutput)
+	if err != nil {
+		return wrapDownloadFailure(ctx, resp.JobID, speakOutput, resp.AudioURL, err)
 	}
-
-	// -o - : raw MP3 to stdout
-	if speakOutput == "-" {
-		if err := downloadToStdout(ctx, resp.AudioURL, resolved.APIURL); err != nil {
-			return &exitError{code: 1, msg: "download failed", err: &downloadFailure{err: err, audioURL: resp.AudioURL}}
-		}
+	// -o - writes the raw MP3 directly and has no JSON metadata mode.
+	if result == nil {
 		return nil
 	}
 
-	// Determine output path
-	var destPath string
-	if speakOutput != "" {
-		destPath = speakOutput
-	} else {
-		destPath = api.AutoFilename(voice, resolved.OutputDir)
-
-		// Verify auto-generated path stays within the output directory (defense in depth)
-		absPath, _ := filepath.Abs(destPath)
-		absDir, _ := filepath.Abs(resolved.OutputDir)
-		if !strings.HasPrefix(absPath, absDir+string(filepath.Separator)) && absPath != absDir {
-			return &exitError{code: 2, msg: fmt.Sprintf("output path %s escapes output directory %s", destPath, resolved.OutputDir)}
+	if flagJSON {
+		payload, err := responseWithDownload(resp, result)
+		if err != nil {
+			return &exitError{code: 1, msg: "encoding download result", err: err}
 		}
+		return json.NewEncoder(os.Stdout).Encode(payload)
 	}
 
-	// Verify output directory exists
-	dir := filepath.Dir(destPath)
-	if _, err := os.Stat(dir); os.IsNotExist(err) {
-		return &exitError{code: 2, msg: fmt.Sprintf("output directory does not exist: %s", dir)}
-	}
-
-	dlSpin := display.New()
-	if !flagJSON && !flagQuiet {
-		dlSpin.Start("Downloading audio...")
-	}
-
-	downloadedBytes, err := client.DownloadAudioWithSize(ctx, resp.AudioURL, destPath)
-	if err != nil {
-		dlSpin.Stop()
-		return &exitError{code: 1, msg: "download failed", err: &downloadFailure{err: err, audioURL: resp.AudioURL}}
-	}
-
-	dlSpin.Stop()
-	stderrMsg("Saved to %s\n", destPath)
+	stderrMsg("Saved to %s\n", result.Path)
 	renderTranslationMeta(resp)
-	renderCompletionSummary(resp, downloadedBytes)
+	renderCompletionSummary(resp, result.Bytes)
 
 	return nil
 }
@@ -576,7 +572,7 @@ func downloadToStdout(ctx context.Context, audioURL, apiURL string) error {
 			}
 			return structuredExitError(130, "interrupted while downloading audio", "CLI_ERROR", "DOWNLOAD_INTERRUPTED", "Retry the same request.", true, 0)
 		}
-		return &exitError{code: 1, msg: err.Error()}
+		return err
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -698,6 +694,7 @@ type exitError struct {
 	retryable         bool
 	retryAfterSeconds int
 	nextAction        string
+	action            *api.CLIAction
 	idempotencyKey    string
 }
 

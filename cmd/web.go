@@ -191,7 +191,7 @@ func runWeb(cmd *cobra.Command, rawURL string) error {
 		renderTranslationMeta(resp)
 		return pollUntilComplete(ctx, client, resp, resolved, func(done *api.TTSResponse) error {
 			return handleCompletedWithFreshRetry(ctx, client, req, done, resolved, false)
-		})
+		}, statusAction)
 	default:
 		if flagJSON {
 			enc := json.NewEncoder(os.Stdout)

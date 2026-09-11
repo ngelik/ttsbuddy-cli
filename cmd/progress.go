@@ -66,10 +66,10 @@ func renderCompletionSummary(resp *api.TTSResponse, downloadedBytes int64) {
 		stderrMsg("Job ID: %s\n", resp.JobID)
 	}
 	if seconds, ok := speechLengthSeconds(resp); ok {
-		stderrMsg("Speech length: %s\n", formatDuration(seconds))
+		stderrMsg("Speech length: %s%s\n", formatDuration(seconds), metadataSourceSuffix(durationSource(resp)))
 	}
 	if size, ok := mp3SizeBytes(resp, downloadedBytes); ok {
-		stderrMsg("MP3 size: %s\n", formatBytes(size))
+		stderrMsg("MP3 size: %s%s\n", formatBytes(size), metadataSourceSuffix(fileSizeSource(resp, downloadedBytes)))
 	}
 	if cps, ok := generationCharsPerSecond(resp); ok {
 		stderrMsg("Generation speed: %.0f chars/sec\n", cps)
@@ -86,6 +86,19 @@ func speechLengthSeconds(resp *api.TTSResponse) (float64, bool) {
 	return 0, false
 }
 
+func durationSource(resp *api.TTSResponse) string {
+	if resp == nil {
+		return "unknown"
+	}
+	if resp.Stats != nil && resp.Stats.SpeechLengthSeconds != nil {
+		return normalizeMetadataSource(resp.Stats.DurationSource)
+	}
+	if resp.Audio != nil && resp.Audio.DurationSeconds != nil {
+		return normalizeMetadataSource(resp.Audio.DurationSource)
+	}
+	return "unknown"
+}
+
 func mp3SizeBytes(resp *api.TTSResponse, downloadedBytes int64) (int64, bool) {
 	if downloadedBytes > 0 {
 		return downloadedBytes, true
@@ -97,6 +110,43 @@ func mp3SizeBytes(resp *api.TTSResponse, downloadedBytes int64) (int64, bool) {
 		return *resp.Audio.FileSizeBytes, true
 	}
 	return 0, false
+}
+
+func fileSizeSource(resp *api.TTSResponse, downloadedBytes int64) string {
+	if downloadedBytes > 0 {
+		return "local"
+	}
+	if resp != nil && resp.Stats != nil && resp.Stats.FileSizeBytes != nil {
+		return normalizeMetadataSource(resp.Stats.FileSizeSource)
+	}
+	if resp != nil && resp.Audio != nil && resp.Audio.FileSizeBytes != nil {
+		return normalizeMetadataSource(resp.Audio.FileSizeSource)
+	}
+	return "unknown"
+}
+
+func normalizeMetadataSource(source string) string {
+	switch source {
+	case "provider", "estimated", "content_length", "local":
+		return source
+	default:
+		return "unknown"
+	}
+}
+
+func metadataSourceSuffix(source string) string {
+	switch source {
+	case "estimated":
+		return " (estimated)"
+	case "provider":
+		return " (provider-reported)"
+	case "content_length":
+		return " (content length)"
+	case "local":
+		return " (downloaded)"
+	default:
+		return " (source unknown)"
+	}
 }
 
 func generationCharsPerSecond(resp *api.TTSResponse) (float64, bool) {

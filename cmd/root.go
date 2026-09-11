@@ -38,7 +38,13 @@ var resolvedCfg *config.ResolvedConfig
 var rootCmd = &cobra.Command{
 	Use:   "ttsbuddy",
 	Short: "TTSBuddy CLI — convert text to speech",
-	Long:  "A command-line tool for converting text to speech using the TTSBuddy API.",
+	Long: `A command-line tool for converting text to speech using the TTSBuddy API.
+
+Agent quickstart: https://www.ttsbuddy.com/docs/developers/agent-quickstart
+Typical first run: doctor --json, authenticate with auth email start/verify or
+auth browser, choose a voice with voices --json, then speak --json or
+speak --output audio.mp3 --json. Resume a known job with status <job_id> or
+download <job_id>; email verification requires an authorized mailbox owner.`,
 
 	SilenceUsage:  true,
 	SilenceErrors: true,
@@ -102,7 +108,7 @@ var rootCmd = &cobra.Command{
 
 func commandUsesCredentialedAPI(cmd *cobra.Command) bool {
 	switch cmd.CommandPath() {
-	case "ttsbuddy speak", "ttsbuddy web", "ttsbuddy status":
+	case "ttsbuddy speak", "ttsbuddy web", "ttsbuddy status", "ttsbuddy download":
 		return true
 	default:
 		return false

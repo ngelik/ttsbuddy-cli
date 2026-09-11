@@ -33,6 +33,7 @@ func structuredErrorPayload(err *exitError) api.CLIError {
 	}
 	payload := api.NewCLIErrorWithRecovery(code, err.msg, err.reason, err.nextAction, err.retryable, err.retryAfterSeconds)
 	payload.Error.ServerCode = err.serverCode
+	payload.Error.Action = err.action
 	payload.Error.HumanActionRequired = err.reason == "BROWSER_AUTH_REQUIRED"
 	payload.Error.IdempotencyKey = err.idempotencyKey
 	return payload
@@ -139,7 +140,20 @@ func classifyClerkAuthError(err error, signup bool) *exitError {
 	default:
 		// Do not expose unknown provider response text or account details.
 	}
-	return structuredExitError(1, message, "AUTH_ERROR", reason, next, retryable, providerRetryAfter)
+	mapped := structuredExitError(1, message, "AUTH_ERROR", reason, next, retryable, providerRetryAfter)
+	switch reason {
+	case "BROWSER_AUTH_REQUIRED":
+		mapped.action = browserAuthAction()
+	case "INVALID_CODE":
+		mapped.action = verifyCodeAction("")
+	case "ACCOUNT_NOT_FOUND", "ACCOUNT_ALREADY_EXISTS", "EMAIL_ADDRESS_NOT_ACCEPTED", "INVALID_INPUT":
+		mapped.action = authenticateAction()
+	default:
+		if retryable {
+			mapped.action = authenticateAction()
+		}
+	}
+	return mapped
 }
 
 func classifyCLIAuthHTTPError(err error, action string) *exitError {
@@ -167,7 +181,13 @@ func classifyCLIAuthHTTPError(err error, action string) *exitError {
 		retryable = true
 		next = "Retry the authentication command later."
 	}
-	return structuredExitError(1, message, "CLI_AUTH_ERROR", reason, next, retryable, httpErr.RetryAfterSeconds)
+	mapped := structuredExitError(1, message, "CLI_AUTH_ERROR", reason, next, retryable, httpErr.RetryAfterSeconds)
+	if reason == "SESSION_REJECTED" {
+		mapped.action = authenticateAction()
+	} else if retryable {
+		mapped.action = authenticateAction()
+	}
+	return mapped
 }
 
 func classifyAPIError(err error, status int) *exitError {
@@ -179,6 +199,7 @@ func classifyAPIErrorWithKey(err error, status int, idempotencyKey string) *exit
 	if !errors.As(err, &apiErr) {
 		mapped := structuredExitError(1, "API request failed", "CLI_ERROR", "TRANSPORT_ERROR", "Retry the same request with --idempotency-key <same-value> if it was not accepted.", true, 0)
 		mapped.idempotencyKey = idempotencyKey
+		mapped.action = submissionRetryAction()
 		return mapped
 	}
 	code := apiErr.ErrorCode()
@@ -268,6 +289,20 @@ func classifyAPIErrorWithKey(err error, status int, idempotencyKey string) *exit
 	mapped := structuredExitError(exitCode, message, "CLI_ERROR", reason, next, retryable, retryAfter)
 	mapped.serverCode = code
 	mapped.idempotencyKey = idempotencyKey
+	switch reason {
+	case "SESSION_REJECTED":
+		mapped.action = authenticateAction()
+	case "SUBSCRIPTION_INACTIVE", "API_ACCESS_UNAVAILABLE", "QUOTA_EXCEEDED":
+		mapped.action = accountAction("https://ttsbuddy.com/billing")
+	case "INPUT_TOO_LONG", "INVALID_INPUT":
+		if idempotencyKey != "" {
+			mapped.action = inputCorrectionAction()
+		}
+	case "RATE_LIMITED", "SERVICE_ERROR", "TRANSPORT_ERROR":
+		if idempotencyKey != "" {
+			mapped.action = submissionRetryAction()
+		}
+	}
 	if apiErr.Response.Error != nil && api.NeedsNewIdempotencyKey(apiErr.Response.Error) {
 		// The provider definitively rejected this identity; do not suggest
 		// replaying it or expose it as an ambiguous recovery key.

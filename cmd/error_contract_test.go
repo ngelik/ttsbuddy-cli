@@ -49,6 +49,58 @@ func TestStructuredRecoveryCarriesEffectiveIdempotencyKey(t *testing.T) {
 	if payload.Error.IdempotencyKey != "idem-effective" || payload.Error.NextAction == "" {
 		t.Fatalf("payload=%#v", payload)
 	}
+	if payload.Error.Action == nil || payload.Error.Action.Type != actionRetrySubmission {
+		t.Fatalf("missing executable retry action: %#v", payload.Error.Action)
+	}
+	if len(payload.Error.Action.Argv) != 0 || len(payload.Error.Action.RequiredInputs) != 1 || payload.Error.Action.RequiredInputs[0] != "original_input" {
+		t.Fatalf("retry action must declare missing input rather than fabricate argv: %#v", payload.Error.Action)
+	}
+}
+
+func TestStructuredRecoveryCarriesKnownJobDownloadAction(t *testing.T) {
+	action := downloadAction("job-known", "/tmp/audio.mp3")
+	mapped := structuredExitError(1, "download failed", "CLI_ERROR", "DOWNLOAD_FAILED", "Retry download for job-known.", true, 0)
+	mapped.action = action
+	payload := structuredErrorPayload(mapped)
+	if payload.Error.Action == nil || payload.Error.Action.Type != actionDownload {
+		t.Fatalf("missing download action: %#v", payload.Error.Action)
+	}
+	joined := strings.Join(payload.Error.Action.Argv, " ")
+	if !strings.Contains(joined, "job-known") || !strings.Contains(joined, "/tmp/audio.mp3") || strings.Contains(joined, "audio.mp3?") {
+		t.Fatalf("unsafe or incomplete download argv: %#v", payload.Error.Action)
+	}
+}
+
+func TestDownloadActionPreservesStdoutSentinel(t *testing.T) {
+	previousJSON := flagJSON
+	flagJSON = false
+	defer func() { flagJSON = previousJSON }()
+	action := downloadAction("job-stdout", "-")
+	if action == nil {
+		t.Fatal("missing download action")
+	}
+	joined := strings.Join(action.Argv, " ")
+	if strings.Contains(joined, "/-/") || !strings.Contains(joined, "--output -") {
+		t.Fatalf("stdout sentinel was rewritten: %#v", action)
+	}
+}
+
+func TestRecoveryActionsDoNotEmbedFlagLikeJobIDs(t *testing.T) {
+	for _, action := range []*api.CLIAction{statusAction("--key=leak"), downloadAction("--key=leak", "/tmp/audio.mp3")} {
+		if action == nil || action.Type == "" || len(action.Argv) != 0 || len(action.RequiredInputs) != 1 || action.RequiredInputs[0] != "job_id" {
+			t.Fatalf("unsafe provider job ID produced runnable action: %#v", action)
+		}
+	}
+}
+
+func TestVerifyCodeActionDeclaresProtectedInput(t *testing.T) {
+	action := verifyCodeAction("challenge-123")
+	if action == nil || len(action.Argv) == 0 || len(action.RequiredInputs) != 1 || action.RequiredInputs[0] != "verification_code" {
+		t.Fatalf("verify action=%#v", action)
+	}
+	if strings.Contains(strings.Join(action.Argv, " "), "123456") {
+		t.Fatal("verification action must not contain an OTP")
+	}
 }
 
 func TestTerminalFailureRequiresFreshKeyAndExpiryAction(t *testing.T) {
