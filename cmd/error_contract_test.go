@@ -42,3 +42,22 @@ func TestClassifyAPIErrorPreservesServerCodeAndRecovery(t *testing.T) {
 		t.Fatal("mapped error unexpectedly unwraps provider response")
 	}
 }
+
+func TestStructuredRecoveryCarriesEffectiveIdempotencyKey(t *testing.T) {
+	mapped := classifyAPIErrorWithKey(errors.New("transport interrupted"), 0, "idem-effective")
+	payload := structuredErrorPayload(mapped)
+	if payload.Error.IdempotencyKey != "idem-effective" || payload.Error.NextAction == "" {
+		t.Fatalf("payload=%#v", payload)
+	}
+}
+
+func TestTerminalFailureRequiresFreshKeyAndExpiryAction(t *testing.T) {
+	failed := classifyTerminalResponse(&api.TTSResponse{Status: "failed", Error: &api.APIError{Code: api.ErrInternalError, Message: "provider secret"}}, "job-1")
+	if failed.retryable || !strings.Contains(failed.nextAction, "fresh idempotency key") || strings.Contains(failed.msg, "provider secret") {
+		t.Fatalf("failed=%#v", failed)
+	}
+	expired := classifyTerminalResponse(&api.TTSResponse{Status: "expired", JobID: "job-2"}, "job-2")
+	if expired.reason != "AUDIO_EXPIRED" || !strings.Contains(expired.nextAction, "fresh idempotency key") {
+		t.Fatalf("expired=%#v", expired)
+	}
+}

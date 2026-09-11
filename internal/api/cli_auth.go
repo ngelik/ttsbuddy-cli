@@ -9,7 +9,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"time"
 
@@ -116,8 +115,8 @@ func (c *CLIAuthClient) do(ctx context.Context, method string, body io.Reader) (
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		retry, _ := strconv.Atoi(resp.Header.Get("Retry-After"))
-		if retry < 1 || retry > 300 {
+		retry, ok := parseRetryAfter(resp.Header.Get("Retry-After"), time.Now().UTC())
+		if !ok {
 			retry = 0
 		}
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxCLIAuthBody+1))

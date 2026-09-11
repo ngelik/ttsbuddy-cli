@@ -133,6 +133,18 @@ In v0.11.3 and newer, generic signed-out, missing-credential, invalid-credential
 and expired-session messages point to both interactive methods: `ttsbuddy auth
 email` or `ttsbuddy auth browser`.
 
+In v0.12.1 and newer, MFA, client-trust, new-password, and any other pending
+Clerk sign-in task are reported as `BROWSER_AUTH_REQUIRED` with
+`human_action_required: true`; no CLI credential is issued until the hosted
+browser flow completes. Known account-not-found responses recommend the
+structured signup command, while existing-account conflicts recommend
+structured login without `--signup`:
+
+```bash
+ttsbuddy auth email start --email <address> --signup --json
+ttsbuddy auth email start --email <address> --json
+```
+
 For automation that can read an authorized mailbox, use the two-step email
 contract (available in v0.12.0 and newer). The start command never accepts a
 code on argv and returns one JSON document with an opaque, short-lived
@@ -153,6 +165,16 @@ such as CAPTCHA, MFA, or legal acceptance. Invalid codes keep the challenge so
 the same opaque ID can be retried, while terminal failures clear it.
 Successful sign-in replaces the existing CLI session; the prepared result
 includes this handoff boundary explicitly.
+
+If a speak/web submission is interrupted or its transport outcome is
+ambiguous, the JSON error includes `error.idempotency_key` and a same-input,
+same-options retry command. Reuse that key with `--idempotency-key`; once a job
+ID exists, use `ttsbuddy status <job_id>` instead of submitting a duplicate.
+Rate-limit responses honor a valid body `retry_after_seconds` first, then a
+valid `Retry-After` delta or HTTP date. Delays longer than the bounded automatic
+retry policy are returned for explicit operator action rather than retried
+early. Terminal failures and expiry use the same sanitized recovery fields and
+never echo provider response text.
 
 ### Isolated config and session state (v0.11.5+)
 

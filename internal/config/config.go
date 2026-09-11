@@ -472,6 +472,18 @@ func ActiveCLISession(cfg *Config, now time.Time) (*StoredCLISession, string) {
 	return &copy, ""
 }
 
+// IsCLISessionExpired reports whether a well-formed stored CLI session has
+// crossed its absolute expiry. Malformed or absent sessions are not classified
+// as expired; callers should continue to surface the existing warning for
+// those cases.
+func IsCLISessionExpired(cfg *Config, now time.Time) bool {
+	if cfg == nil || cfg.CLISession == nil || !validCLICredential(cfg.CLISession.Credential) {
+		return false
+	}
+	expires, err := time.Parse(time.RFC3339, cfg.CLISession.ExpiresAt)
+	return err == nil && !expires.After(now)
+}
+
 func sessionCredential(cfg *Config) string {
 	if cfg == nil || cfg.CLISession == nil {
 		return ""

@@ -34,6 +34,7 @@ func structuredErrorPayload(err *exitError) api.CLIError {
 	payload := api.NewCLIErrorWithRecovery(code, err.msg, err.reason, err.nextAction, err.retryable, err.retryAfterSeconds)
 	payload.Error.ServerCode = err.serverCode
 	payload.Error.HumanActionRequired = err.reason == "BROWSER_AUTH_REQUIRED"
+	payload.Error.IdempotencyKey = err.idempotencyKey
 	return payload
 }
 
@@ -60,16 +61,25 @@ func classifyClerkAuthError(err error, signup bool) *exitError {
 	}
 	switch {
 	case clerkfapi.IsSignupEmailExists(err):
-		message = "An account already exists for this email. " + authMethodSuggestion
+		message = "An account already exists for this email. " + authMethodSuggestion + ". For structured login, run: ttsbuddy auth email start --email <address> --json"
 		reason = "ACCOUNT_ALREADY_EXISTS"
+		next = "ttsbuddy auth email start --email <address> --json"
 	case clerkfapi.IsSignupBrowserFallback(err):
 		message = "This signup needs a browser step. Run: ttsbuddy auth browser"
+		reason = "BROWSER_AUTH_REQUIRED"
+		next = "ttsbuddy auth browser"
+	case clerkfapi.IsBrowserAuthRequired(err):
+		message = "This sign-in needs a browser step. Run: ttsbuddy auth browser"
 		reason = "BROWSER_AUTH_REQUIRED"
 		next = "ttsbuddy auth browser"
 	case clerkfapi.IsEmailCodeExpired(err):
 		message = "The email code expired. Start a new email authentication challenge."
 		reason = "CODE_EXPIRED"
-		next = "ttsbuddy auth email start --email <address> --json"
+		if signup {
+			next = "ttsbuddy auth email start --email <address> --signup --json"
+		} else {
+			next = "ttsbuddy auth email start --email <address> --json"
+		}
 	case clerkfapi.IsEmailCodeIncorrect(err):
 		message = "The email code was incorrect. Retry the same challenge, or start a new one if needed."
 		reason = "INVALID_CODE"
@@ -78,17 +88,22 @@ func classifyClerkAuthError(err error, signup bool) *exitError {
 	case code == "form_email_address_blocked":
 		message = signupEmailAddressBlockedMessage + ". Or run: ttsbuddy auth browser"
 		reason = "EMAIL_ADDRESS_NOT_ACCEPTED"
-	case code == "form_identifier_not_found":
+	case code == "form_param_format_invalid" || code == "form_param_missing":
+		message = "Clerk request returned status 422: the supplied authentication input was not accepted. Check the provided values and try again."
+		reason = "INVALID_INPUT"
 		if signup {
-			message = "No TTS Buddy account was found for this email. To create one, run: ttsbuddy auth email start --email <address> --signup --json"
-			reason = "ACCOUNT_NOT_FOUND"
+			next = "ttsbuddy auth email start --email <address> --signup --json"
 		} else {
-			message = "No TTS Buddy account was found for this email. To create one, run: ttsbuddy auth email --signup"
-			reason = "ACCOUNT_NOT_FOUND"
+			next = "ttsbuddy auth email start --email <address> --json"
 		}
+	case code == "form_identifier_not_found":
+		message = "No TTS Buddy account was found for this email. To create one, run: ttsbuddy auth email --signup. Structured automation: ttsbuddy auth email start --email <address> --signup --json"
+		reason = "ACCOUNT_NOT_FOUND"
+		next = "ttsbuddy auth email start --email <address> --signup --json"
 	case code == "form_identifier_exists" || code == "identifier_exists" || code == "email_address_exists" || code == "email_exists":
-		message = "An account already exists for this email. " + authMethodSuggestion
+		message = "An account already exists for this email. " + authMethodSuggestion + ". For structured login, run: ttsbuddy auth email start --email <address> --json"
 		reason = "ACCOUNT_ALREADY_EXISTS"
+		next = "ttsbuddy auth email start --email <address> --json"
 	case code == "form_code_incorrect" || code == "form_code_invalid":
 		message = "The email code was incorrect. Retry the same challenge, or start a new one if needed."
 		reason = "INVALID_CODE"
@@ -97,8 +112,12 @@ func classifyClerkAuthError(err error, signup bool) *exitError {
 	case code == "form_code_expired":
 		message = "The email code expired. Start a new email authentication challenge."
 		reason = "CODE_EXPIRED"
-		next = "ttsbuddy auth email start --email <address> --json"
-	case code == "captcha_required" || code == "legal_acceptance_required" || code == "legal_accepted_required" || code == "mfa_required" || code == "multi_factor_required" || code == "second_factor_required":
+		if signup {
+			next = "ttsbuddy auth email start --email <address> --signup --json"
+		} else {
+			next = "ttsbuddy auth email start --email <address> --json"
+		}
+	case code == "captcha_required" || code == "legal_acceptance_required" || code == "legal_accepted_required" || code == "mfa_required" || code == "multi_factor_required" || code == "second_factor_required" || code == "needs_second_factor" || code == "client_trust_required" || code == "needs_client_trust" || code == "new_password_required" || code == "needs_new_password":
 		message = "This sign-in needs a browser step. Run: ttsbuddy auth browser"
 		reason = "BROWSER_AUTH_REQUIRED"
 		next = "ttsbuddy auth browser"
@@ -106,14 +125,17 @@ func classifyClerkAuthError(err error, signup bool) *exitError {
 		message = "Clerk rate limited this request. Wait before trying again."
 		reason = "RATE_LIMITED"
 		retryable = true
+		next = "Wait for the provided retry delay or bounded backoff, then retry the authentication command."
 	case requestErr != nil && requestErr.StatusCode == http.StatusTooManyRequests:
 		message = "Clerk rate limited this request. Wait before trying again."
 		reason = "RATE_LIMITED"
 		retryable = true
+		next = "Wait for the provided retry delay or bounded backoff, then retry the authentication command."
 	case requestErr != nil && requestErr.StatusCode >= 500:
 		message = "Clerk authentication is temporarily unavailable. Try again later."
 		reason = "SERVICE_UNAVAILABLE"
 		retryable = true
+		next = "Retry the same authentication command later."
 	default:
 		// Do not expose unknown provider response text or account details.
 	}
@@ -138,18 +160,26 @@ func classifyCLIAuthHTTPError(err error, action string) *exitError {
 		message = "CLI authentication is rate limited. Wait before trying again."
 		reason = "RATE_LIMITED"
 		retryable = true
+		next = "Wait for the provided retry delay or bounded backoff, then retry the authentication command."
 	case http.StatusServiceUnavailable:
 		message = "CLI authentication is temporarily unavailable. Try again later."
 		reason = "SERVICE_UNAVAILABLE"
 		retryable = true
+		next = "Retry the authentication command later."
 	}
 	return structuredExitError(1, message, "CLI_AUTH_ERROR", reason, next, retryable, httpErr.RetryAfterSeconds)
 }
 
 func classifyAPIError(err error, status int) *exitError {
+	return classifyAPIErrorWithKey(err, status, "")
+}
+
+func classifyAPIErrorWithKey(err error, status int, idempotencyKey string) *exitError {
 	var apiErr *api.APIResponseError
 	if !errors.As(err, &apiErr) {
-		return structuredExitError(1, "API request failed", "CLI_ERROR", "TRANSPORT_ERROR", "Retry the same request with the same idempotency key if it was not accepted.", true, 0)
+		mapped := structuredExitError(1, "API request failed", "CLI_ERROR", "TRANSPORT_ERROR", "Retry the same request with --idempotency-key <same-value> if it was not accepted.", true, 0)
+		mapped.idempotencyKey = idempotencyKey
+		return mapped
 	}
 	code := apiErr.ErrorCode()
 	message := "API request failed"
@@ -168,9 +198,11 @@ func classifyAPIError(err error, status int) *exitError {
 	case api.ErrInactiveSubscription:
 		message = "subscription inactive. Reactivate at https://ttsbuddy.com/billing"
 		reason = "SUBSCRIPTION_INACTIVE"
+		next = "https://ttsbuddy.com/billing"
 	case api.ErrNoAPIAccess:
 		message = "your plan does not include API access. Check your plan or contact support."
 		reason = "API_ACCESS_UNAVAILABLE"
+		next = "https://ttsbuddy.com/billing"
 	case api.ErrUsageLimitExceeded:
 		message = "monthly TTS minutes exhausted. Upgrade at https://ttsbuddy.com/billing"
 		reason = "QUOTA_EXCEEDED"
@@ -186,33 +218,48 @@ func classifyAPIError(err error, status int) *exitError {
 	case api.ErrTextTooLong:
 		message = "input exceeds 500,000 characters. Split into smaller chunks."
 		reason = "INPUT_TOO_LONG"
+		next = "Split the supplied text, then retry with a fresh idempotency key."
+	case api.ErrInvalidRequest:
+		message = "the TTS request was not accepted. Check the supplied input and options."
+		reason = "INVALID_INPUT"
+		next = "Correct the supplied input and options, then retry with a fresh idempotency key."
 	case api.ErrRateLimited:
 		message = "rate limited. Please wait and try again."
 		reason = "RATE_LIMITED"
 		retryable = true
+		next = "Wait for the provided retry delay or bounded backoff, then retry with --idempotency-key <same-value>."
 	case api.ErrNotFound:
 		message = "job not found. Check the job ID."
 		reason = "JOB_NOT_FOUND"
 	case api.ErrFileExpired:
 		message = "audio file has expired. Submit a new request."
 		reason = "AUDIO_EXPIRED"
+		next = "Submit a new request with a fresh idempotency key."
 	case api.ErrTTSProviderError, api.ErrInternalError:
 		message = "TTS service error. Try again later."
 		reason = "SERVICE_ERROR"
 		retryable = true
+		next = "Retry the same request with --idempotency-key <same-value>."
 	case api.ErrForbidden:
 		message = "access denied (HTTP 403). Check your subscription and API access at https://ttsbuddy.com/billing"
 		reason = "API_ACCESS_UNAVAILABLE"
+		next = "https://ttsbuddy.com/billing"
 	default:
 		if status == http.StatusTooManyRequests {
 			message = "rate limited. Please wait and try again."
 			reason = "RATE_LIMITED"
 			retryable = true
+			next = "Wait for the provided retry delay or bounded backoff, then retry with --idempotency-key <same-value>."
 		} else if status >= 500 {
 			message = "TTS service error. Try again later."
 			reason = "SERVICE_ERROR"
 			retryable = true
+			next = "Retry the same request with --idempotency-key <same-value>."
 		}
+	}
+	if apiErr.Response.Error != nil && api.NeedsNewIdempotencyKey(apiErr.Response.Error) {
+		next = "Submit again with a fresh idempotency key (for example: --idempotency-key <new-value>)."
+		retryable = false
 	}
 	exitCode := 1
 	if code == api.ErrTextTooLong {
@@ -220,5 +267,14 @@ func classifyAPIError(err error, status int) *exitError {
 	}
 	mapped := structuredExitError(exitCode, message, "CLI_ERROR", reason, next, retryable, retryAfter)
 	mapped.serverCode = code
+	mapped.idempotencyKey = idempotencyKey
+	if apiErr.Response.Error != nil && api.NeedsNewIdempotencyKey(apiErr.Response.Error) {
+		// The provider definitively rejected this identity; do not suggest
+		// replaying it or expose it as an ambiguous recovery key.
+		mapped.idempotencyKey = ""
+	}
+	if !mapped.retryable {
+		mapped.idempotencyKey = ""
+	}
 	return mapped
 }

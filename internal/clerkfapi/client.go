@@ -85,10 +85,13 @@ func (c *Client) StartEmailCode(ctx context.Context, email string) (*Challenge, 
 	if err != nil {
 		return nil, err
 	}
-	if signIn.Status != SignInNeedsFirstFactor {
-		return nil, errors.New("unable to start Clerk email sign-in")
-	}
 	if signIn.CurrentTask != nil || len(signIn.Tasks) > 0 {
+		return nil, wrapFlowError("validate_sign_in", browserRequiredWithMessage("unable to start Clerk email sign-in"))
+	}
+	if isBrowserRequiredSignInState(signIn.Status) {
+		return nil, wrapFlowError("validate_sign_in", browserRequiredWithMessage(fmt.Sprintf("sign-in requires interactive state: %s", signIn.Status)))
+	}
+	if signIn.Status != SignInNeedsFirstFactor {
 		return nil, errors.New("unable to start Clerk email sign-in")
 	}
 
@@ -123,6 +126,12 @@ func (c *Client) VerifyEmailCode(ctx context.Context, challenge Challenge, code 
 	if attemptErr != nil {
 		return nil, wrapFlowError("attempt_first_factor", attemptErr)
 	}
+	// A successful code attempt can still leave a mandatory interactive task.
+	// Inspect it before treating needs_first_factor as an ordinary bad-code
+	// response so MFA/client-trust/password handoffs are never mislabeled.
+	if signIn.CurrentTask != nil || len(signIn.Tasks) > 0 {
+		return nil, wrapFlowError("validate_sign_in", browserRequiredWithMessage("pending sign-in task blocks CLI login"))
+	}
 
 	switch signIn.Status {
 	case SignInComplete:
@@ -131,16 +140,14 @@ func (c *Client) VerifyEmailCode(ctx context.Context, challenge Challenge, code 
 		// needs_first_factor. Treat this fixed client-side outcome as a
 		// retryable code failure without copying provider text.
 		return nil, wrapFlowError("validate_sign_in", errEmailCodeIncorrect)
+	case SignInNeedsSecondFactor, SignInNeedsClientTrust, SignInNeedsNewPassword:
+		return nil, wrapFlowError("validate_sign_in", browserRequiredWithMessage(fmt.Sprintf("sign-in requires interactive state: %s", signIn.Status)))
 	default:
 		return nil, wrapFlowError("validate_sign_in", fmt.Errorf("unexpected sign-in state: %s", signIn.Status))
 	}
 	if signIn.ID != "" && signIn.ID != challenge.SignInID {
 		return nil, wrapFlowError("validate_sign_in", errors.New("clerk sign-in response did not match challenge"))
 	}
-	if signIn.CurrentTask != nil || len(signIn.Tasks) > 0 {
-		return nil, wrapFlowError("validate_sign_in", errors.New("pending sign-in task blocks CLI login"))
-	}
-
 	if signIn.CreatedSessionID == "" {
 		return nil, wrapFlowError("validate_sign_in", errors.New("clerk sign-in response missing created_session_id"))
 	}
@@ -218,6 +225,9 @@ func (c *Client) VerifyEmailSignUp(ctx context.Context, challenge SignUpChalleng
 	if isPendingSessionTask(proofErr) {
 		return nil, wrapFlowError("validate_session", errSignupBrowserFallback)
 	}
+	if IsBrowserAuthRequired(proofErr) {
+		return nil, wrapFlowError("validate_session", errSignupBrowserFallback)
+	}
 	return proof, proofErr
 }
 
@@ -231,7 +241,7 @@ func (c *Client) sessionProof(ctx context.Context, sessionID string) (*SessionPr
 		return nil, wrapFlowError("get_session", err)
 	}
 	if session.CurrentTask != nil || len(session.Tasks) > 0 {
-		return nil, wrapFlowError("validate_session", errPendingSessionTask)
+		return nil, wrapFlowError("validate_session", browserRequiredWithMessage("pending session task blocks CLI login"))
 	}
 	if !strings.EqualFold(session.Status, "active") {
 		return nil, wrapFlowError("validate_session", errors.New("inactive session cannot be exchanged"))
@@ -426,12 +436,21 @@ func isSignupBrowserFallback(err error) bool {
 		return false
 	}
 	code := strings.ToLower(requestErr.Code)
-	for _, fragment := range []string{"captcha", "legal", "mfa", "multi_factor", "second_factor"} {
+	for _, fragment := range []string{"captcha", "legal", "mfa", "multi_factor", "second_factor", "client_trust", "new_password"} {
 		if strings.Contains(code, fragment) {
 			return true
 		}
 	}
 	return false
+}
+
+func isBrowserRequiredSignInState(state SignInState) bool {
+	switch state {
+	case SignInNeedsSecondFactor, SignInNeedsClientTrust, SignInNeedsNewPassword:
+		return true
+	default:
+		return false
+	}
 }
 
 func (c *Client) prepareFirstFactor(ctx context.Context, challenge Challenge) error {
@@ -449,10 +468,13 @@ func (c *Client) prepareFirstFactor(ctx context.Context, challenge Challenge) er
 	if signIn.ID != "" && signIn.ID != challenge.SignInID {
 		return errors.New("clerk sign-in response did not match challenge")
 	}
-	if signIn.Status != "" && signIn.Status != SignInNeedsFirstFactor {
-		return errors.New("unable to start Clerk email sign-in")
-	}
 	if signIn.CurrentTask != nil || len(signIn.Tasks) > 0 {
+		return wrapFlowError("prepare_first_factor", browserRequiredWithMessage("unable to start Clerk email sign-in"))
+	}
+	if isBrowserRequiredSignInState(signIn.Status) {
+		return wrapFlowError("prepare_first_factor", browserRequiredWithMessage("unable to start Clerk email sign-in"))
+	}
+	if signIn.Status != "" && signIn.Status != SignInNeedsFirstFactor {
 		return errors.New("unable to start Clerk email sign-in")
 	}
 	return nil
