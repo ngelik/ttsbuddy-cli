@@ -3,22 +3,37 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 )
 
 // Voice represents a TTS voice.
 type Voice struct {
-	ID           string `json:"id"`
-	Name         string `json:"name"`
-	Gender       string `json:"gender"`
-	Language     string `json:"language"`
-	LanguageCode string `json:"language_code,omitempty"`
-	Engine       string `json:"engine,omitempty"`
-	Quality      string `json:"quality,omitempty"`
-	IsPremium    bool   `json:"is_premium,omitempty"`
+	ID               string   `json:"id"`
+	Name             string   `json:"name"`
+	Gender           string   `json:"gender"`
+	Language         string   `json:"language"`
+	LanguageCode     string   `json:"language_code,omitempty"`
+	Engine           string   `json:"engine,omitempty"`
+	Quality          string   `json:"quality,omitempty"`
+	IsPremium        bool     `json:"is_premium,omitempty"`
+	MinSpeed         *float64 `json:"min_speed,omitempty"`
+	MaxSpeed         *float64 `json:"max_speed,omitempty"`
+	RecommendedSpeed *float64 `json:"recommended_speed,omitempty"`
 }
 
 const supertonicEngine = "supertonic"
+const kokoroEngine = "kokoro"
+
+// Accepted speed metadata is shared by the agent API and provider adapter.
+// Supertonic requests below 0.7 are accepted at the API boundary and then
+// normalized by the provider adapter to 0.8; they are not a separate lower
+// request bound.
+const (
+	AcceptedSpeedMin = 0.5
+	AcceptedSpeedMax = 1.5
+	RecommendedSpeed = 1.0
+)
 
 var supertonicLanguageNames = map[string]string{
 	"ar": "Arabic",
@@ -161,7 +176,95 @@ func CuratedVoices() []Voice {
 		voices = append(voices, expandVoiceModes(voice, supertonicLanguageCodes)...)
 	}
 
+	for i := range voices {
+		voices[i] = withVoiceCapabilities(voices[i])
+	}
+
 	return voices
+}
+
+// FilterVoices returns voices matching the requested language and engine.
+// Filters are normalized for surrounding whitespace and case, while matching
+// the catalog's actual language_code and engine values. An empty filter is
+// unconstrained; an unsupported value therefore produces an empty result.
+func FilterVoices(voices []Voice, languageCode, engine string) []Voice {
+	languageCode = normalizeFilterValue(languageCode)
+	engine = normalizeFilterValue(engine)
+	filtered := make([]Voice, 0, len(voices))
+	for _, voice := range voices {
+		if languageCode != "" && normalizeFilterValue(voice.LanguageCode) != languageCode {
+			continue
+		}
+		if engine != "" && normalizeFilterValue(voice.Engine) != engine {
+			continue
+		}
+		filtered = append(filtered, voice)
+	}
+	return filtered
+}
+
+// SortVoices applies the stable ordering used by the voices command.
+func SortVoices(voices []Voice) {
+	sort.SliceStable(voices, func(i, j int) bool {
+		left, right := voices[i], voices[j]
+		if left.Language != right.Language {
+			return left.Language < right.Language
+		}
+		if left.ID != right.ID {
+			return left.ID < right.ID
+		}
+		if left.LanguageCode != right.LanguageCode {
+			return left.LanguageCode < right.LanguageCode
+		}
+		if left.Engine != right.Engine {
+			return left.Engine < right.Engine
+		}
+		if left.Name != right.Name {
+			return left.Name < right.Name
+		}
+		if left.Gender != right.Gender {
+			return left.Gender < right.Gender
+		}
+		return left.Quality < right.Quality
+	})
+}
+
+// RecommendedVoice selects one deterministic voice from a catalog. The
+// synthesis default remains unchanged: this helper only chooses a result for
+// an explicit voices --recommended request.
+func RecommendedVoice(voices []Voice) (Voice, bool) {
+	if len(voices) == 0 {
+		return Voice{}, false
+	}
+	candidates := append([]Voice(nil), voices...)
+	SortVoices(candidates)
+	for _, preferredID := range []string{"st_m1", "af_heart"} {
+		for _, voice := range candidates {
+			if voice.ID == preferredID {
+				return voice, true
+			}
+		}
+	}
+	return candidates[0], true
+}
+
+func normalizeFilterValue(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
+}
+
+func withVoiceCapabilities(voice Voice) Voice {
+	if isSupertonicVoice(voice) {
+		voice.Engine = supertonicEngine
+	} else if voice.Engine == "" && isKnownKokoroVoiceID(voice.ID) {
+		voice.Engine = kokoroEngine
+	}
+	minSpeed := AcceptedSpeedMin
+	maxSpeed := AcceptedSpeedMax
+	recommendedSpeed := RecommendedSpeed
+	voice.MinSpeed = &minSpeed
+	voice.MaxSpeed = &maxSpeed
+	voice.RecommendedSpeed = &recommendedSpeed
+	return voice
 }
 
 // parseVoiceResponse parses the upstream TTS API voice response.
@@ -212,6 +315,9 @@ func parseVoiceResponse(raw json.RawMessage) ([]Voice, error) {
 			}
 		}
 		if len(voices) > 0 {
+			for i := range voices {
+				voices[i] = withVoiceCapabilities(voices[i])
+			}
 			return voices, nil
 		}
 		// Non-empty array but no valid voice IDs → error
@@ -332,28 +438,40 @@ func supertonicDisplayName(voiceID, languageCode, gender, fallback string) strin
 }
 
 func detectKokoroLanguageCode(voiceID string) string {
+	if code, ok := knownKokoroLanguageCode(voiceID); ok {
+		return code
+	}
+	return "a"
+}
+
+func isKnownKokoroVoiceID(voiceID string) bool {
+	_, ok := knownKokoroLanguageCode(voiceID)
+	return ok
+}
+
+func knownKokoroLanguageCode(voiceID string) (string, bool) {
+	voiceID = strings.ToLower(strings.TrimSpace(voiceID))
 	switch {
 	case strings.HasPrefix(voiceID, "af_"), strings.HasPrefix(voiceID, "am_"):
-		return "a"
+		return "a", true
 	case strings.HasPrefix(voiceID, "bf_"), strings.HasPrefix(voiceID, "bm_"):
-		return "b"
+		return "b", true
 	case strings.HasPrefix(voiceID, "ef_"), strings.HasPrefix(voiceID, "em_"):
-		return "e"
+		return "e", true
 	case strings.HasPrefix(voiceID, "ff_"), strings.HasPrefix(voiceID, "fm_"):
-		return "f"
+		return "f", true
 	case strings.HasPrefix(voiceID, "hf_"), strings.HasPrefix(voiceID, "hm_"):
-		return "h"
+		return "h", true
 	case strings.HasPrefix(voiceID, "if_"), strings.HasPrefix(voiceID, "im_"):
-		return "i"
+		return "i", true
 	case strings.HasPrefix(voiceID, "jf_"), strings.HasPrefix(voiceID, "jm_"):
-		return "j"
+		return "j", true
 	case strings.HasPrefix(voiceID, "pf_"), strings.HasPrefix(voiceID, "pm_"):
-		return "p"
+		return "p", true
 	case strings.HasPrefix(voiceID, "zf_"), strings.HasPrefix(voiceID, "zm_"):
-		return "z"
-	default:
-		return "a"
+		return "z", true
 	}
+	return "", false
 }
 
 func stringSlice(value interface{}) []string {

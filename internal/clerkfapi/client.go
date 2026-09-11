@@ -127,7 +127,10 @@ func (c *Client) VerifyEmailCode(ctx context.Context, challenge Challenge, code 
 	switch signIn.Status {
 	case SignInComplete:
 	case SignInNeedsFirstFactor:
-		return nil, wrapFlowError("validate_sign_in", errors.New("email code was incorrect or expired"))
+		// Clerk may omit a structured error body while leaving the sign-in in
+		// needs_first_factor. Treat this fixed client-side outcome as a
+		// retryable code failure without copying provider text.
+		return nil, wrapFlowError("validate_sign_in", errEmailCodeIncorrect)
 	default:
 		return nil, wrapFlowError("validate_sign_in", fmt.Errorf("unexpected sign-in state: %s", signIn.Status))
 	}
@@ -280,6 +283,26 @@ func (c *Client) RequestIDs() []string {
 	return ids
 }
 
+// ExportNativeClientToken returns the opaque Clerk native-client token needed
+// to resume a prepared challenge. Callers must keep it in protected local
+// state and never include it in user-facing output.
+func (c *Client) ExportNativeClientToken() (string, error) {
+	if c == nil || strings.TrimSpace(c.nativeClientToken) == "" {
+		return "", errors.New("clerk native client token missing")
+	}
+	return c.nativeClientToken, nil
+}
+
+// RestoreNativeClientToken resumes a previously prepared challenge. The token
+// is validated conservatively before it is used in an Authorization header.
+func (c *Client) RestoreNativeClientToken(token string) error {
+	if c == nil || strings.TrimSpace(token) == "" || len(token) > 2048 || strings.IndexFunc(token, func(r rune) bool { return r <= ' ' }) >= 0 {
+		return errors.New("invalid Clerk native client token")
+	}
+	c.nativeClientToken = token
+	return nil
+}
+
 func (c *Client) createNativeClient(ctx context.Context) error {
 	_, err := c.doRequest(ctx, http.MethodPost, "/v1/client", nil, true)
 	return err
@@ -337,10 +360,10 @@ func (c *Client) attemptSignUpVerification(ctx context.Context, challenge SignUp
 				return nil, errSignupBrowserFallback
 			}
 			if strings.Contains(strings.ToLower(requestErr.Code), "expired") {
-				return nil, errors.New("email code expired")
+				return nil, errEmailCodeExpired
 			}
 			if strings.Contains(strings.ToLower(requestErr.Code), "incorrect") || strings.Contains(strings.ToLower(requestErr.Code), "invalid") {
-				return nil, errors.New("email code incorrect")
+				return nil, errEmailCodeIncorrect
 			}
 		}
 		return nil, err
@@ -449,10 +472,10 @@ func (c *Client) attemptFirstFactor(ctx context.Context, challenge Challenge, co
 		return nil, decodeErr
 	}
 	if signIn.Status == SignInNeedsFirstFactor && hasClerkError(env.Errors, "expired") {
-		return nil, errors.New("email code expired")
+		return nil, errEmailCodeExpired
 	}
 	if signIn.Status == SignInNeedsFirstFactor && hasClerkError(env.Errors, "incorrect", "invalid") {
-		return nil, errors.New("email code incorrect")
+		return nil, errEmailCodeIncorrect
 	}
 	return signIn, nil
 }

@@ -5,6 +5,68 @@ import (
 	"testing"
 )
 
+func TestVoiceCapabilitiesUseServiceSpeedContract(t *testing.T) {
+	for _, voice := range CuratedVoices() {
+		if voice.MinSpeed == nil || *voice.MinSpeed != AcceptedSpeedMin {
+			t.Fatalf("%s min speed = %v, want %v", voice.ID, voice.MinSpeed, AcceptedSpeedMin)
+		}
+		if voice.MaxSpeed == nil || *voice.MaxSpeed != AcceptedSpeedMax {
+			t.Fatalf("%s max speed = %v, want %v", voice.ID, voice.MaxSpeed, AcceptedSpeedMax)
+		}
+		if voice.RecommendedSpeed == nil || *voice.RecommendedSpeed != RecommendedSpeed {
+			t.Fatalf("%s recommended speed = %v, want %v", voice.ID, voice.RecommendedSpeed, RecommendedSpeed)
+		}
+	}
+}
+
+func TestFilterVoicesNormalizesFiltersAndKeepsEmptyMatchesEmpty(t *testing.T) {
+	voices := CuratedVoices()
+
+	filtered := FilterVoices(voices, " FR ", " SUPER TONIC ")
+	if len(filtered) != 0 {
+		t.Fatalf("unsupported engine spelling should not match, got %d voices", len(filtered))
+	}
+
+	filtered = FilterVoices(voices, " FR ", " SUPERtonic ")
+	if len(filtered) != 10 {
+		t.Fatalf("French Supertonic filter returned %d voices, want 10", len(filtered))
+	}
+	for _, voice := range filtered {
+		if voice.LanguageCode != "fr" || voice.Engine != supertonicEngine {
+			t.Fatalf("unexpected filtered voice: %+v", voice)
+		}
+	}
+
+	kokoro := FilterVoices(voices, "a", "KOKORO")
+	if len(kokoro) == 0 {
+		t.Fatal("Kokoro filter should match curated American English voices")
+	}
+	for _, voice := range kokoro {
+		if voice.LanguageCode != "a" || voice.Engine != kokoroEngine {
+			t.Fatalf("unexpected Kokoro voice: %+v", voice)
+		}
+	}
+
+	if got := FilterVoices(voices, "zz", ""); len(got) != 0 {
+		t.Fatalf("unsupported language should produce no matches, got %d", len(got))
+	}
+}
+
+func TestRecommendedVoiceChoosesSupportedPairWithinFilter(t *testing.T) {
+	voices := FilterVoices(CuratedVoices(), "en", "supertonic")
+	recommended, ok := RecommendedVoice(voices)
+	if !ok {
+		t.Fatal("expected a recommendation")
+	}
+	if recommended.ID != "st_m1" || recommended.LanguageCode != "en" || recommended.Engine != supertonicEngine {
+		t.Fatalf("recommended voice = %+v, want st_m1/en/supertonic", recommended)
+	}
+
+	if _, ok := RecommendedVoice(nil); ok {
+		t.Fatal("empty catalog should not produce a recommendation")
+	}
+}
+
 func TestCuratedVoices(t *testing.T) {
 	voices := CuratedVoices()
 	if len(voices) < 300 {
@@ -64,6 +126,26 @@ func TestParseVoiceResponseArray(t *testing.T) {
 	}
 	if voices[1].Name != "Emma" {
 		t.Errorf("second voice Name: got %q", voices[1].Name)
+	}
+	if voices[0].Engine != kokoroEngine {
+		t.Errorf("missing inferred Kokoro engine: got %q", voices[0].Engine)
+	}
+	if voices[0].MinSpeed == nil || *voices[0].MinSpeed != AcceptedSpeedMin {
+		t.Errorf("missing accepted speed metadata: %+v", voices[0])
+	}
+}
+
+func TestParseVoiceResponseLeavesUnknownEngineUnset(t *testing.T) {
+	raw := json.RawMessage(`[{"id": "xx_custom", "name": "Custom", "gender": "Other", "language": "Test"}]`)
+	voices, err := parseVoiceResponse(raw)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(voices) != 1 {
+		t.Fatalf("expected one voice, got %d", len(voices))
+	}
+	if voices[0].Engine != "" {
+		t.Fatalf("unknown voice should omit engine metadata, got %q", voices[0].Engine)
 	}
 }
 
