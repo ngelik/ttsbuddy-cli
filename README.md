@@ -133,6 +133,23 @@ In v0.11.3 and newer, generic signed-out, missing-credential, invalid-credential
 and expired-session messages point to both interactive methods: `ttsbuddy auth
 email` or `ttsbuddy auth browser`.
 
+### Isolated config and session state (v0.11.5+)
+
+For CI, tests, and parallel agent runs, set `TTSBUDDY_CONFIG_DIR` or pass the
+global `--config-dir /absolute/path` flag. The selected directory contains the
+config file, last-job record, CLI session, and mutation/login locks; the flag
+takes precedence over the environment variable. Paths must be absolute and
+non-root, and invalid, empty, whitespace-only, or regular-file paths fail
+closed instead of falling back to `~/.ttsbuddy`.
+
+```bash
+TTSBUDDY_CONFIG_DIR="$(mktemp -d)" ttsbuddy voices --json
+ttsbuddy --config-dir "$(mktemp -d)" config get key
+```
+
+See [`docs/development/config-isolation.md`](docs/development/config-isolation.md)
+for the v0.11.5 release note and verification matrix.
+
 `ttsbuddy auth logout` revokes the stored session before clearing it. A network
 or server failure retains the local session so the command can be retried.
 `--local-only` skips revocation and warns that server validity may continue

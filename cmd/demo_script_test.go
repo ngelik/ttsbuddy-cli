@@ -77,7 +77,11 @@ func TestDemoScriptDoesNotLeakInheritedAPIKey(t *testing.T) {
 		t.Fatalf("demo script passed inherited credentials to stub:\n%s", stubEnv)
 	}
 	assertContains(t, stubEnv, "TTSBUDDY_API_URL=https://www.ttsbuddy.com/v1/cli-demo", "stub env")
-	assertContains(t, stubEnv, "TTSBUDDY_API_KEY=ttsb_demo_cli", "stub env")
+	assertContains(t, stubEnv, "TTSBUDDY_API_KEY=", "stub env")
+	if strings.Contains(stubEnv, "TTSBUDDY_API_KEY=ttsb_demo_cli") {
+		t.Fatalf("demo script unexpectedly exported the constrained key:\n%s", stubEnv)
+	}
+	assertContains(t, stubEnv, "--key ttsb_demo_cli", "stub args")
 }
 
 func TestDemoScriptRealKeyModeDefaultsAPIURLAndRedactsKey(t *testing.T) {
@@ -116,6 +120,9 @@ func TestDemoScriptRealKeyModeDefaultsAPIURLAndRedactsKey(t *testing.T) {
 	stubEnv := string(logBytes)
 	assertContains(t, stubEnv, "TTSBUDDY_API_URL=https://www.ttsbuddy.com/v1/agent-tts", "stub env")
 	assertContains(t, stubEnv, "TTSBUDDY_API_KEY=ttsb_real_secretvalue", "stub env")
+	if strings.Contains(stubEnv, "--key ttsb_real_secretvalue") {
+		t.Fatalf("real credential was exposed in CLI args:\n%s", stubEnv)
+	}
 }
 
 func TestDemoScriptRealKeyModeRequiresAPIKey(t *testing.T) {

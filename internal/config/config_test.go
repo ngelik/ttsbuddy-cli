@@ -22,6 +22,110 @@ func TestLoadMissingFile(t *testing.T) {
 	}
 }
 
+func TestConfigDirEnvIsUsedForAllPersistence(t *testing.T) {
+	home := t.TempDir()
+	explicit := filepath.Join(t.TempDir(), "isolated", "ttsbuddy")
+	t.Setenv("HOME", home)
+	t.Setenv(ConfigDirEnv, explicit)
+	if err := SetConfigDirOverride(""); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Save(&Config{DefaultVoice: "isolated-voice"}); err != nil {
+		t.Fatalf("Save() error: %v", err)
+	}
+	loaded, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if loaded.DefaultVoice != "isolated-voice" {
+		t.Fatalf("voice = %q, want isolated directory value", loaded.DefaultVoice)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".ttsbuddy")); !os.IsNotExist(err) {
+		t.Fatalf("default config directory was touched: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(explicit, "config.json")); err != nil {
+		t.Fatalf("isolated config file missing: %v", err)
+	}
+
+	cliCredential := "ttsc_" + strings.Repeat("a", 8) + "_" + strings.Repeat("b", 48)
+	session := StoredCLISession{Credential: cliCredential, ExpiresAt: time.Now().Add(time.Hour).UTC().Format(time.RFC3339)}
+	if err := StoreCLISession("", session); err != nil {
+		t.Fatalf("StoreCLISession() error: %v", err)
+	}
+	loaded, err = Load()
+	if err != nil || loaded.CLISession == nil || loaded.CLISession.Credential != cliCredential {
+		t.Fatalf("isolated CLI session was not persisted: cfg=%+v err=%v", loaded, err)
+	}
+	if err := ClearCLISession(cliCredential); err != nil {
+		t.Fatalf("ClearCLISession() error: %v", err)
+	}
+
+	jobID := "550e8400-e29b-41d4-a716-446655440000"
+	if err := SaveLastJob(jobID); err != nil {
+		t.Fatalf("SaveLastJob() error: %v", err)
+	}
+	lastJob, err := LoadLastJob()
+	if err != nil || lastJob == nil || lastJob.JobID != jobID {
+		t.Fatalf("isolated last job was not persisted: job=%+v err=%v", lastJob, err)
+	}
+	loginLock, err := AcquireLoginLock()
+	if err != nil {
+		t.Fatalf("AcquireLoginLock() error: %v", err)
+	}
+	if err := loginLock.Release(); err != nil {
+		t.Fatalf("Release login lock: %v", err)
+	}
+	for _, name := range []string{"last_job.json", "auth-login.lock", "config-mutation.lock"} {
+		if _, err := os.Stat(filepath.Join(explicit, name)); err != nil {
+			t.Fatalf("isolated %s missing: %v", name, err)
+		}
+	}
+}
+
+func TestConfigDirRejectsRelativeAndFilePaths(t *testing.T) {
+	t.Setenv(ConfigDirEnv, "relative/ttsbuddy")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "absolute path") {
+		t.Fatalf("relative config directory error = %v", err)
+	}
+
+	filePath := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(filePath, []byte("x"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(ConfigDirEnv, filePath)
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "not a directory") {
+		t.Fatalf("file config directory error = %v", err)
+	}
+
+	for _, value := range []string{"", "   ", string(filepath.Separator)} {
+		t.Setenv(ConfigDirEnv, value)
+		if _, err := Load(); err == nil {
+			t.Fatalf("config directory %q should fail closed", value)
+		}
+	}
+}
+
+func TestConfigDirOverrideTakesPrecedenceOverEnvironment(t *testing.T) {
+	envDir := filepath.Join(t.TempDir(), "env")
+	flagDir := filepath.Join(t.TempDir(), "flag")
+	t.Setenv(ConfigDirEnv, envDir)
+	if err := SetConfigDirOverride(flagDir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = SetConfigDirOverride("") })
+
+	if err := Save(&Config{DefaultVoice: "flag-voice"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(flagDir, "config.json")); err != nil {
+		t.Fatalf("flag directory was not used: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(envDir, "config.json")); !os.IsNotExist(err) {
+		t.Fatalf("environment directory unexpectedly used: %v", err)
+	}
+}
+
 func TestSaveAndLoad(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)

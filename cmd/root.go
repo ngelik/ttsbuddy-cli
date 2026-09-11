@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"runtime/debug"
+	"strings"
 
 	"github.com/ngelik/ttsbuddy-cli/internal/api"
 	"github.com/ngelik/ttsbuddy-cli/internal/config"
@@ -24,9 +25,10 @@ const missingAPIKeyMessage = "no credential configured. " + authMethodSuggestion
 
 // Global flag values.
 var (
-	flagAPIKey string
-	flagJSON   bool
-	flagQuiet  bool
+	flagAPIKey    string
+	flagConfigDir string
+	flagJSON      bool
+	flagQuiet     bool
 )
 
 // Resolved config available to all commands after PersistentPreRunE.
@@ -41,6 +43,13 @@ var rootCmd = &cobra.Command{
 	SilenceErrors: true,
 
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		if cmd.Flags().Changed("config-dir") && strings.TrimSpace(flagConfigDir) == "" {
+			_ = config.SetConfigDirOverride("")
+			return fmt.Errorf("--config-dir requires an absolute path")
+		}
+		if err := config.SetConfigDirOverride(flagConfigDir); err != nil {
+			return err
+		}
 		// Commands that work without disk config — skip loading to avoid
 		// failing on broken HOME/permissions.
 		switch {
@@ -96,6 +105,7 @@ func init() {
 	rootCmd.CompletionOptions.DisableDefaultCmd = true
 	rootCmd.SetFlagErrorFunc(helpOnFlagError)
 	rootCmd.PersistentFlags().StringVarP(&flagAPIKey, "key", "k", "", "API key (overrides config/env)")
+	rootCmd.PersistentFlags().StringVar(&flagConfigDir, "config-dir", "", "config/session directory (absolute path; env: TTSBUDDY_CONFIG_DIR)")
 	rootCmd.PersistentFlags().BoolVar(&flagJSON, "json", false, "JSON output to stdout only")
 	rootCmd.PersistentFlags().BoolVar(&flagQuiet, "quiet", false, "suppress progress output")
 

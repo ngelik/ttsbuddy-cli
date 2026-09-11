@@ -8,6 +8,12 @@ on:
   schedule:
     - cron: "23 9 * * 2"
   workflow_dispatch:
+    inputs:
+      live_acceptance:
+        description: Run live TTS acceptance on main before tagging a release
+        type: boolean
+        default: false
+        required: false
 
 permissions:
   contents: read
@@ -157,3 +163,31 @@ jobs:
           else
             test "$DEPENDENCY_REVIEW" = skipped
           fi
+
+  live-acceptance:
+    name: Pre-release live acceptance
+    if: github.event_name == 'workflow_dispatch' && inputs.live_acceptance && github.ref == 'refs/heads/main' && github.actor == 'ngelik'
+    needs: [test, lint, govulncheck]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: cli-live-acceptance
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: Build the source-pinned CLI
+        run: |
+          test "$CLERK_OAUTH_CLIENT_ID" = "gRApqxGCscvVfceh"
+          make build
+        env:
+          CLERK_OAUTH_CLIENT_ID: ${{ vars.CLERK_OAUTH_CLIENT_ID }}
+      - name: Run live acceptance with the existing test credential
+        env:
+          TTSBUDDY_API_KEY: ${{ secrets.TTSBUDDY_API_KEY }}
+        run: |
+          test -n "$TTSBUDDY_API_KEY"
+          make test-acceptance

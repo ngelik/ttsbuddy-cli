@@ -32,12 +32,12 @@ if ! command -v jq &>/dev/null; then
     exit 2
 fi
 
-TB_HOME="$(mktemp -d /tmp/ttsbuddy-accept.XXXXXX)"
+TB_CONFIG_DIR="$(mktemp -d /tmp/ttsbuddy-accept-config.XXXXXX)"
 TB_OUT="$(mktemp -d /tmp/ttsbuddy-out.XXXXXX)"
 ACCEPTANCE_RUN_ID="$(date +%Y%m%d%H%M%S)-$$-$RANDOM"
-trap 'rm -rf "$TB_HOME" "$TB_OUT"' EXIT
+trap 'rm -rf "$TB_CONFIG_DIR" "$TB_OUT"' EXIT
 
-tb() { HOME="$TB_HOME" "$BINARY" "$@"; }
+tb() { TTSBUDDY_CONFIG_DIR="$TB_CONFIG_DIR" "$BINARY" "$@"; }
 
 # Captured job_id for status tests
 JOB_ID=""
@@ -52,7 +52,7 @@ else
 fi
 echo "POST delay: ${POST_DELAY}s"
 echo "Run ID:     $ACCEPTANCE_RUN_ID"
-echo "TB_HOME:    $TB_HOME"
+echo "Config dir: $TB_CONFIG_DIR"
 echo "TB_OUT:     $TB_OUT"
 echo ""
 
@@ -239,7 +239,7 @@ tb config set voice st_m1 >/dev/null 2>&1
 tb config set speed 1.25 >/dev/null 2>&1
 tb config set timeout 30s >/dev/null 2>&1
 tb config set output_dir "$TB_OUT" >/dev/null 2>&1
-echo "  Config seeded in $TB_HOME"
+echo "  Config seeded in $TB_CONFIG_DIR"
 
 # Create markdown fixture
 cat > "$TB_OUT/test.md" <<'MDEOF'
@@ -320,17 +320,17 @@ val=$(TTSBUDDY_VOICE=bf_emma tb config get voice 2>/dev/null)
 set -e
 if [ "$val" = "bf_emma" ]; then pass "B.15 env override"; else fail "B.15 env override" "got '$val'"; fi
 
-# B.16: fresh home smoke
-FRESH_HOME="$(mktemp -d /tmp/ttsbuddy-fresh.XXXXXX)"
+# B.16: fresh isolated config smoke
+FRESH_CONFIG_DIR="$(mktemp -d /tmp/ttsbuddy-fresh-config.XXXXXX)"
 set +e
-HOME="$FRESH_HOME" "$BINARY" version >/dev/null 2>&1 && \
-HOME="$FRESH_HOME" "$BINARY" --help >/dev/null 2>&1 && \
-HOME="$FRESH_HOME" "$BINARY" voices >/dev/null 2>&1 && \
-HOME="$FRESH_HOME" "$BINARY" completion zsh >/dev/null 2>&1
+TTSBUDDY_CONFIG_DIR="$FRESH_CONFIG_DIR" "$BINARY" version >/dev/null 2>&1 && \
+TTSBUDDY_CONFIG_DIR="$FRESH_CONFIG_DIR" "$BINARY" --help >/dev/null 2>&1 && \
+TTSBUDDY_CONFIG_DIR="$FRESH_CONFIG_DIR" "$BINARY" voices >/dev/null 2>&1 && \
+TTSBUDDY_CONFIG_DIR="$FRESH_CONFIG_DIR" "$BINARY" completion zsh >/dev/null 2>&1
 fresh_exit=$?
 set -e
-rm -rf "$FRESH_HOME"
-if [ "$fresh_exit" -eq 0 ]; then pass "B.16 fresh home"; else fail "B.16 fresh home" "exit $fresh_exit"; fi
+rm -rf "$FRESH_CONFIG_DIR"
+if [ "$fresh_exit" -eq 0 ]; then pass "B.16 fresh isolated config"; else fail "B.16 fresh isolated config" "exit $fresh_exit"; fi
 echo ""
 
 # ============================================================
