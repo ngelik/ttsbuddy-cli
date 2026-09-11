@@ -7,10 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -394,19 +396,14 @@ func (c *Client) ResolveStatusURL(statusURL string) string {
 	return fmt.Sprintf("%s://%s%s", parsed.Scheme, parsed.Host, statusURL)
 }
 
-// RetryAfterHeader extracts the Retry-After header value in seconds. Returns 0 if absent.
+// RetryAfterHeader extracts the Retry-After header value in seconds. It
+// accepts both delta-seconds and HTTP-date forms. Invalid or negative values
+// return 0. A zero value is also returned for an already elapsed date.
 func RetryAfterHeader(resp *http.Response) int {
 	if resp == nil {
 		return 0
 	}
-	val := resp.Header.Get("Retry-After")
-	if val == "" {
-		return 0
-	}
-	var seconds int
-	if _, err := fmt.Sscanf(val, "%d", &seconds); err != nil {
-		return 0
-	}
+	seconds, _ := parseRetryAfter(resp.Header.Get("Retry-After"), time.Now().UTC())
 	return seconds
 }
 
@@ -428,6 +425,9 @@ func parseResponse(resp *http.Response) (*TTSResponse, int, error) {
 				Message: fmt.Sprintf("response too large (>%dMB, HTTP %d)", maxResponseSize/1024/1024, resp.StatusCode),
 			},
 		}
+		if retry, ok := parseRetryAfter(resp.Header.Get("Retry-After"), time.Now().UTC()); ok {
+			synthetic.RetryAfterSeconds = &retry
+		}
 		return &synthetic, resp.StatusCode, &APIResponseError{
 			StatusCode: resp.StatusCode,
 			Response:   synthetic,
@@ -440,16 +440,15 @@ func parseResponse(resp *http.Response) (*TTSResponse, int, error) {
 		// For error status codes, synthesize an APIResponseError so retry
 		// and user-guidance logic still works based on HTTP status.
 		if resp.StatusCode >= 400 {
-			body := string(data)
-			if len(body) > 200 {
-				body = body[:200] + "..."
-			}
 			synthetic := TTSResponse{
 				Success: false,
 				Error: &APIError{
 					Code:    statusToErrorCode(resp.StatusCode),
-					Message: fmt.Sprintf("HTTP %d (non-JSON response): %s", resp.StatusCode, body),
+					Message: fmt.Sprintf("HTTP %d response was not JSON", resp.StatusCode),
 				},
+			}
+			if retry, ok := parseRetryAfter(resp.Header.Get("Retry-After"), time.Now().UTC()); ok {
+				synthetic.RetryAfterSeconds = &retry
 			}
 			return &synthetic, resp.StatusCode, &APIResponseError{
 				StatusCode: resp.StatusCode,
@@ -457,6 +456,20 @@ func parseResponse(resp *http.Response) (*TTSResponse, int, error) {
 			}
 		}
 		return nil, resp.StatusCode, fmt.Errorf("parsing response (status %d): %w", resp.StatusCode, err)
+	}
+	if ttsResp.RetryAfterSeconds != nil {
+		value := *ttsResp.RetryAfterSeconds
+		if value < 0 || int64(value) > maxParsedRetryAfterSeconds {
+			ttsResp.RetryAfterSeconds = nil
+		}
+	}
+
+	// A valid body value is authoritative. Only fill from the header when the
+	// API omitted JSON timing entirely (including 202 processing responses).
+	if ttsResp.RetryAfterSeconds == nil {
+		if retry, ok := parseRetryAfter(resp.Header.Get("Retry-After"), time.Now().UTC()); ok {
+			ttsResp.RetryAfterSeconds = &retry
+		}
 	}
 
 	if resp.StatusCode >= 400 {
@@ -467,6 +480,51 @@ func parseResponse(resp *http.Response) (*TTSResponse, int, error) {
 	}
 
 	return &ttsResp, resp.StatusCode, nil
+}
+
+// Keep values representable as time.Duration seconds (roughly 292 years),
+// while allowing long server hints to be surfaced instead of silently falling
+// back to a one-second retry. WithRetry separately bounds automatic waiting.
+const maxParsedRetryAfterSeconds = int64(9223372036)
+
+// parseRetryAfter parses the standards-defined Retry-After forms. The bool
+// distinguishes a valid zero from an absent/malformed value. Values are
+// bounded only by time.Duration's representable seconds; WithRetry separately
+// enforces its policy max delay.
+func parseRetryAfter(value string, now time.Time) (int, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0, false
+	}
+	digitsOnly := true
+	for _, r := range value {
+		if r < '0' || r > '9' {
+			digitsOnly = false
+			break
+		}
+	}
+	if digitsOnly {
+		seconds, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			return 0, false
+		}
+		if seconds < 0 || seconds > maxParsedRetryAfterSeconds {
+			return 0, false
+		}
+		return int(seconds), true
+	}
+	when, err := http.ParseTime(value)
+	if err != nil {
+		return 0, false
+	}
+	if when.Before(now) {
+		return 0, true
+	}
+	seconds := int(math.Ceil(when.Sub(now).Seconds()))
+	if int64(seconds) < 0 || int64(seconds) > maxParsedRetryAfterSeconds {
+		return 0, false
+	}
+	return seconds, true
 }
 
 // ErrForbidden is used for synthetic (non-JSON) 403 responses where the

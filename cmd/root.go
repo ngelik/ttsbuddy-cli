@@ -150,6 +150,10 @@ func Execute() error {
 			_, _ = fmt.Fprintln(os.Stdout, string(data))
 		} else if !helpShown {
 			fmt.Fprintln(os.Stderr, "Error:", err)
+			if exitErr, ok := err.(*exitError); ok && exitErr.idempotencyKey != "" && strings.Contains(exitErr.nextAction, "<same-value>") {
+				action := strings.ReplaceAll(exitErr.nextAction, "<same-value>", exitErr.idempotencyKey)
+				fmt.Fprintf(os.Stderr, "Recovery: %s\n", action)
+			}
 		}
 
 		os.Exit(exitCode)

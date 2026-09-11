@@ -114,6 +114,10 @@ func TestStatusExpired(t *testing.T) {
 
 	r := runCLI(t, envForTest(home, apiSrv, "ttsb_test_key"), "status", "exp-job")
 	assertExitCode(t, r, 1)
+	jsonResult := runCLI(t, envForTest(home, apiSrv, "ttsb_test_key"), "status", "exp-job", "--json")
+	assertExitCode(t, jsonResult, 1)
+	assertContains(t, jsonResult.Stdout, `"reason": "AUDIO_EXPIRED"`, "expired recovery reason")
+	assertContains(t, jsonResult.Stdout, "fresh idempotency key", "expired recovery action")
 }
 
 func TestStatusJSON(t *testing.T) {

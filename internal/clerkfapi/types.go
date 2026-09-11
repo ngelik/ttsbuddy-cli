@@ -8,11 +8,26 @@ import (
 
 var (
 	errSignupEmailExists     = errors.New("that email is already registered")
-	errSignupBrowserFallback = errors.New("clerk signup requires browser authentication")
+	errBrowserAuthRequired   = errors.New("clerk authentication requires browser authentication")
+	errSignupBrowserFallback = fmt.Errorf("%w: signup", errBrowserAuthRequired)
 	errPendingSessionTask    = errors.New("pending session task blocks CLI login")
 	errEmailCodeExpired      = errors.New("email code expired")
 	errEmailCodeIncorrect    = errors.New("email code incorrect")
 )
+
+// browserRequiredError carries a stable internal classification while keeping
+// the legacy safe error text used by callers and tests. Provider state is
+// never copied into the message.
+type browserRequiredError struct{ message string }
+
+func (e *browserRequiredError) Error() string { return e.message }
+func (e *browserRequiredError) Is(target error) bool {
+	return target == errBrowserAuthRequired
+}
+
+func browserRequiredWithMessage(message string) error {
+	return &browserRequiredError{message: message}
+}
 
 // IsSignupEmailExists reports the safe, fixed error returned when signup is
 // attempted for an existing identifier. It never exposes Clerk response text.
@@ -21,6 +36,11 @@ func IsSignupEmailExists(err error) bool { return errors.Is(err, errSignupEmailE
 // IsSignupBrowserFallback reports that terminal signup cannot satisfy the
 // provider's requirements and must continue in a browser.
 func IsSignupBrowserFallback(err error) bool { return errors.Is(err, errSignupBrowserFallback) }
+
+// IsBrowserAuthRequired reports that the provider requires an interactive
+// browser step (for example MFA, client trust, or a new-password task).
+// Provider response text is intentionally not exposed through this helper.
+func IsBrowserAuthRequired(err error) bool { return errors.Is(err, errBrowserAuthRequired) }
 
 // IsEmailCodeExpired and IsEmailCodeIncorrect expose only fixed flow classes;
 // provider response text remains private to the Clerk client.
@@ -32,8 +52,11 @@ func isPendingSessionTask(err error) bool { return errors.Is(err, errPendingSess
 type SignInState string
 
 const (
-	SignInNeedsFirstFactor SignInState = "needs_first_factor"
-	SignInComplete         SignInState = "complete"
+	SignInNeedsFirstFactor  SignInState = "needs_first_factor"
+	SignInNeedsSecondFactor SignInState = "needs_second_factor"
+	SignInNeedsClientTrust  SignInState = "needs_client_trust"
+	SignInNeedsNewPassword  SignInState = "needs_new_password"
+	SignInComplete          SignInState = "complete"
 )
 
 type SignUpState string
@@ -102,6 +125,7 @@ func FailureCode(err error) string {
 
 var allowlistedFailureCodes = map[string]struct{}{
 	"captcha_required":           {},
+	"client_trust_required":      {},
 	"email_address_exists":       {},
 	"email_exists":               {},
 	"form_code_expired":          {},
@@ -117,6 +141,10 @@ var allowlistedFailureCodes = map[string]struct{}{
 	"legal_accepted_required":    {},
 	"mfa_required":               {},
 	"multi_factor_required":      {},
+	"needs_client_trust":         {},
+	"needs_new_password":         {},
+	"needs_second_factor":        {},
+	"new_password_required":      {},
 	"rate_limit_exceeded":        {},
 	"second_factor_required":     {},
 	"too_many_requests":          {},

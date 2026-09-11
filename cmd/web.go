@@ -57,6 +57,9 @@ func runWeb(cmd *cobra.Command, rawURL string) error {
 		return structuredExitError(1, "config not loaded", "CLI_ERROR", "INVALID_CONFIGURATION", "Run ttsbuddy doctor.", false, 0)
 	}
 	if resolved.APIKey == "" {
+		if resolved.CLISessionExpired {
+			return structuredExitError(1, "CLI session has expired. "+authMethodSuggestion, "CLI_ERROR", "SESSION_EXPIRED", authMethodSuggestion, false, 0)
+		}
 		return structuredExitError(2, missingAPIKeyMessage, "CLI_ERROR", "AUTH_REQUIRED", authMethodSuggestion, false, 0)
 	}
 
@@ -152,9 +155,10 @@ func runWeb(cmd *cobra.Command, rawURL string) error {
 		submitSpin.Start("Submitting webpage TTS request...")
 	}
 
-	resp, status, err := api.WithRetry(ctx, api.DefaultRetryConfig(), func(key string) (*api.TTSResponse, int, error) {
+	retryResult := api.WithRetryResult(ctx, api.DefaultRetryConfig(), func(key string) (*api.TTSResponse, int, error) {
 		return client.Speak(ctx, req, key)
 	}, idemKey)
+	resp, status, err := retryResult.Response, retryResult.Status, retryResult.Err
 
 	if err != nil {
 		submitSpin.Stop()
@@ -162,9 +166,11 @@ func runWeb(cmd *cobra.Command, rawURL string) error {
 			if !flagJSON {
 				fmt.Fprintln(os.Stderr, "\nInterrupted.")
 			}
-			return structuredExitError(130, "interrupted while submitting the request", "CLI_ERROR", "REQUEST_INTERRUPTED", "Retry the same request with the same idempotency key.", true, 0)
+			mapped := structuredExitError(130, "interrupted while submitting the request", "CLI_ERROR", "REQUEST_INTERRUPTED", "Retry the same request with --idempotency-key <same-value>.", true, 0)
+			mapped.idempotencyKey = retryResult.EffectiveKey
+			return mapped
 		}
-		return handleAPIError(err, status)
+		return classifyAPIErrorWithKey(err, status, retryResult.EffectiveKey)
 	}
 	submitSpin.Stop()
 
@@ -178,13 +184,9 @@ func runWeb(cmd *cobra.Command, rawURL string) error {
 	case resp.Status == "completed":
 		return handleCompletedWithFreshRetry(ctx, client, req, resp, resolved, false)
 	case resp.Status == "expired":
-		return &exitError{code: 1, msg: "audio file has expired and been deleted. Submit a new request."}
+		return classifyTerminalResponse(resp, "")
 	case resp.Status == "failed":
-		msg := "TTS generation failed"
-		if resp.Error != nil {
-			msg = resp.Error.Message
-		}
-		return &exitError{code: 1, msg: msg}
+		return classifyTerminalResponse(resp, "")
 	case status == 202 || resp.Status == "processing":
 		renderTranslationMeta(resp)
 		return pollUntilComplete(ctx, client, resp, resolved, func(done *api.TTSResponse) error {

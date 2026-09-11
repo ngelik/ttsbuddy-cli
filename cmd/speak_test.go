@@ -157,6 +157,14 @@ func TestIsPermanentErrorAll(t *testing.T) {
 	}
 }
 
+func TestPollDelayDeadlineReturnsResumeActionWithServerHint(t *testing.T) {
+	hint := 60
+	err := pollDelayDeadlineError("job-poll", time.Now().Add(time.Second), 60*time.Second, &hint)
+	if err == nil || err.reason != "POLL_TIMEOUT" || err.retryAfterSeconds != hint || !strings.Contains(err.nextAction, "ttsbuddy status job-poll") {
+		t.Fatalf("err=%#v", err)
+	}
+}
+
 func TestHandleAPIErrorAllCodes(t *testing.T) {
 	codes := []struct {
 		code     string

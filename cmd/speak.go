@@ -101,6 +101,9 @@ func runSpeak(cmd *cobra.Command, args []string) error {
 	}
 
 	if resolved.APIKey == "" {
+		if resolved.CLISessionExpired {
+			return structuredExitError(1, "CLI session has expired. "+authMethodSuggestion, "CLI_ERROR", "SESSION_EXPIRED", authMethodSuggestion, false, 0)
+		}
 		return structuredExitError(2, missingAPIKeyMessage, "CLI_ERROR", "AUTH_REQUIRED", authMethodSuggestion, false, 0)
 	}
 
@@ -181,9 +184,10 @@ func runSpeak(cmd *cobra.Command, args []string) error {
 		spin.Start("Submitting TTS request...")
 	}
 
-	resp, status, err := api.WithRetry(ctx, api.DefaultRetryConfig(), func(key string) (*api.TTSResponse, int, error) {
+	retryResult := api.WithRetryResult(ctx, api.DefaultRetryConfig(), func(key string) (*api.TTSResponse, int, error) {
 		return client.Speak(ctx, req, key)
 	}, idemKey)
+	resp, status, err := retryResult.Response, retryResult.Status, retryResult.Err
 
 	if err != nil {
 		spin.Stop()
@@ -191,9 +195,11 @@ func runSpeak(cmd *cobra.Command, args []string) error {
 			if !flagJSON {
 				fmt.Fprintln(os.Stderr, "\nInterrupted.")
 			}
-			return structuredExitError(130, "interrupted while submitting the request", "CLI_ERROR", "REQUEST_INTERRUPTED", "Retry the same request with the same idempotency key.", true, 0)
+			mapped := structuredExitError(130, "interrupted while submitting the request", "CLI_ERROR", "REQUEST_INTERRUPTED", "Retry the same request with --idempotency-key <same-value>.", true, 0)
+			mapped.idempotencyKey = retryResult.EffectiveKey
+			return mapped
 		}
-		return handleAPIError(err, status)
+		return classifyAPIErrorWithKey(err, status, retryResult.EffectiveKey)
 	}
 	spin.Stop()
 
@@ -214,17 +220,10 @@ func handleSpeakResponse(ctx context.Context, client *api.Client, req api.SpeakR
 		return handleCompletedWithFreshRetry(ctx, client, req, resp, resolved, allowFreshDownloadRetry)
 
 	case resp.Status == "expired":
-		return &exitError{code: 1, msg: "audio file has expired and been deleted. Submit a new request."}
+		return structuredExitError(1, "audio file has expired and been deleted. Submit a new request.", "CLI_ERROR", "AUDIO_EXPIRED", "Submit a new request with a fresh idempotency key.", false, 0)
 
 	case resp.Status == "failed":
-		msg := "TTS generation failed"
-		if resp.Error != nil {
-			msg = resp.Error.Message
-		}
-		if resp.Error != nil && api.NeedsNewIdempotencyKey(resp.Error) {
-			return &exitError{code: 1, msg: msg + "\nUse --idempotency-key with a new value to retry."}
-		}
-		return &exitError{code: 1, msg: msg}
+		return classifyTerminalResponse(resp, "")
 
 	case status == 202 || resp.Status == "processing":
 		renderTranslationMeta(resp)
@@ -259,14 +258,19 @@ func pollUntilComplete(ctx context.Context, client *api.Client, initial *api.TTS
 
 	// Initial delay from server hint or 3s default
 	delay := 3 * time.Second
+	var delayHint *int
 	if initial.RetryAfterSeconds != nil {
 		delay = time.Duration(*initial.RetryAfterSeconds) * time.Second
+		delayHint = initial.RetryAfterSeconds
 	}
 
 	for {
 		// Check timeout
 		if time.Now().After(deadline) {
 			return structuredExitError(1, fmt.Sprintf("polling timed out after %s. Resume with: ttsbuddy status %s", resolved.PollTimeout, jobID), "CLI_ERROR", "POLL_TIMEOUT", fmt.Sprintf("Resume with: ttsbuddy status %s", jobID), true, 0)
+		}
+		if timeoutErr := pollDelayDeadlineError(jobID, deadline, delay, delayHint); timeoutErr != nil {
+			return timeoutErr
 		}
 
 		// Wait
@@ -286,8 +290,17 @@ func pollUntilComplete(ctx context.Context, client *api.Client, initial *api.TTS
 			if isPermanentError(err, pollStatus) {
 				return handleAPIError(err, pollStatus)
 			}
-			stderrMsg("Status check error: %v, retrying...\n", err)
-			delay = minDuration(delay*3/2, 15*time.Second)
+			stderrMsg("Status check failed (HTTP %d), retrying...\n", pollStatus)
+			if resp != nil && resp.RetryAfterSeconds != nil {
+				delay = time.Duration(*resp.RetryAfterSeconds) * time.Second
+				delayHint = resp.RetryAfterSeconds
+				if timeoutErr := pollDelayDeadlineError(jobID, deadline, delay, resp.RetryAfterSeconds); timeoutErr != nil {
+					return timeoutErr
+				}
+			} else {
+				delay = minDuration(delay*3/2, 15*time.Second)
+				delayHint = nil
+			}
 			continue
 		}
 
@@ -295,18 +308,16 @@ func pollUntilComplete(ctx context.Context, client *api.Client, initial *api.TTS
 		case "completed":
 			return onCompleted(resp)
 		case "expired":
-			return &exitError{code: 1, msg: "audio file has expired. Submit a new request."}
+			return structuredExitError(1, fmt.Sprintf("job %s: audio file has expired. Submit a new request.", jobID), "CLI_ERROR", "AUDIO_EXPIRED", "Submit a new request with a fresh idempotency key.", false, 0)
 		case "failed":
-			msg := "TTS generation failed"
-			if resp.Error != nil {
-				msg = resp.Error.Message
-			}
-			return &exitError{code: 1, msg: msg}
+			return classifyTerminalResponse(resp, jobID)
 		case "processing":
 			if resp.RetryAfterSeconds != nil {
 				delay = time.Duration(*resp.RetryAfterSeconds) * time.Second
+				delayHint = resp.RetryAfterSeconds
 			} else {
 				delay = minDuration(delay*3/2, 15*time.Second)
+				delayHint = nil
 			}
 			elapsed := time.Since(deadline.Add(-timeout))
 			spin.Update(renderProgress(resp, elapsed))
@@ -314,6 +325,20 @@ func pollUntilComplete(ctx context.Context, client *api.Client, initial *api.TTS
 			return &exitError{code: 1, msg: fmt.Sprintf("unexpected job status %q from API. Job ID: %s", resp.Status, jobID)}
 		}
 	}
+}
+
+func pollDelayDeadlineError(jobID string, deadline time.Time, delay time.Duration, retryAfter *int) *exitError {
+	remaining := time.Until(deadline)
+	if delay <= remaining {
+		return nil
+	}
+	next := fmt.Sprintf("Resume with: ttsbuddy status %s", jobID)
+	message := fmt.Sprintf("polling deadline reached before the next status check for job %s; %s", jobID, next)
+	retrySeconds := 0
+	if retryAfter != nil && *retryAfter >= 0 {
+		retrySeconds = *retryAfter
+	}
+	return structuredExitError(1, message, "CLI_ERROR", "POLL_TIMEOUT", next, true, retrySeconds)
 }
 
 func handleCompleted(ctx context.Context, client *api.Client, resp *api.TTSResponse, resolved *config.ResolvedConfig) error {
@@ -404,17 +429,20 @@ func handleCompletedWithFreshRetry(ctx context.Context, client *api.Client, req 
 	}
 
 	stderrMsg("Cached audio URL was not downloadable; retrying with a fresh job...\n")
-	freshResp, status, freshErr := api.WithRetry(ctx, api.DefaultRetryConfig(), func(key string) (*api.TTSResponse, int, error) {
+	freshRetryResult := api.WithRetryResult(ctx, api.DefaultRetryConfig(), func(key string) (*api.TTSResponse, int, error) {
 		return client.Speak(ctx, req, key)
 	}, api.GenerateNew())
+	freshResp, status, freshErr := freshRetryResult.Response, freshRetryResult.Status, freshRetryResult.Err
 	if freshErr != nil {
 		if ctx.Err() != nil {
 			if !flagJSON {
 				fmt.Fprintln(os.Stderr, "\nInterrupted.")
 			}
-			return structuredExitError(130, "interrupted while retrying the request", "CLI_ERROR", "REQUEST_INTERRUPTED", "Retry the same request with the same idempotency key.", true, 0)
+			mapped := structuredExitError(130, "interrupted while retrying the request", "CLI_ERROR", "REQUEST_INTERRUPTED", "Retry the same request with --idempotency-key <same-value>.", true, 0)
+			mapped.idempotencyKey = freshRetryResult.EffectiveKey
+			return mapped
 		}
-		return handleAPIError(freshErr, status)
+		return classifyAPIErrorWithKey(freshErr, status, freshRetryResult.EffectiveKey)
 	}
 
 	if freshResp.JobID != "" {
@@ -670,6 +698,7 @@ type exitError struct {
 	retryable         bool
 	retryAfterSeconds int
 	nextAction        string
+	idempotencyKey    string
 }
 
 func (e *exitError) Error() string { return e.msg }
@@ -678,6 +707,43 @@ func (e *exitError) Unwrap() error { return e.err }
 
 func handleAPIError(err error, status int) error {
 	return classifyAPIError(err, status)
+}
+
+// classifyTerminalResponse routes provider/job terminal states through the
+// same recovery contract as HTTP failures, while never copying provider error
+// messages into user-facing output.
+func classifyTerminalResponse(resp *api.TTSResponse, jobID string) *exitError {
+	if resp == nil {
+		return structuredExitError(1, "TTS generation failed", "CLI_ERROR", "SERVICE_ERROR", "Retry the same request with --idempotency-key <same-value>.", true, 0)
+	}
+	status := 200
+	if resp.Status == "expired" {
+		message := "audio file has expired. Submit a new request."
+		if jobID != "" {
+			message = fmt.Sprintf("Job %s: audio file has expired. Submit a new request.", jobID)
+		}
+		return structuredExitError(1, message, "CLI_ERROR", "AUDIO_EXPIRED", "Submit a new request with a fresh idempotency key.", false, 0)
+	}
+	if resp.Error == nil {
+		message := "TTS generation failed"
+		if jobID != "" {
+			message = fmt.Sprintf("Job %s: TTS generation failed", jobID)
+		}
+		return structuredExitError(1, message, "CLI_ERROR", "SERVICE_ERROR", "Submit again with a fresh idempotency key after checking the request.", false, 0)
+	}
+	mapped := classifyAPIError(&api.APIResponseError{StatusCode: status, Response: *resp}, status)
+	if jobID != "" {
+		mapped.msg = fmt.Sprintf("Job %s: %s", jobID, mapped.msg)
+	}
+	// A cached terminal failure is definitive for this job. Reusing its key
+	// would replay the same failed result, so require a fresh submission key.
+	mapped.nextAction = "Submit again with a fresh idempotency key after checking the request."
+	mapped.retryable = false
+	if api.NeedsNewIdempotencyKey(resp.Error) {
+		mapped.nextAction = "Submit again with a fresh idempotency key (for example: --idempotency-key <new-value>)."
+		mapped.retryable = false
+	}
+	return mapped
 }
 
 func stderrMsg(format string, a ...interface{}) {

@@ -30,6 +30,7 @@ type ResolvedConfig struct {
 	Speed               float64
 	OutputDir           string
 	PollTimeout         string
+	CLISessionExpired   bool
 }
 
 // Resolve applies precedence: flags > env vars > config file > defaults.
@@ -54,7 +55,9 @@ func Resolve(cfg *Config, flags FlagValues) (*ResolvedConfig, []string) {
 		r.APIKey = ""
 		warnings = append(warnings, "stored API key is malformed; ignoring it")
 	}
-	if session, warning := ActiveCLISession(cfg, time.Now()); session != nil {
+	now := time.Now()
+	r.CLISessionExpired = IsCLISessionExpired(cfg, now)
+	if session, warning := ActiveCLISession(cfg, now); session != nil {
 		r.APIKey = session.Credential
 	} else if warning != "" {
 		warnings = append(warnings, warning)

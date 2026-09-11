@@ -661,6 +661,62 @@ func TestStartEmailCodeRejectsPendingSignInTask(t *testing.T) {
 	if err == nil || err.Error() != "unable to start Clerk email sign-in" {
 		t.Fatalf("expected generic pending-state error, got %v", err)
 	}
+	if !IsBrowserAuthRequired(err) {
+		t.Fatal("pending sign-in task was not classified as browser-required")
+	}
+}
+
+func TestSignInInteractiveStatesAndMixedTasksRequireBrowser(t *testing.T) {
+	for _, state := range []SignInState{SignInNeedsSecondFactor, SignInNeedsClientTrust, SignInNeedsNewPassword} {
+		t.Run(string(state), func(t *testing.T) {
+			srv := newScriptedServer(t, []scriptedResponse{
+				{validate: validateFormRequest(http.MethodPost, "/v1/client", "", map[string]string{}), cookies: []http.Cookie{{Name: "__client", Value: "client-1"}}, bodyJSON: map[string]any{"response": map[string]any{"id": "client_123"}}},
+				{validate: validateFormRequest(http.MethodPost, "/v1/client/sign_ins", "client-1", map[string]string{"identifier": "person@example.com"}), cookies: []http.Cookie{{Name: "__client", Value: "client-2"}}, bodyJSON: map[string]any{"response": map[string]any{"id": "si_123", "status": string(state)}}},
+			})
+			defer srv.Close()
+			client, err := New(srv.URL, "test")
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = client.StartEmailCode(context.Background(), "person@example.com")
+			if err == nil || !IsBrowserAuthRequired(err) {
+				t.Fatalf("state %s err=%v, want browser-required", state, err)
+			}
+		})
+	}
+
+	// A needs_first_factor response with a pending task must not be treated as
+	// a retryable incorrect code.
+	srv := newScriptedServer(t, []scriptedResponse{
+		{validate: validateFormRequest(http.MethodPost, "/v1/client", "", map[string]string{}), cookies: []http.Cookie{{Name: "__client", Value: "client-1"}}, bodyJSON: map[string]any{"response": map[string]any{"id": "client_123"}}},
+		{validate: validateFormRequest(http.MethodPost, "/v1/client/sign_ins", "client-1", map[string]string{"identifier": "person@example.com"}), cookies: []http.Cookie{{Name: "__client", Value: "client-2"}}, bodyJSON: map[string]any{"response": map[string]any{"id": "si_123", "status": string(SignInNeedsFirstFactor), "current_task": map[string]any{"key": "reset_password"}}}},
+	})
+	defer srv.Close()
+	client, err := New(srv.URL, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.StartEmailCode(context.Background(), "person@example.com")
+	if err == nil || !IsBrowserAuthRequired(err) {
+		t.Fatalf("mixed pending task err=%v, want browser-required", err)
+	}
+}
+
+func TestPrepareFirstFactorInteractiveStateRequiresBrowser(t *testing.T) {
+	srv := newScriptedServer(t, []scriptedResponse{
+		{validate: validateFormRequest(http.MethodPost, "/v1/client", "", map[string]string{}), cookies: []http.Cookie{{Name: "__client", Value: "client-1"}}, bodyJSON: map[string]any{"response": map[string]any{"id": "client_123"}}},
+		{validate: validateFormRequest(http.MethodPost, "/v1/client/sign_ins", "client-1", map[string]string{"identifier": "person@example.com"}), cookies: []http.Cookie{{Name: "__client", Value: "client-2"}}, bodyJSON: map[string]any{"response": map[string]any{"id": "si_123", "status": string(SignInNeedsFirstFactor), "supported_first_factors": []map[string]any{{"strategy": "email_code", "email_address_id": "idn_123"}}}}},
+		{validate: validateFormRequest(http.MethodPost, "/v1/client/sign_ins/si_123/prepare_first_factor", "client-2", map[string]string{"strategy": "email_code", "email_address_id": "idn_123"}), cookies: []http.Cookie{{Name: "__client", Value: "client-3"}}, bodyJSON: map[string]any{"response": map[string]any{"id": "si_123", "status": string(SignInNeedsSecondFactor)}}},
+	})
+	defer srv.Close()
+	client, err := New(srv.URL, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.StartEmailCode(context.Background(), "person@example.com")
+	if err == nil || !IsBrowserAuthRequired(err) {
+		t.Fatalf("prepare interactive state err=%v, want browser-required", err)
+	}
 }
 
 func TestStartEmailCodeDoesNotRevealAccountStateWhenEmailFactorIsUnavailable(t *testing.T) {

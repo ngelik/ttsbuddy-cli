@@ -3,8 +3,11 @@ package cmd
 import (
 	"encoding/json"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestVersion(t *testing.T) {
@@ -121,6 +124,32 @@ func TestMissingCredentialErrorsLeadWithAuthLoginAndKeepPermanentAlternative(t *
 			assertContains(t, r.Stderr, "ttsbuddy config set key", "stderr")
 			assertContains(t, r.Stderr, "https://ttsbuddy.com/dashboard", "stderr")
 		})
+	}
+}
+
+func TestExpiredCLISessionReturnsStructuredRenewalWithoutCallingAPI(t *testing.T) {
+	home := t.TempDir()
+	configDir := filepath.Join(home, ".ttsbuddy")
+	if err := os.MkdirAll(configDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	configBody := `{"cli_session":{"credential":"ttsc_aaaaaaaa_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","expires_at":"` + time.Now().Add(-time.Hour).UTC().Format(time.RFC3339) + `"}}`
+	if err := os.WriteFile(filepath.Join(configDir, "config.json"), []byte(configBody), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, args := range [][]string{
+		{"speak", "should not submit", "--json"},
+		{"web", "https://example.com/article", "--json"},
+		{"status", "job-expired", "--json"},
+	} {
+		r := runCLI(t, []string{"HOME=" + home}, args...)
+		assertExitCode(t, r, 1)
+		assertValidJSON(t, r.Stdout)
+		assertContains(t, r.Stdout, `"reason": "SESSION_EXPIRED"`, "stdout")
+		assertContains(t, r.Stdout, "ttsbuddy auth email", "stdout")
+		assertContains(t, r.Stdout, "ttsbuddy auth browser", "stdout")
+		assertNotContains(t, r.Stdout, "ttsc_aaaaaaaa", "stdout")
 	}
 }
 

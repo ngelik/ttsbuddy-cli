@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -12,6 +13,61 @@ import (
 	"testing"
 	"time"
 )
+
+func TestParseRetryAfterFormsAndInvalidValues(t *testing.T) {
+	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name  string
+		value string
+		want  int
+		ok    bool
+	}{
+		{name: "delta", value: "12", want: 12, ok: true},
+		{name: "zero", value: "0", want: 0, ok: true},
+		{name: "date", value: now.Add(5 * time.Second).Format(http.TimeFormat), want: 5, ok: true},
+		{name: "negative", value: "-1", ok: false},
+		{name: "malformed", value: "later", ok: false},
+		{name: "too-long", value: "9223372037", ok: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := parseRetryAfter(tc.value, now)
+			if got != tc.want || ok != tc.ok {
+				t.Fatalf("parseRetryAfter(%q)=(%d,%t), want (%d,%t)", tc.value, got, ok, tc.want, tc.ok)
+			}
+		})
+	}
+}
+
+func TestParseResponseRetryAfterBodyPrecedenceAndHeaderOnly(t *testing.T) {
+	body := `{"success":false,"error":{"code":"RATE_LIMITED","message":"limited"},"retry_after_seconds":7}`
+	resp := &http.Response{StatusCode: http.StatusTooManyRequests, Header: http.Header{"Retry-After": {"19"}}, Body: io.NopCloser(bytes.NewBufferString(body))}
+	parsed, _, err := parseResponse(resp)
+	if err == nil || parsed.RetryAfterSeconds == nil || *parsed.RetryAfterSeconds != 7 {
+		t.Fatalf("body timing should win: parsed=%#v err=%v", parsed, err)
+	}
+	headerOnly := &http.Response{StatusCode: http.StatusTooManyRequests, Header: http.Header{"Retry-After": {"19"}}, Body: io.NopCloser(bytes.NewBufferString(`{"success":false,"error":{"code":"RATE_LIMITED"}}`))}
+	parsed, _, err = parseResponse(headerOnly)
+	if err == nil || parsed.RetryAfterSeconds == nil || *parsed.RetryAfterSeconds != 19 {
+		t.Fatalf("header timing missing: parsed=%#v err=%v", parsed, err)
+	}
+	invalidBody := &http.Response{StatusCode: http.StatusTooManyRequests, Header: http.Header{"Retry-After": {"11"}}, Body: io.NopCloser(bytes.NewBufferString(`{"success":false,"retry_after_seconds":-4,"error":{"code":"RATE_LIMITED"}}`))}
+	parsed, _, err = parseResponse(invalidBody)
+	if err == nil || parsed.RetryAfterSeconds == nil || *parsed.RetryAfterSeconds != 11 {
+		t.Fatalf("invalid body timing should fall back to header: parsed=%#v err=%v", parsed, err)
+	}
+}
+
+func TestParseResponseNonJSONErrorDoesNotLeakBody(t *testing.T) {
+	secret := "provider-secret-body"
+	resp := &http.Response{StatusCode: http.StatusBadGateway, Header: make(http.Header), Body: io.NopCloser(bytes.NewBufferString(secret))}
+	parsed, _, err := parseResponse(resp)
+	if err == nil || parsed == nil || parsed.Error == nil {
+		t.Fatalf("expected synthetic error: parsed=%#v err=%v", parsed, err)
+	}
+	if strings.Contains(parsed.Error.Message, secret) {
+		t.Fatalf("non-JSON body leaked: %q", parsed.Error.Message)
+	}
+}
 
 func TestSpeak200Completed(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -918,6 +974,21 @@ func TestRetryWithNewKey(t *testing.T) {
 	}
 }
 
+func TestWithRetryResultReportsRotatedKeyOnSuccessfulRetry(t *testing.T) {
+	var keys []string
+	result := WithRetryResult(context.Background(), RetryConfig{MaxRetries: 1, BaseDelay: time.Millisecond, MaxDelay: 10 * time.Millisecond}, func(key string) (*TTSResponse, int, error) {
+		keys = append(keys, key)
+		if len(keys) == 1 {
+			response := TTSResponse{Error: &APIError{Code: ErrTTSProviderError, Message: "Use a new Idempotency-Key."}}
+			return &response, http.StatusBadGateway, &APIResponseError{StatusCode: http.StatusBadGateway, Response: response}
+		}
+		return &TTSResponse{Success: true, Status: "completed"}, http.StatusOK, nil
+	}, "original-key")
+	if result.Err != nil || len(keys) != 2 || keys[0] == keys[1] || result.EffectiveKey != keys[1] {
+		t.Fatalf("result=%#v keys=%v", result, keys)
+	}
+}
+
 func TestRetryContextCancellation(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(500)
@@ -940,5 +1011,22 @@ func TestRetryContextCancellation(t *testing.T) {
 
 	if err == nil {
 		t.Fatal("expected error from cancelled context")
+	}
+}
+
+func TestWithRetryResultKeepsLastSentKeyWhenCancelledDuringBackoff(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	called := 0
+	result := WithRetryResult(ctx, RetryConfig{MaxRetries: 2, BaseDelay: time.Second, MaxDelay: 2 * time.Second}, func(key string) (*TTSResponse, int, error) {
+		called++
+		if key != "initial-key" {
+			t.Fatalf("unexpected first key: %q", key)
+		}
+		cancel()
+		return &TTSResponse{Error: &APIError{Code: ErrInternalError, Message: "temporary"}}, http.StatusInternalServerError, &APIResponseError{StatusCode: http.StatusInternalServerError, Response: TTSResponse{Error: &APIError{Code: ErrInternalError, Message: "temporary"}}}
+	}, "initial-key")
+	if called != 1 || result.Err == nil || result.EffectiveKey != "initial-key" {
+		t.Fatalf("result=%#v called=%d", result, called)
 	}
 }

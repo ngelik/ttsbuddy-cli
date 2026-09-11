@@ -115,6 +115,8 @@ Signup-specific negatives:
 | AUTH.21 | Existing email with `tb auth email --signup` | Always offers ordinary `auth email`; if the provider discloses an existing-email error at start or verification, the CLI gives the fixed login route; strict enumeration may instead show a generic verification prompt/notification, which is not proof of a new account; no automatic login attempt or second verification code |
 | AUTH.22 | Signup requiring legal acceptance, CAPTCHA, MFA, or another missing field | Browser-auth fallback; no proof or CLI credential |
 | AUTH.23 | Incorrect/expired signup code or failed backend exchange | Invalid code keeps the same pending challenge and rotated continuation token; expired/terminal failure clears it; no local credential write; temporary Clerk session is cleaned up; an already-created Clerk user is retained for later ordinary login |
+| AUTH.24 | MFA, client-trust, new-password, or pending Clerk task | Structured error has `reason: BROWSER_AUTH_REQUIRED`, `human_action_required: true`, `retryable: false`, and `next_action: ttsbuddy auth browser`; no CLI credential or completed session is stored |
+| AUTH.25 | Known account-not-found or existing-account conflict | Account-not-found recommends `auth email start --email <address> --signup --json`; existing-account conflict recommends structured login without `--signup`; unknown provider codes remain generic |
 
 Development gate cases:
 
@@ -188,6 +190,15 @@ Every command below is a POST and must be separated by ~65 seconds. Reuse output
 | P.8 | `tb speak "Stdout smoke" -o - > "$TB_OUT/t8.mp3"` | Stdout contains playable MP3 bytes; file non-empty | 0 |
 | P.9 | `tb speak "Voice speed idem" -v bf_emma -s 0.7 --idempotency-key manual-test-001 -o "$TB_OUT/t9.mp3"` | Custom voice, speed, and explicit idempotency key | 0 |
 | P.10 | `tb speak "Auto-name smoke" --output-dir "$TB_OUT"` | Auto-named file created matching `ttsbuddy-YYYYMMDD-HHMMSS-<voice>.mp3` | 0 |
+
+For an interrupted submission fixture, capture the JSON `error.idempotency_key`
+and retry the identical text/options with `--idempotency-key <captured>`. The
+fixture must return the original job rather than create a duplicate. If a
+request already returned a job ID, resume with `tb status <job_id>` instead of
+submitting again. Verify a body `retry_after_seconds` value wins over a valid
+`Retry-After` header; a header-only delta and HTTP-date are accepted, while
+malformed/negative values are ignored. A delay beyond the automatic retry bound
+must return a structured retry instruction without retrying early.
 
 **Optional POST regressions** (only if there is time/rate budget):
 - `tb speak "bad key" -k ttsb_bad_key` → exit 1; human-readable auth error

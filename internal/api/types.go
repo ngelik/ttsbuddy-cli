@@ -2,6 +2,8 @@ package api
 
 import "fmt"
 
+const maxRecoveryRetryAfterSeconds = int64(9223372036)
+
 // Error code constants matching the agent-tts API.
 const (
 	ErrInvalidKey           = "INVALID_KEY"
@@ -140,6 +142,10 @@ type CLIErrorDetail struct {
 	RetryAfterSeconds   int    `json:"retry_after_seconds,omitempty"`
 	NextAction          string `json:"next_action,omitempty"`
 	HumanActionRequired bool   `json:"human_action_required,omitempty"`
+	// IdempotencyKey is returned only when a submission outcome is ambiguous,
+	// allowing an operator to retry the identical request without guessing a
+	// new identity. It is never a credential or a copy of input text.
+	IdempotencyKey string `json:"idempotency_key,omitempty"`
 }
 
 // NewCLIError creates a CLIError for local failures.
@@ -156,7 +162,7 @@ func NewCLIErrorWithRecovery(code, message, reason, nextAction string, retryable
 	e.Error.Reason = reason
 	e.Error.NextAction = nextAction
 	e.Error.Retryable = retryable
-	if retryAfterSeconds >= 1 && retryAfterSeconds <= 300 {
+	if retryAfterSeconds >= 1 && int64(retryAfterSeconds) <= maxRecoveryRetryAfterSeconds {
 		e.Error.RetryAfterSeconds = retryAfterSeconds
 	}
 	return e

@@ -43,6 +43,9 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		return structuredExitError(1, "config not loaded", "CLI_ERROR", "INVALID_CONFIGURATION", "Run ttsbuddy doctor.", false, 0)
 	}
 	if resolved.APIKey == "" {
+		if resolved.CLISessionExpired {
+			return structuredExitError(1, "CLI session has expired. "+authMethodSuggestion, "CLI_ERROR", "SESSION_EXPIRED", authMethodSuggestion, false, 0)
+		}
 		return structuredExitError(2, missingAPIKeyMessage, "CLI_ERROR", "AUTH_REQUIRED", authMethodSuggestion, false, 0)
 	}
 
@@ -97,19 +100,28 @@ func statusPoll(client *api.Client, jobID string, resolved *config.ResolvedConfi
 
 	deadline := time.Now().Add(dur)
 	delay := 3 * time.Second
+	var delayHint *int
 
 	for {
 		if time.Now().After(deadline) {
 			return structuredExitError(1, fmt.Sprintf("polling timed out after %s", timeout), "CLI_ERROR", "POLL_TIMEOUT", fmt.Sprintf("Resume with: ttsbuddy status %s --watch", jobID), true, 0)
 		}
-
 		resp, pollStatus, err := client.GetStatus(ctx, jobID)
 		if err != nil {
 			if isPermanentError(err, pollStatus) {
 				return handleStatusError(err, jobID)
 			}
-			stderrMsg("Status check error: %v, retrying...\n", err)
-			delay = minDuration(delay*3/2, 15*time.Second)
+			stderrMsg("Status check failed (HTTP %d), retrying...\n", pollStatus)
+			if resp != nil && resp.RetryAfterSeconds != nil {
+				delay = time.Duration(*resp.RetryAfterSeconds) * time.Second
+				delayHint = resp.RetryAfterSeconds
+			} else {
+				delay = minDuration(delay*3/2, 15*time.Second)
+				delayHint = nil
+			}
+			if timeoutErr := pollDelayDeadlineError(jobID, deadline, delay, delayHint); timeoutErr != nil {
+				return timeoutErr
+			}
 			select {
 			case <-ctx.Done():
 				if !flagJSON {
@@ -129,11 +141,16 @@ func statusPoll(client *api.Client, jobID string, resolved *config.ResolvedConfi
 			stderrMsg("%s elapsed\n", renderProgress(resp, elapsed))
 			if resp.RetryAfterSeconds != nil {
 				delay = time.Duration(*resp.RetryAfterSeconds) * time.Second
+				delayHint = resp.RetryAfterSeconds
 			} else {
 				delay = minDuration(delay*3/2, 15*time.Second)
+				delayHint = nil
 			}
 		default:
 			return &exitError{code: 1, msg: fmt.Sprintf("unexpected job status %q from API. Job ID: %s", resp.Status, jobID)}
+		}
+		if timeoutErr := pollDelayDeadlineError(jobID, deadline, delay, delayHint); timeoutErr != nil {
+			return timeoutErr
 		}
 
 		select {
@@ -148,6 +165,14 @@ func statusPoll(client *api.Client, jobID string, resolved *config.ResolvedConfi
 }
 
 func renderStatus(resp *api.TTSResponse, jobID string, resolved *config.ResolvedConfig) error {
+	if resp == nil {
+		return structuredExitError(1, "job status response was empty", "CLI_ERROR", "INVALID_RESPONSE", fmt.Sprintf("Retry: ttsbuddy status %s", jobID), true, 0)
+	}
+	if resp.Status == "failed" || resp.Status == "expired" {
+		// Terminal failures use the same sanitized recovery envelope in human
+		// and JSON modes; successful response shapes remain unchanged.
+		return classifyTerminalResponse(resp, jobID)
+	}
 	if resp.Status == "completed" {
 		if err := validateCompletedAudioURL(resp, resolved); err != nil {
 			return err
@@ -190,16 +215,6 @@ func renderStatus(resp *api.TTSResponse, jobID string, resolved *config.Resolved
 		fmt.Fprintf(os.Stderr, "Or poll until done: ttsbuddy status %s --watch\n", jobID)
 		return nil
 
-	case "failed":
-		msg := "TTS generation failed"
-		if resp.Error != nil {
-			msg = resp.Error.Message
-		}
-		return &exitError{code: 1, msg: fmt.Sprintf("Job %s: failed — %s", jobID, msg)}
-
-	case "expired":
-		return &exitError{code: 1, msg: fmt.Sprintf("Job %s: audio expired and deleted. Submit a new request.", jobID)}
-
 	default:
 		return &exitError{code: 1, msg: fmt.Sprintf("Job %s: unknown status %q", jobID, resp.Status)}
 	}
@@ -213,7 +228,11 @@ func handleStatusError(err error, jobID string) error {
 			mapped.serverCode = api.ErrNotFound
 			return mapped
 		}
-		return handleAPIError(err, apiErr.StatusCode)
+		mapped := classifyAPIError(err, apiErr.StatusCode)
+		if mapped.reason == "RATE_LIMITED" || mapped.reason == "SERVICE_ERROR" {
+			mapped.nextAction = fmt.Sprintf("Wait for the provided retry delay or bounded backoff, then retry: ttsbuddy status %s", jobID)
+		}
+		return mapped
 	}
 	return structuredExitError(1, "checking job status failed", "CLI_ERROR", "TRANSPORT_ERROR", fmt.Sprintf("Retry: ttsbuddy status %s", jobID), true, 0)
 }
