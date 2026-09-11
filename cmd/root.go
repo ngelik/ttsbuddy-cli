@@ -25,10 +25,11 @@ const missingAPIKeyMessage = "no credential configured. " + authMethodSuggestion
 
 // Global flag values.
 var (
-	flagAPIKey    string
-	flagConfigDir string
-	flagJSON      bool
-	flagQuiet     bool
+	flagAPIKey           string
+	flagConfigDir        string
+	flagJSON             bool
+	flagQuiet            bool
+	configDirOverrideErr error
 )
 
 // Resolved config available to all commands after PersistentPreRunE.
@@ -43,17 +44,27 @@ var rootCmd = &cobra.Command{
 	SilenceErrors: true,
 
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		configDirOverrideErr = nil
 		if cmd.Flags().Changed("config-dir") && strings.TrimSpace(flagConfigDir) == "" {
 			_ = config.SetConfigDirOverride("")
+			if cmd.Name() == "doctor" {
+				configDirOverrideErr = fmt.Errorf("--config-dir requires an absolute path")
+				return nil
+			}
 			return fmt.Errorf("--config-dir requires an absolute path")
 		}
 		if err := config.SetConfigDirOverride(flagConfigDir); err != nil {
+			if cmd.Name() == "doctor" {
+				_ = config.SetConfigDirOverride("")
+				configDirOverrideErr = err
+				return nil
+			}
 			return err
 		}
 		// Commands that work without disk config — skip loading to avoid
 		// failing on broken HOME/permissions.
 		switch {
-		case cmd.Name() == "version", cmd.Name() == "help", cmd.Name() == "voices", isCompletionCommand(cmd):
+		case cmd.Name() == "version", cmd.Name() == "help", cmd.Name() == "voices", cmd.Name() == "doctor", isCompletionCommand(cmd):
 			resolvedCfg = nil // clear stale state
 			return nil
 		}
@@ -128,8 +139,12 @@ func Execute() error {
 
 		if flagJSON {
 			var payload any = api.NewCLIError("CLI_ERROR", err.Error())
-			if exitErr, ok := err.(*exitError); ok && exitErr.jsonPayload != nil {
-				payload = exitErr.jsonPayload
+			if exitErr, ok := err.(*exitError); ok {
+				if exitErr.jsonPayload != nil {
+					payload = exitErr.jsonPayload
+				} else {
+					payload = structuredErrorPayload(exitErr)
+				}
 			}
 			data, _ := json.MarshalIndent(payload, "", "  ")
 			_, _ = fmt.Fprintln(os.Stdout, string(data))

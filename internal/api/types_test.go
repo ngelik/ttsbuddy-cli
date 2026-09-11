@@ -86,6 +86,13 @@ func TestNewCLIError(t *testing.T) {
 	}
 }
 
+func TestNewCLIErrorWithRecovery(t *testing.T) {
+	e := NewCLIErrorWithRecovery("CLI_ERROR", "retry", "RATE_LIMITED", "wait", true, 7)
+	if e.Success || !e.Error.Retryable || e.Error.RetryAfterSeconds != 7 || e.Error.Reason != "RATE_LIMITED" || e.Error.NextAction != "wait" {
+		t.Fatalf("recovery fields not preserved: %#v", e)
+	}
+}
+
 func TestAPIResponseErrorMessage(t *testing.T) {
 	// With error details
 	e := &APIResponseError{

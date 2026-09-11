@@ -124,11 +124,22 @@ func (e *APIResponseError) ErrorCode() string {
 
 // CLIError represents a local CLI failure for --json output.
 type CLIError struct {
-	Success bool `json:"success"`
-	Error   struct {
-		Code    string `json:"code"`
-		Message string `json:"message"`
-	} `json:"error"`
+	Success bool           `json:"success"`
+	Error   CLIErrorDetail `json:"error"`
+}
+
+// CLIErrorDetail is the stable machine-readable error envelope. Optional
+// recovery fields are additive so existing consumers can continue reading
+// error.code and error.message.
+type CLIErrorDetail struct {
+	Code                string `json:"code"`
+	Message             string `json:"message"`
+	ServerCode          string `json:"server_code,omitempty"`
+	Reason              string `json:"reason,omitempty"`
+	Retryable           bool   `json:"retryable"`
+	RetryAfterSeconds   int    `json:"retry_after_seconds,omitempty"`
+	NextAction          string `json:"next_action,omitempty"`
+	HumanActionRequired bool   `json:"human_action_required,omitempty"`
 }
 
 // NewCLIError creates a CLIError for local failures.
@@ -136,6 +147,18 @@ func NewCLIError(code, message string) CLIError {
 	e := CLIError{Success: false}
 	e.Error.Code = code
 	e.Error.Message = message
+	return e
+}
+
+// NewCLIErrorWithRecovery creates an additive recovery-aware error envelope.
+func NewCLIErrorWithRecovery(code, message, reason, nextAction string, retryable bool, retryAfterSeconds int) CLIError {
+	e := NewCLIError(code, message)
+	e.Error.Reason = reason
+	e.Error.NextAction = nextAction
+	e.Error.Retryable = retryable
+	if retryAfterSeconds >= 1 && retryAfterSeconds <= 300 {
+		e.Error.RetryAfterSeconds = retryAfterSeconds
+	}
 	return e
 }
 

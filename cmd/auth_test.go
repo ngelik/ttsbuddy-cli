@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/ngelik/ttsbuddy-cli/internal/api"
+	"github.com/ngelik/ttsbuddy-cli/internal/config"
 )
 
 func TestClerkCleanupRunsOnlyBeforeBackendExchange(t *testing.T) {
@@ -122,6 +123,127 @@ func TestAuthSignupFlagRegisteredForEmailAndLogin(t *testing.T) {
 		if result.ExitCode != 0 || !strings.Contains(result.Stdout, "--signup") {
 			t.Fatalf("%s help=%#v", command, result)
 		}
+	}
+}
+
+func TestAuthEmailStructuredCommandsAreNonInteractiveAndMachineReadable(t *testing.T) {
+	start := runCLI(t, []string{"HOME=" + t.TempDir()}, "auth", "email", "start", "--json")
+	if start.ExitCode != 2 || start.Stderr != "" {
+		t.Fatalf("start missing email should be JSON-only validation error: %#v", start)
+	}
+	assertValidJSON(t, start.Stdout)
+	if strings.Contains(start.Stdout, "Email:") || strings.Contains(start.Stdout, "Code:") {
+		t.Fatalf("start prompted in JSON mode: %s", start.Stdout)
+	}
+	challengeID := strings.Repeat("a", 32)
+	verify := runCLIInput(t, "123456\n", []string{"HOME=" + t.TempDir()}, "auth", "email", "verify", "--json", "--challenge-id", challengeID, "--code-stdin")
+	if verify.ExitCode != 1 || verify.Stderr != "" {
+		t.Fatalf("verify missing pending state should be JSON-only: %#v", verify)
+	}
+	assertValidJSON(t, verify.Stdout)
+	if strings.Contains(verify.Stdout, "123456") {
+		t.Fatalf("verify echoed OTP: %s", verify.Stdout)
+	}
+}
+
+func TestAuthEmailTwoStepPersistsOpaqueContinuationAcrossProcesses(t *testing.T) {
+	var clerkStep atomic.Int32
+	issued := authFixtureToken()
+	clerkServer := startMockAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		step := clerkStep.Add(1)
+		if r.URL.Query().Get("_is_native") != "true" {
+			t.Fatalf("native query missing: %s", r.URL.String())
+		}
+		switch step {
+		case 1:
+			if r.Method != http.MethodPost || r.URL.Path != "/v1/client" {
+				t.Fatalf("step 1=%s %s", r.Method, r.URL.Path)
+			}
+			w.Header().Set("Authorization", "client-1")
+			_ = json.NewEncoder(w).Encode(map[string]any{"response": map[string]any{"id": "client_123"}})
+		case 2:
+			if r.Method != http.MethodPost || r.URL.Path != "/v1/client/sign_ins" || r.Header.Get("Authorization") != "Bearer client-1" {
+				t.Fatalf("step 2=%s %s auth=%q", r.Method, r.URL.Path, r.Header.Get("Authorization"))
+			}
+			w.Header().Set("Authorization", "client-2")
+			_ = json.NewEncoder(w).Encode(map[string]any{"response": map[string]any{
+				"id": "si_123", "status": "needs_first_factor",
+				"supported_first_factors": []map[string]any{{"strategy": "email_code", "email_address_id": "idn_123"}},
+			}})
+		case 3:
+			if r.Method != http.MethodPost || r.URL.Path != "/v1/client/sign_ins/si_123/prepare_first_factor" || r.Header.Get("Authorization") != "Bearer client-2" {
+				t.Fatalf("step 3=%s %s auth=%q", r.Method, r.URL.Path, r.Header.Get("Authorization"))
+			}
+			w.Header().Set("Authorization", "client-3")
+			_ = json.NewEncoder(w).Encode(map[string]any{"response": map[string]any{"id": "si_123", "status": "needs_first_factor"}})
+		case 4:
+			if r.Method != http.MethodPost || r.URL.Path != "/v1/client/sign_ins/si_123/attempt_first_factor" || r.Header.Get("Authorization") != "Bearer client-3" {
+				t.Fatalf("step 4=%s %s auth=%q", r.Method, r.URL.Path, r.Header.Get("Authorization"))
+			}
+			body, _ := io.ReadAll(r.Body)
+			if !strings.Contains(string(body), "code=123456") {
+				t.Fatalf("OTP was not sent to Clerk")
+			}
+			w.Header().Set("Authorization", "client-4")
+			_ = json.NewEncoder(w).Encode(map[string]any{"response": map[string]any{"id": "si_123", "status": "complete", "created_session_id": "sess_123"}})
+		case 5:
+			if r.URL.Path != "/v1/client/sessions/sess_123" || r.Header.Get("Authorization") != "Bearer client-4" {
+				t.Fatalf("step 5=%s %s auth=%q", r.Method, r.URL.Path, r.Header.Get("Authorization"))
+			}
+			w.Header().Set("Authorization", "client-5")
+			_ = json.NewEncoder(w).Encode(map[string]any{"response": map[string]any{"id": "sess_123", "status": "active"}})
+		case 6:
+			if r.URL.Path != "/v1/client/sessions/sess_123/tokens" || r.Header.Get("Authorization") != "Bearer client-5" {
+				t.Fatalf("step 6=%s %s auth=%q", r.Method, r.URL.Path, r.Header.Get("Authorization"))
+			}
+			w.Header().Set("Authorization", "client-6")
+			_ = json.NewEncoder(w).Encode(map[string]any{"jwt": "jwt-private-proof"})
+		default:
+			t.Fatalf("unexpected Clerk step %d: %s %s", step, r.Method, r.URL.Path)
+		}
+	}))
+	backendServer := startMockAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.Header.Get("Authorization") != "Bearer jwt-private-proof" {
+			t.Fatalf("exchange=%s auth=%q", r.Method, r.Header.Get("Authorization"))
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "credential": map[string]any{
+			"token": issued, "type": "cli_session", "scope": "agent_tts", "expires_at": time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
+		}})
+	}))
+	home := t.TempDir()
+	env := []string{"HOME=" + home, "TTSBUDDY_CLERK_FRONTEND_API_URL=" + clerkServer, "TTSBUDDY_CLI_AUTH_URL=" + backendServer + "/v1/cli-auth", "TTSBUDDY_ALLOW_CUSTOM_API_URL=true"}
+	started := runCLI(t, env, "auth", "email", "start", "--email", "agent@example.com", "--json")
+	if started.ExitCode != 0 || started.Stderr != "" {
+		t.Fatalf("start=%#v", started)
+	}
+	var pending map[string]any
+	if err := json.Unmarshal([]byte(started.Stdout), &pending); err != nil {
+		t.Fatal(err)
+	}
+	challengeID, _ := pending["challenge_id"].(string)
+	if pending["status"] != "verification_required" || pending["requires_email_verification"] != true || pending["human_action_required"] != false || !config.IsPendingAuthID(challengeID) {
+		t.Fatalf("pending result=%#v", pending)
+	}
+	if strings.Contains(started.Stdout, "agent@example.com") || strings.Contains(started.Stdout, "client-3") {
+		t.Fatalf("start leaked email or native token: %s", started.Stdout)
+	}
+	statePath := filepath.Join(home, ".ttsbuddy", "pending_auth.json")
+	stateBytes, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(stateBytes), "client-3") || strings.Contains(string(stateBytes), "agent@example.com") || strings.Contains(string(stateBytes), "123456") {
+		t.Fatalf("pending state does not have expected protected contents: %s", stateBytes)
+	}
+	verified := runCLIInput(t, "123456\n", env, "auth", "email", "verify", "--challenge-id", challengeID, "--code-stdin", "--json")
+	if verified.ExitCode != 0 || verified.Stderr != "" || !strings.Contains(verified.Stdout, `"status":"signed_in"`) {
+		t.Fatalf("verify=%#v", verified)
+	}
+	if _, err := os.Stat(statePath); !os.IsNotExist(err) {
+		t.Fatalf("pending state remains after success: %v", err)
+	}
+	if got := clerkStep.Load(); got != 6 {
+		t.Fatalf("Clerk steps=%d, want 6", got)
 	}
 }
 

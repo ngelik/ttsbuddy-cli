@@ -133,6 +133,26 @@ In v0.11.3 and newer, generic signed-out, missing-credential, invalid-credential
 and expired-session messages point to both interactive methods: `ttsbuddy auth
 email` or `ttsbuddy auth browser`.
 
+For automation that can read an authorized mailbox, use the two-step email
+contract. The start command never accepts a code on argv and returns one JSON
+document with an opaque, short-lived challenge ID:
+
+```bash
+ttsbuddy auth email start --email operator@example.com --json
+printf '%s\n' "$OTP" | ttsbuddy auth email verify \
+  --challenge-id <challenge_id> --code-stdin --json
+ttsbuddy auth email cancel --challenge-id <challenge_id> --json
+```
+
+The continuation is local to the selected config directory, expires after ten
+minutes, and contains no email address, OTP, proof token, or provider response.
+`requires_email_verification` tells an agent that mailbox authorization is the
+next step; `human_action_required` is reserved for browser-only requirements
+such as CAPTCHA, MFA, or legal acceptance. Invalid codes keep the challenge so
+the same opaque ID can be retried, while terminal failures clear it.
+Successful sign-in replaces the existing CLI session; the prepared result
+includes this handoff boundary explicitly.
+
 ### Isolated config and session state (v0.11.5+)
 
 For CI, tests, and parallel agent runs, set `TTSBUDDY_CONFIG_DIR` or pass the
@@ -254,9 +274,13 @@ ttsbuddy voices --all
 
 # JSON output
 ttsbuddy voices --json
+
+# Discover voices without network access
+ttsbuddy voices --language fr --json
+ttsbuddy voices --engine supertonic --recommended --json
 ```
 
-Voice output includes `ID`, native display `NAME`, `LANGUAGE`, language `CODE`, and `TYPE`. Supertonic Fast voices (`st_m1`-`st_m5`, `st_f1`-`st_f5`) appear once per supported language mode, for example `st_m1` appears as `Louis` under French with code `fr` and `Noah` under German with code `de`. If `--all` can't reach the live catalog, it falls back to the curated list with a warning.
+Voice output includes `ID`, native display `NAME`, `LANGUAGE`, language `CODE`, and `TYPE`; JSON also includes lowercase `engine`, `min_speed`, `max_speed`, and `recommended_speed` fields when authoritative metadata is available. `--language CODE` and `--engine ENGINE` are additive filters, and `--recommended` returns one deterministic match (preferring `st_m1`, then `af_heart`). The JSON shape remains an array, including an empty array when no voice matches. Supertonic Fast voices (`st_m1`-`st_m5`, `st_f1`-`st_f5`) appear once per supported language mode, for example `st_m1` appears as `Louis` under French with code `fr` and `Noah` under German with code `de`. If `--all` can't reach the live catalog, it falls back to the curated list with a warning on stderr.
 
 Kokoro voices use compact provider codes such as `a` for American English, `b` for British English, `f` for French, and `z` for Chinese. Fast voices use standard language codes from the list above.
 
@@ -299,6 +323,22 @@ ttsbuddy config set allow_custom_api_url true
 ```
 
 Valid keys: `key`, `api_key`, `voice`, `language`, `default_language`, `speed`, `timeout`, `output_dir`, `api_url`, `cli_auth_url`, `tts_api_base_url`, `allow_custom_api_url`. `api_key` aliases `key`, and `default_language` aliases `language`.
+
+### doctor
+
+Inspect local readiness without changing configuration. The default is offline
+and safe for signed-out machines; `--online` adds bounded, read-only
+connectivity checks. JSON mode emits one report and exits nonzero when a
+blocking readiness issue remains:
+
+```bash
+ttsbuddy doctor
+ttsbuddy doctor --json
+ttsbuddy doctor --online --json
+```
+
+Reports include check status and actionable `next_actions`. Credentials are
+reported only by source/type and are never echoed.
 
 ### version
 

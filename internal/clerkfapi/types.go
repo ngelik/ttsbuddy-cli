@@ -10,6 +10,8 @@ var (
 	errSignupEmailExists     = errors.New("that email is already registered")
 	errSignupBrowserFallback = errors.New("clerk signup requires browser authentication")
 	errPendingSessionTask    = errors.New("pending session task blocks CLI login")
+	errEmailCodeExpired      = errors.New("email code expired")
+	errEmailCodeIncorrect    = errors.New("email code incorrect")
 )
 
 // IsSignupEmailExists reports the safe, fixed error returned when signup is
@@ -19,6 +21,11 @@ func IsSignupEmailExists(err error) bool { return errors.Is(err, errSignupEmailE
 // IsSignupBrowserFallback reports that terminal signup cannot satisfy the
 // provider's requirements and must continue in a browser.
 func IsSignupBrowserFallback(err error) bool { return errors.Is(err, errSignupBrowserFallback) }
+
+// IsEmailCodeExpired and IsEmailCodeIncorrect expose only fixed flow classes;
+// provider response text remains private to the Clerk client.
+func IsEmailCodeExpired(err error) bool   { return errors.Is(err, errEmailCodeExpired) }
+func IsEmailCodeIncorrect(err error) bool { return errors.Is(err, errEmailCodeIncorrect) }
 
 func isPendingSessionTask(err error) bool { return errors.Is(err, errPendingSessionTask) }
 

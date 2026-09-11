@@ -1,8 +1,11 @@
 package cmd
 
 import (
+	"encoding/json"
 	"net/http"
 	"testing"
+
+	"github.com/ngelik/ttsbuddy-cli/internal/api"
 )
 
 func TestVoicesCurated(t *testing.T) {
@@ -51,7 +54,7 @@ func TestVoicesAllFallback(t *testing.T) {
 	assertContains(t, r.Stdout, "af_heart", "stdout")
 }
 
-func TestVoicesAllJSONNoStderr(t *testing.T) {
+func TestVoicesAllJSONFallbackWarning(t *testing.T) {
 	home := t.TempDir()
 	r := runCLI(t, append(
 		envForTest(home, "", "ttsb_test_key"),
@@ -59,9 +62,55 @@ func TestVoicesAllJSONNoStderr(t *testing.T) {
 	), "voices", "--all", "--json")
 	assertExitCode(t, r, 0)
 	assertValidJSON(t, r.Stdout)
-	// --json should suppress stderr warning about fallback
+	assertContains(t, r.Stderr, "catalog may be stale", "stderr")
+}
+
+func TestVoicesFilterByLanguageAndEngine(t *testing.T) {
+	r := runCLI(t, nil, "voices", "--language", "fr", "--engine", "supertonic", "--json")
+	assertExitCode(t, r, 0)
+	var voices []api.Voice
+	if err := json.Unmarshal([]byte(r.Stdout), &voices); err != nil {
+		t.Fatalf("decode filtered voices: %v", err)
+	}
+	if len(voices) != 10 {
+		t.Fatalf("French Supertonic filter returned %d voices, want 10", len(voices))
+	}
+	for _, voice := range voices {
+		if voice.LanguageCode != "fr" || voice.Engine != "supertonic" {
+			t.Fatalf("unexpected filtered voice: %+v", voice)
+		}
+	}
+}
+
+func TestVoicesRecommendedReturnsOneValidPair(t *testing.T) {
+	r := runCLI(t, nil, "voices", "--language", "en", "--engine", "supertonic", "--recommended", "--json")
+	assertExitCode(t, r, 0)
+	var voices []api.Voice
+	if err := json.Unmarshal([]byte(r.Stdout), &voices); err != nil {
+		t.Fatalf("decode recommended voices: %v", err)
+	}
+	if len(voices) != 1 {
+		t.Fatalf("recommended output returned %d voices, want 1", len(voices))
+	}
+	voice := voices[0]
+	if voice.ID != "st_m1" || voice.LanguageCode != "en" || voice.Engine != "supertonic" {
+		t.Fatalf("recommended voice = %+v, want st_m1/en/supertonic", voice)
+	}
+	if voice.MinSpeed == nil || *voice.MinSpeed != api.AcceptedSpeedMin ||
+		voice.MaxSpeed == nil || *voice.MaxSpeed != api.AcceptedSpeedMax ||
+		voice.RecommendedSpeed == nil || *voice.RecommendedSpeed != api.RecommendedSpeed {
+		t.Fatalf("recommended voice has invalid speed metadata: %+v", voice)
+	}
+}
+
+func TestVoicesUnsupportedFilterReturnsEmptyArray(t *testing.T) {
+	r := runCLI(t, nil, "voices", "--language", "zz", "--json")
+	assertExitCode(t, r, 0)
+	if r.Stdout != "[]\n" {
+		t.Fatalf("unsupported filter output = %q, want empty JSON array", r.Stdout)
+	}
 	if r.Stderr != "" {
-		t.Errorf("--json should suppress stderr, got: %q", r.Stderr)
+		t.Fatalf("JSON empty result should not add diagnostics, got %q", r.Stderr)
 	}
 }
 

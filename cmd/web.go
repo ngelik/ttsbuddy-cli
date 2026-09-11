@@ -54,10 +54,10 @@ func init() {
 func runWeb(cmd *cobra.Command, rawURL string) error {
 	resolved := resolvedCfg
 	if resolved == nil {
-		return &exitError{code: 1, msg: "config not loaded"}
+		return structuredExitError(1, "config not loaded", "CLI_ERROR", "INVALID_CONFIGURATION", "Run ttsbuddy doctor.", false, 0)
 	}
 	if resolved.APIKey == "" {
-		return &exitError{code: 2, msg: missingAPIKeyMessage}
+		return structuredExitError(2, missingAPIKeyMessage, "CLI_ERROR", "AUTH_REQUIRED", authMethodSuggestion, false, 0)
 	}
 
 	if cmd.Flags().Changed("output-dir") {
@@ -159,8 +159,10 @@ func runWeb(cmd *cobra.Command, rawURL string) error {
 	if err != nil {
 		submitSpin.Stop()
 		if ctx.Err() != nil {
-			fmt.Fprintln(os.Stderr, "\nInterrupted.")
-			os.Exit(130)
+			if !flagJSON {
+				fmt.Fprintln(os.Stderr, "\nInterrupted.")
+			}
+			return structuredExitError(130, "interrupted while submitting the request", "CLI_ERROR", "REQUEST_INTERRUPTED", "Retry the same request with the same idempotency key.", true, 0)
 		}
 		return handleAPIError(err, status)
 	}

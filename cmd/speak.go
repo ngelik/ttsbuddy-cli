@@ -79,7 +79,7 @@ func runSpeak(cmd *cobra.Command, args []string) error {
 	// 1. Use resolved config from root PersistentPreRunE, then apply speak-specific flags
 	resolved := resolvedCfg
 	if resolved == nil {
-		return &exitError{code: 1, msg: "config not loaded"}
+		return structuredExitError(1, "config not loaded", "CLI_ERROR", "INVALID_CONFIGURATION", "Run ttsbuddy doctor.", false, 0)
 	}
 
 	// Apply speak-specific flag overrides
@@ -101,7 +101,7 @@ func runSpeak(cmd *cobra.Command, args []string) error {
 	}
 
 	if resolved.APIKey == "" {
-		return &exitError{code: 2, msg: missingAPIKeyMessage}
+		return structuredExitError(2, missingAPIKeyMessage, "CLI_ERROR", "AUTH_REQUIRED", authMethodSuggestion, false, 0)
 	}
 
 	// 2. Read input text (fromStdin true when input came from pipe or explicit "-")
@@ -188,8 +188,10 @@ func runSpeak(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		spin.Stop()
 		if ctx.Err() != nil {
-			fmt.Fprintln(os.Stderr, "\nInterrupted.")
-			os.Exit(130)
+			if !flagJSON {
+				fmt.Fprintln(os.Stderr, "\nInterrupted.")
+			}
+			return structuredExitError(130, "interrupted while submitting the request", "CLI_ERROR", "REQUEST_INTERRUPTED", "Retry the same request with the same idempotency key.", true, 0)
 		}
 		return handleAPIError(err, status)
 	}
@@ -250,7 +252,7 @@ func pollUntilComplete(ctx context.Context, client *api.Client, initial *api.TTS
 	// Parse timeout — fail fast on invalid values instead of silently defaulting
 	timeout, err := time.ParseDuration(resolved.PollTimeout)
 	if err != nil {
-		return &exitError{code: 2, msg: fmt.Sprintf("invalid timeout value: %s (use Go duration syntax like 30s, 2m, 10m)", resolved.PollTimeout)}
+		return structuredExitError(2, fmt.Sprintf("invalid timeout value: %s (use Go duration syntax like 30s, 2m, 10m)", resolved.PollTimeout), "CLI_ERROR", "INVALID_TIMEOUT", "Use Go duration syntax such as 30s, 2m, or 10m.", false, 0)
 	}
 
 	deadline := time.Now().Add(timeout)
@@ -264,15 +266,17 @@ func pollUntilComplete(ctx context.Context, client *api.Client, initial *api.TTS
 	for {
 		// Check timeout
 		if time.Now().After(deadline) {
-			return &exitError{code: 1, msg: fmt.Sprintf("polling timed out after %s. Resume with: ttsbuddy status %s", resolved.PollTimeout, jobID)}
+			return structuredExitError(1, fmt.Sprintf("polling timed out after %s. Resume with: ttsbuddy status %s", resolved.PollTimeout, jobID), "CLI_ERROR", "POLL_TIMEOUT", fmt.Sprintf("Resume with: ttsbuddy status %s", jobID), true, 0)
 		}
 
 		// Wait
 		select {
 		case <-ctx.Done():
 			// SIGINT: print resume info
-			fmt.Fprintf(os.Stderr, "\nInterrupted. Resume with: ttsbuddy status %s\n", jobID)
-			os.Exit(130)
+			if !flagJSON {
+				fmt.Fprintf(os.Stderr, "\nInterrupted. Resume with: ttsbuddy status %s\n", jobID)
+			}
+			return structuredExitError(130, fmt.Sprintf("interrupted while polling job %s", jobID), "CLI_ERROR", "POLL_INTERRUPTED", fmt.Sprintf("Resume with: ttsbuddy status %s", jobID), true, 0)
 		case <-time.After(delay):
 		}
 
@@ -405,8 +409,10 @@ func handleCompletedWithFreshRetry(ctx context.Context, client *api.Client, req 
 	}, api.GenerateNew())
 	if freshErr != nil {
 		if ctx.Err() != nil {
-			fmt.Fprintln(os.Stderr, "\nInterrupted.")
-			os.Exit(130)
+			if !flagJSON {
+				fmt.Fprintln(os.Stderr, "\nInterrupted.")
+			}
+			return structuredExitError(130, "interrupted while retrying the request", "CLI_ERROR", "REQUEST_INTERRUPTED", "Retry the same request with the same idempotency key.", true, 0)
 		}
 		return handleAPIError(freshErr, status)
 	}
@@ -537,8 +543,10 @@ func downloadToStdout(ctx context.Context, audioURL, apiURL string) error {
 	resp, err := api.OpenDownload(ctx, audioURL, apiHost)
 	if err != nil {
 		if ctx.Err() != nil {
-			fmt.Fprintln(os.Stderr, "\nInterrupted.")
-			os.Exit(130)
+			if !flagJSON {
+				fmt.Fprintln(os.Stderr, "\nInterrupted.")
+			}
+			return structuredExitError(130, "interrupted while downloading audio", "CLI_ERROR", "DOWNLOAD_INTERRUPTED", "Retry the same request.", true, 0)
 		}
 		return &exitError{code: 1, msg: err.Error()}
 	}
@@ -546,8 +554,10 @@ func downloadToStdout(ctx context.Context, audioURL, apiURL string) error {
 
 	_, err = api.CopyBounded(os.Stdout, resp.Body, 500*1024*1024)
 	if err != nil && ctx.Err() != nil {
-		fmt.Fprintln(os.Stderr, "\nInterrupted.")
-		os.Exit(130)
+		if !flagJSON {
+			fmt.Fprintln(os.Stderr, "\nInterrupted.")
+		}
+		return structuredExitError(130, "interrupted while downloading audio", "CLI_ERROR", "DOWNLOAD_INTERRUPTED", "Retry the same request.", true, 0)
 	}
 	return err
 }
@@ -650,10 +660,16 @@ func isMarkdownFile(path string) bool {
 // --- Error helpers ---
 
 type exitError struct {
-	code        int
-	msg         string
-	err         error
-	jsonPayload any
+	code              int
+	msg               string
+	err               error
+	jsonPayload       any
+	errorCode         string
+	serverCode        string
+	reason            string
+	retryable         bool
+	retryAfterSeconds int
+	nextAction        string
 }
 
 func (e *exitError) Error() string { return e.msg }
@@ -661,37 +677,7 @@ func (e *exitError) Error() string { return e.msg }
 func (e *exitError) Unwrap() error { return e.err }
 
 func handleAPIError(err error, status int) error {
-	var apiErr *api.APIResponseError
-	if errors.As(err, &apiErr) {
-		code := apiErr.ErrorCode()
-		switch code {
-		case api.ErrInvalidKey:
-			return &exitError{code: 1, msg: "invalid credential. " + authMethodSuggestion + ". For automation with a permanent API key, use: ttsbuddy config set key <your-key>"}
-		case api.ErrInactiveSubscription:
-			return &exitError{code: 1, msg: "subscription inactive. Reactivate at https://ttsbuddy.com/billing"}
-		case api.ErrNoAPIAccess:
-			return &exitError{code: 1, msg: "your plan does not include API access. Check your plan or contact support."}
-		case api.ErrUsageLimitExceeded:
-			msg := "monthly TTS minutes exhausted."
-			if apiErr.Response.Error != nil && apiErr.Response.Error.Details != nil {
-				if details, ok := apiErr.Response.Error.Details.(map[string]interface{}); ok {
-					if upgradeURL, ok := details["upgrade_url"].(string); ok {
-						msg += fmt.Sprintf(" Upgrade at %s", upgradeURL)
-					}
-				}
-			}
-			return &exitError{code: 1, msg: msg}
-		case api.ErrTextTooLong:
-			return &exitError{code: 2, msg: "input exceeds 500,000 characters. Split into smaller chunks."}
-		case api.ErrRateLimited:
-			return &exitError{code: 1, msg: "rate limited. Please wait and try again."}
-		case api.ErrForbidden:
-			return &exitError{code: 1, msg: "access denied (HTTP 403). Check your subscription and API access at https://ttsbuddy.com/billing"}
-		default:
-			return &exitError{code: 1, msg: apiErr.Error()}
-		}
-	}
-	return &exitError{code: 1, msg: fmt.Sprintf("API request failed: %v", err)}
+	return classifyAPIError(err, status)
 }
 
 func stderrMsg(format string, a ...interface{}) {

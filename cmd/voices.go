@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"sort"
 	"text/tabwriter"
 
 	"github.com/ngelik/ttsbuddy-cli/internal/api"
@@ -13,7 +12,12 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var voicesAll bool
+var (
+	voicesAll         bool
+	voicesLanguage    string
+	voicesEngine      string
+	voicesRecommended bool
+)
 
 var voicesCmd = &cobra.Command{
 	Use:   "voices",
@@ -21,7 +25,10 @@ var voicesCmd = &cobra.Command{
 	Long: `List available TTS voices.
 
 By default, shows a curated offline-friendly list of voices.
-Use --all to fetch the full live catalog from the upstream TTS API.`,
+Use --all to fetch the full live catalog from the upstream TTS API.
+
+Use --language and --engine to filter the catalog. Use --recommended to
+return one deterministic voice within those filters.`,
 	Args: noArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		var voices []api.Voice
@@ -42,7 +49,9 @@ Use --all to fetch the full live catalog from the upstream TTS API.`,
 			stderrMsg("Fetching voice catalog...\n")
 			live, err := client.FetchVoices(context.Background(), ttsBaseURL)
 			if err != nil {
-				stderrMsg("Live voice catalog unavailable, showing curated list\n")
+				if !flagQuiet {
+					_, _ = fmt.Fprintln(os.Stderr, "Live voice catalog unavailable, showing curated list (catalog may be stale)")
+				}
 				voices = api.CuratedVoices()
 			} else {
 				voices = live
@@ -51,15 +60,16 @@ Use --all to fetch the full live catalog from the upstream TTS API.`,
 			voices = api.CuratedVoices()
 		}
 
-		sort.SliceStable(voices, func(i, j int) bool {
-			if voices[i].Language != voices[j].Language {
-				return voices[i].Language < voices[j].Language
+		voices = api.FilterVoices(voices, voicesLanguage, voicesEngine)
+		api.SortVoices(voices)
+		if voicesRecommended {
+			if recommended, ok := api.RecommendedVoice(voices); ok {
+				voices = []api.Voice{recommended}
 			}
-			if voices[i].ID != voices[j].ID {
-				return voices[i].ID < voices[j].ID
-			}
-			return voices[i].LanguageCode < voices[j].LanguageCode
-		})
+		}
+		if len(voices) == 0 && (voicesLanguage != "" || voicesEngine != "") {
+			stderrMsg("No voices matched the requested filters\n")
+		}
 
 		if flagJSON {
 			enc := json.NewEncoder(os.Stdout)
@@ -89,5 +99,8 @@ Use --all to fetch the full live catalog from the upstream TTS API.`,
 
 func init() {
 	voicesCmd.Flags().BoolVar(&voicesAll, "all", false, "fetch full live voice catalog")
+	voicesCmd.Flags().StringVar(&voicesLanguage, "language", "", "filter by language code")
+	voicesCmd.Flags().StringVar(&voicesEngine, "engine", "", "filter by TTS engine")
+	voicesCmd.Flags().BoolVar(&voicesRecommended, "recommended", false, "return one deterministic recommended voice")
 	rootCmd.AddCommand(voicesCmd)
 }

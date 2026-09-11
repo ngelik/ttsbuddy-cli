@@ -214,6 +214,33 @@ run_test_stderr "AUTH.2 signed-out status" 1 "Not signed in" tb auth status
 run_test_stdout "AUTH.3 signed-out logout" 0 "Already signed out" tb auth logout
 run_test_json "AUTH.4 signed-out logout --json" tb --json auth logout
 run_test_stdout "AUTH.5 signed-out logout --local-only" 0 "Already signed out" tb auth logout --local-only
+set +e
+tb auth email start --json >"$TB_OUT/_stdout" 2>"$TB_OUT/_stderr"
+auth_start_exit=$?
+set -e
+if [ "$auth_start_exit" -eq 2 ] && [ ! -s "$TB_OUT/_stderr" ] && jq -e '.success == false and .error.reason == "INVALID_ARGUMENT"' "$TB_OUT/_stdout" >/dev/null 2>&1; then
+    pass "AUTH.6 email start JSON validation"
+else
+    fail "AUTH.6 email start JSON validation" "expected exit 2, one JSON document, and no prompt"
+fi
+set +e
+printf '123456\n' | tb auth email verify --challenge-id 00000000000000000000000000000000 --code-stdin --json >"$TB_OUT/_stdout" 2>"$TB_OUT/_stderr"
+auth_verify_exit=$?
+set -e
+if [ "$auth_verify_exit" -eq 1 ] && [ ! -s "$TB_OUT/_stderr" ] && jq -e '.success == false and .error.reason == "NO_PENDING_CHALLENGE"' "$TB_OUT/_stdout" >/dev/null 2>&1; then
+    pass "AUTH.7 email verify recovery JSON"
+else
+    fail "AUTH.7 email verify recovery JSON" "expected no-pending challenge recovery document"
+fi
+set +e
+TTSBUDDY_API_KEY= tb doctor --json >"$TB_OUT/_stdout" 2>"$TB_OUT/_stderr"
+doctor_exit=$?
+set -e
+if [ "$doctor_exit" -eq 1 ] && [ ! -s "$TB_OUT/_stderr" ] && jq -e '.ready == false and (.next_actions | length) > 0' "$TB_OUT/_stdout" >/dev/null 2>&1; then
+    pass "AUTH.8 doctor signed-out JSON"
+else
+    fail "AUTH.8 doctor signed-out JSON" "expected exit 1 and actionable JSON report"
+fi
 echo ""
 
 if [ "$AUTH_ONLY" = "1" ]; then
@@ -401,8 +428,8 @@ if jq -e '
     and any(.[]; .id == "st_m1" and .name == "Louis" and .language_code == "fr")
     and all(.[]; .name != "F1" and .name != "M1")
 ' "$TB_OUT/_stdout" >/dev/null 2>&1; then
-    if [ ! -s "$TB_OUT/_stderr" ]; then
-        pass "C.4 voices --all --json (no stderr)"
+    if [ ! -s "$TB_OUT/_stderr" ] || grep -q "Live voice catalog unavailable, showing curated list" "$TB_OUT/_stderr"; then
+        pass "C.4 voices --all --json (catalog or explicit fallback warning)"
     else
         fail "C.4 voices --all --json" "stderr_empty=false"
     fi

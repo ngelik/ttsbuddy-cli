@@ -40,10 +40,10 @@ func init() {
 func runStatus(cmd *cobra.Command, args []string) error {
 	resolved := resolvedCfg
 	if resolved == nil {
-		return &exitError{code: 1, msg: "config not loaded"}
+		return structuredExitError(1, "config not loaded", "CLI_ERROR", "INVALID_CONFIGURATION", "Run ttsbuddy doctor.", false, 0)
 	}
 	if resolved.APIKey == "" {
-		return &exitError{code: 2, msg: missingAPIKeyMessage}
+		return structuredExitError(2, missingAPIKeyMessage, "CLI_ERROR", "AUTH_REQUIRED", authMethodSuggestion, false, 0)
 	}
 
 	// Determine job ID
@@ -53,10 +53,10 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	} else {
 		lj, ljErr := config.LoadLastJob()
 		if ljErr != nil {
-			return &exitError{code: 1, msg: fmt.Sprintf("reading last job: %v", ljErr)}
+			return structuredExitError(1, "could not read the last job", "CLI_ERROR", "LOCAL_STATE_ERROR", "Pass an explicit job ID: ttsbuddy status <job_id>.", false, 0)
 		}
 		if lj == nil {
-			return &exitError{code: 2, msg: "no job ID provided and no recent job found. Usage: ttsbuddy status <job_id>"}
+			return structuredExitError(2, "no job ID provided and no recent job found. Usage: ttsbuddy status <job_id>", "CLI_ERROR", "JOB_ID_REQUIRED", "Pass an explicit job ID: ttsbuddy status <job_id>.", false, 0)
 		}
 		jobID = lj.JobID
 		stderrMsg("Using last job: %s\n", jobID)
@@ -89,7 +89,7 @@ func statusPoll(client *api.Client, jobID string, resolved *config.ResolvedConfi
 
 	dur, err := time.ParseDuration(timeout)
 	if err != nil {
-		return &exitError{code: 2, msg: fmt.Sprintf("invalid timeout value: %s (use Go duration syntax like 30s, 2m, 10m)", timeout)}
+		return structuredExitError(2, fmt.Sprintf("invalid timeout value: %s (use Go duration syntax like 30s, 2m, 10m)", timeout), "CLI_ERROR", "INVALID_TIMEOUT", "Use Go duration syntax such as 30s, 2m, or 10m.", false, 0)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -100,7 +100,7 @@ func statusPoll(client *api.Client, jobID string, resolved *config.ResolvedConfi
 
 	for {
 		if time.Now().After(deadline) {
-			return &exitError{code: 1, msg: fmt.Sprintf("polling timed out after %s", timeout)}
+			return structuredExitError(1, fmt.Sprintf("polling timed out after %s", timeout), "CLI_ERROR", "POLL_TIMEOUT", fmt.Sprintf("Resume with: ttsbuddy status %s --watch", jobID), true, 0)
 		}
 
 		resp, pollStatus, err := client.GetStatus(ctx, jobID)
@@ -112,8 +112,10 @@ func statusPoll(client *api.Client, jobID string, resolved *config.ResolvedConfi
 			delay = minDuration(delay*3/2, 15*time.Second)
 			select {
 			case <-ctx.Done():
-				fmt.Fprintf(os.Stderr, "\nInterrupted. Resume with: ttsbuddy status %s --watch\n", jobID)
-				os.Exit(130)
+				if !flagJSON {
+					fmt.Fprintf(os.Stderr, "\nInterrupted. Resume with: ttsbuddy status %s --watch\n", jobID)
+				}
+				return structuredExitError(130, fmt.Sprintf("interrupted while polling job %s", jobID), "CLI_ERROR", "POLL_INTERRUPTED", fmt.Sprintf("Resume with: ttsbuddy status %s --watch", jobID), true, 0)
 			case <-time.After(delay):
 			}
 			continue
@@ -136,8 +138,10 @@ func statusPoll(client *api.Client, jobID string, resolved *config.ResolvedConfi
 
 		select {
 		case <-ctx.Done():
-			fmt.Fprintf(os.Stderr, "\nInterrupted. Resume with: ttsbuddy status %s --watch\n", jobID)
-			os.Exit(130)
+			if !flagJSON {
+				fmt.Fprintf(os.Stderr, "\nInterrupted. Resume with: ttsbuddy status %s --watch\n", jobID)
+			}
+			return structuredExitError(130, fmt.Sprintf("interrupted while polling job %s", jobID), "CLI_ERROR", "POLL_INTERRUPTED", fmt.Sprintf("Resume with: ttsbuddy status %s --watch", jobID), true, 0)
 		case <-time.After(delay):
 		}
 	}
@@ -205,11 +209,13 @@ func handleStatusError(err error, jobID string) error {
 	var apiErr *api.APIResponseError
 	if isAPIErr(err, &apiErr) {
 		if apiErr.ErrorCode() == api.ErrNotFound {
-			return &exitError{code: 1, msg: fmt.Sprintf("job not found: %s", jobID)}
+			mapped := structuredExitError(1, fmt.Sprintf("job not found: %s", jobID), "CLI_ERROR", "JOB_NOT_FOUND", fmt.Sprintf("Check the job ID and retry: ttsbuddy status %s", jobID), false, 0)
+			mapped.serverCode = api.ErrNotFound
+			return mapped
 		}
 		return handleAPIError(err, apiErr.StatusCode)
 	}
-	return &exitError{code: 1, msg: fmt.Sprintf("checking status: %v", err)}
+	return structuredExitError(1, "checking job status failed", "CLI_ERROR", "TRANSPORT_ERROR", fmt.Sprintf("Retry: ttsbuddy status %s", jobID), true, 0)
 }
 
 func isAPIErr(err error, target **api.APIResponseError) bool {

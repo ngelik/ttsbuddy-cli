@@ -80,10 +80,14 @@ The automated `AUTH_ONLY=1` subset uses a fresh HOME and does not contact Clerk 
 | AUTH.3 | `tb auth logout` with no stored session | Says `Already signed out`; no network request | 0 |
 | AUTH.4 | `tb --json auth logout` with no stored session | Valid JSON with `success: true` and `status: signed_out` | 0 |
 | AUTH.5 | `tb auth logout --local-only` with no stored session | Idempotent signed-out result; no network request | 0 |
+| AUTH.5a | `tb auth email start --json` without `--email` | One JSON validation error, no prompt or network request | 2 |
+| AUTH.5b | `printf '123456\n' \| tb auth email verify --challenge-id <opaque-id> --code-stdin --json` with no pending state | One JSON recovery error with `NO_PENDING_CHALLENGE`; no OTP echo | 1 |
+| AUTH.5c | `tb doctor --json` in a fresh config directory | One readiness report with `ready: false`, auth `next_actions`, and no credential values | 1 |
 | AUTH.6 | `tb auth login` against the reviewed development endpoints | Email-code login succeeds and stores one expiring `ttsc_` session without printing the code, Clerk proof, or credential | 0 |
 | AUTH.6a | `tb auth email` against the reviewed development endpoints | Matches the `auth login` email-code compatibility behavior | 0 |
 | AUTH.6b | `tb auth browser` against the reviewed development OAuth app and bridge | Opens Clerk, completes PKCE through the loopback callback, and stores one expiring `ttsc_` session without printing OAuth or CLI credentials | 0 |
 | AUTH.6c | `tb auth email --signup` against the reviewed development endpoints with a fresh identity | Creates the Clerk user after one email-code verification, exchanges the active session, and stores one expiring `ttsc_` session; no code, Clerk proof, or credential is printed | 0 |
+| AUTH.6d | `tb auth email start --email <approved-address> --signup --json` then `auth email verify` | Start returns `verification_required`, opaque ID, `requires_email_verification`, local expiry scope, and explicit handoff; verify reads six digits only from stdin and never prompts in JSON | 0/1 |
 | AUTH.7 | `tb auth status` and `tb --json auth status` | Reports active/usable state and expiry; never returns the bearer credential | 0 |
 | AUTH.8 | `tb speak "CLI session acceptance" --no-download` | Uses the CLI session when no permanent key override exists | 0 |
 | AUTH.9 | `tb auth logout` then repeat it | First call confirms remote revocation and clears local state; second call is idempotent | 0 |
@@ -110,7 +114,7 @@ Signup-specific negatives:
 |---|------|----------|
 | AUTH.21 | Existing email with `tb auth email --signup` | Always offers ordinary `auth email`; if the provider discloses an existing-email error at start or verification, the CLI gives the fixed login route; strict enumeration may instead show a generic verification prompt/notification, which is not proof of a new account; no automatic login attempt or second verification code |
 | AUTH.22 | Signup requiring legal acceptance, CAPTCHA, MFA, or another missing field | Browser-auth fallback; no proof or CLI credential |
-| AUTH.23 | Incorrect/expired signup code or failed backend exchange | No local credential write; temporary Clerk session is cleaned up; an already-created Clerk user is retained for later ordinary login |
+| AUTH.23 | Incorrect/expired signup code or failed backend exchange | Invalid code keeps the same pending challenge and rotated continuation token; expired/terminal failure clears it; no local credential write; temporary Clerk session is cleaned up; an already-created Clerk user is retained for later ordinary login |
 
 Development gate cases:
 
@@ -156,7 +160,8 @@ stat -c '%a %n' "$TB_HOME/.ttsbuddy" "$TB_HOME/.ttsbuddy/config.json"   # Linux:
 | C.1 | `tb voices` | Curated table includes `af_heart` plus Supertonic Fast language modes with native names, for example English `st_f1` as `Ava` and French `st_m1` as `Louis`; no raw `F1`/`M1` labels | 0 |
 | C.2 | `tb voices --json` | Valid JSON array includes Supertonic Fast language modes with native names and stable `st_*` IDs | 0 |
 | C.3 | `tb voices --all` | Live catalog or curated fallback. If live fetch succeeds, valid table with native Supertonic names even when the backend returns `F1`/`M1` aliases. Do not assert a fixed live count. | 0 |
-| C.4 | `tb voices --all --json` | Valid JSON; no stderr noise in JSON mode | 0 |
+| C.4 | `tb voices --all --json` | Valid JSON; live catalog or an explicit stale-catalog fallback warning on stderr | 0 |
+| C.5 | `tb voices --language fr --json`, `tb voices --engine supertonic --recommended --json` | JSON arrays remain stable; filters are additive and recommended returns one deterministic match | 0 |
 
 ### D. Non-POST Input Validation
 
