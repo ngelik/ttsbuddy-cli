@@ -13,6 +13,7 @@ import (
 )
 
 const (
+	ConfigDirEnv         = "TTSBUDDY_CONFIG_DIR"
 	DefaultAPIURL        = "https://www.ttsbuddy.com/v1/agent-tts"
 	DefaultTTSAPIBaseURL = "https://tts.api.prod.ttsbuddy.website"
 	DefaultVoice         = "st_m1"
@@ -45,6 +46,11 @@ type StoredCLISession struct {
 }
 
 var configMutationMu sync.Mutex
+
+var configDirOverride struct {
+	sync.RWMutex
+	path string
+}
 
 // validKeys maps user-facing key names to Config field setters.
 var validKeys = map[string]bool{
@@ -91,8 +97,59 @@ type ValidationError struct {
 
 func (e *ValidationError) Error() string { return e.Msg }
 
-// configDir returns the path to ~/.ttsbuddy without creating it.
+// SetConfigDirOverride sets an absolute per-process config/session directory.
+// An empty path clears the flag override and allows TTSBUDDY_CONFIG_DIR (if
+// present) or the platform home-directory default to be used.
+func SetConfigDirOverride(path string) error {
+	normalized, err := normalizeConfigDir(path)
+	if err != nil {
+		return err
+	}
+	configDirOverride.Lock()
+	configDirOverride.path = normalized
+	configDirOverride.Unlock()
+	return nil
+}
+
+func configuredConfigDir() string {
+	configDirOverride.RLock()
+	defer configDirOverride.RUnlock()
+	return configDirOverride.path
+}
+
+func normalizeConfigDir(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", nil
+	}
+	if !filepath.IsAbs(raw) {
+		return "", fmt.Errorf("config directory must be an absolute path (got %q)", raw)
+	}
+	clean := filepath.Clean(raw)
+	if clean == string(filepath.Separator) {
+		return "", fmt.Errorf("config directory must not be the filesystem root")
+	}
+	if info, err := os.Stat(clean); err == nil {
+		if !info.IsDir() {
+			return "", fmt.Errorf("config directory is not a directory: %s", clean)
+		}
+	} else if !os.IsNotExist(err) {
+		return "", fmt.Errorf("cannot inspect config directory %s: %w", clean, err)
+	}
+	return clean, nil
+}
+
+// configDir returns the configured path without creating it.
 func configDir() (string, error) {
+	if override := configuredConfigDir(); override != "" {
+		return override, nil
+	}
+	if envPath, ok := os.LookupEnv(ConfigDirEnv); ok {
+		if strings.TrimSpace(envPath) == "" {
+			return "", fmt.Errorf("%s must be an absolute path when set", ConfigDirEnv)
+		}
+		return normalizeConfigDir(envPath)
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("cannot determine home directory: %w", err)

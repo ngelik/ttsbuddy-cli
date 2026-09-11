@@ -22,6 +22,39 @@ func TestConfigShowResolved(t *testing.T) {
 	assertNotContains(t, r.Stdout, strings.Repeat("b", 48), "stdout should not contain secret")
 }
 
+func TestConfigDirFlagOverridesEnvAndDoesNotFallBack(t *testing.T) {
+	home := t.TempDir()
+	envDir := filepath.Join(t.TempDir(), "env-config")
+	flagDir := filepath.Join(t.TempDir(), "flag-config")
+	env := []string{
+		"HOME=" + home,
+		"TTSBUDDY_CONFIG_DIR=" + envDir,
+	}
+
+	r := runCLI(t, env, "--config-dir", flagDir, "config", "set", "voice", "flag-voice")
+	assertExitCode(t, r, 0)
+	if _, err := os.Stat(filepath.Join(flagDir, "config.json")); err != nil {
+		t.Fatalf("flag directory was not used: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(envDir, "config.json")); !os.IsNotExist(err) {
+		t.Fatalf("environment directory unexpectedly used: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".ttsbuddy")); !os.IsNotExist(err) {
+		t.Fatalf("default directory was touched: %v", err)
+	}
+
+	for _, value := range []string{"relative-config", "", "   ", string(filepath.Separator)} {
+		r = runCLI(t, env, "--config-dir", value, "config", "set", "voice", "should-fail")
+		assertExitCode(t, r, 1)
+		if !strings.Contains(r.Stderr, "config-dir") && !strings.Contains(r.Stderr, "config directory") {
+			t.Fatalf("invalid config-dir %q error = %q", value, r.Stderr)
+		}
+		if _, err := os.Stat(filepath.Join(home, ".ttsbuddy")); !os.IsNotExist(err) {
+			t.Fatalf("invalid flag %q touched default directory: %v", value, err)
+		}
+	}
+}
+
 func TestConfigHelpListsAcceptedAliases(t *testing.T) {
 	result := runCLI(t, []string{"HOME=" + t.TempDir()}, "config", "--help")
 	assertExitCode(t, result, 0)
