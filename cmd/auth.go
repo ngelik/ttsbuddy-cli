@@ -380,11 +380,15 @@ func runAuthEmailVerify(cmd *cobra.Command, _ []string) error {
 		if state.Mode == "signup" {
 			next = "ttsbuddy auth email start --email <address> --signup --json"
 		}
-		return structuredExitError(1, "the CLI authentication continuation expired", "AUTH_ERROR", "CHALLENGE_EXPIRED", next, false, 0)
+		expired := structuredExitError(1, "the CLI authentication continuation expired", "AUTH_ERROR", "CHALLENGE_EXPIRED", next, false, 0)
+		expired.action = requiredAction(actionAuthenticate, "email")
+		return expired
 	}
 	code, err := readVerificationCode(cmd)
 	if err != nil {
-		return structuredExitError(2, err.Error(), "AUTH_ERROR", "INVALID_CODE", fmt.Sprintf("Provide a bounded six-digit code through stdin for the same challenge: ttsbuddy auth email verify --challenge-id %s --code-stdin --json", state.ChallengeID), true, 0)
+		invalid := structuredExitError(2, err.Error(), "AUTH_ERROR", "INVALID_CODE", fmt.Sprintf("Provide a bounded six-digit code through stdin for the same challenge: ttsbuddy auth email verify --challenge-id %s --code-stdin --json", state.ChallengeID), true, 0)
+		invalid.action = verifyCodeAction(state.ChallengeID)
+		return invalid
 	}
 	clerk, err := clerkfapi.New(resolvedCfg.ClerkFrontendAPIURL, Version)
 	if err != nil {
@@ -421,6 +425,7 @@ func runAuthEmailVerify(cmd *cobra.Command, _ []string) error {
 		mapped := classifyClerkAuthError(err, state.Mode == "signup")
 		if mapped.reason == "INVALID_CODE" {
 			mapped.nextAction = fmt.Sprintf("Retry the same challenge: ttsbuddy auth email verify --challenge-id %s --code-stdin --json", state.ChallengeID)
+			mapped.action = verifyCodeAction(state.ChallengeID)
 		}
 		if mapped.retryable {
 			clerkPreserved = true

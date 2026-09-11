@@ -59,10 +59,15 @@ func runStatus(cmd *cobra.Command, args []string) error {
 			return structuredExitError(1, "could not read the last job", "CLI_ERROR", "LOCAL_STATE_ERROR", "Pass an explicit job ID: ttsbuddy status <job_id>.", false, 0)
 		}
 		if lj == nil {
-			return structuredExitError(2, "no job ID provided and no recent job found. Usage: ttsbuddy status <job_id>", "CLI_ERROR", "JOB_ID_REQUIRED", "Pass an explicit job ID: ttsbuddy status <job_id>.", false, 0)
+			missing := structuredExitError(2, "no job ID provided and no recent job found. Usage: ttsbuddy status <job_id>", "CLI_ERROR", "JOB_ID_REQUIRED", "Pass an explicit job ID: ttsbuddy status <job_id>.", false, 0)
+			missing.action = requiredAction(actionStatus, "job_id")
+			return missing
 		}
 		jobID = lj.JobID
 		stderrMsg("Using last job: %s\n", jobID)
+	}
+	if err := validateJobID(jobID); err != nil {
+		return structuredExitError(2, err.Error(), "CLI_ERROR", "INVALID_ARGUMENT", "Use the opaque job ID returned by TTS Buddy.", false, 0)
 	}
 
 	client := api.NewClient(resolved.APIURL, resolved.APIKey, Version)
@@ -104,7 +109,9 @@ func statusPoll(client *api.Client, jobID string, resolved *config.ResolvedConfi
 
 	for {
 		if time.Now().After(deadline) {
-			return structuredExitError(1, fmt.Sprintf("polling timed out after %s", timeout), "CLI_ERROR", "POLL_TIMEOUT", fmt.Sprintf("Resume with: ttsbuddy status %s --watch", jobID), true, 0)
+			timedOut := structuredExitError(1, fmt.Sprintf("polling timed out after %s", timeout), "CLI_ERROR", "POLL_TIMEOUT", fmt.Sprintf("Resume with: ttsbuddy status %s --watch", jobID), true, 0)
+			timedOut.action = statusAction(jobID)
+			return timedOut
 		}
 		resp, pollStatus, err := client.GetStatus(ctx, jobID)
 		if err != nil {
@@ -120,6 +127,7 @@ func statusPoll(client *api.Client, jobID string, resolved *config.ResolvedConfi
 				delayHint = nil
 			}
 			if timeoutErr := pollDelayDeadlineError(jobID, deadline, delay, delayHint); timeoutErr != nil {
+				timeoutErr.action = statusAction(jobID)
 				return timeoutErr
 			}
 			select {
@@ -127,7 +135,9 @@ func statusPoll(client *api.Client, jobID string, resolved *config.ResolvedConfi
 				if !flagJSON {
 					fmt.Fprintf(os.Stderr, "\nInterrupted. Resume with: ttsbuddy status %s --watch\n", jobID)
 				}
-				return structuredExitError(130, fmt.Sprintf("interrupted while polling job %s", jobID), "CLI_ERROR", "POLL_INTERRUPTED", fmt.Sprintf("Resume with: ttsbuddy status %s --watch", jobID), true, 0)
+				interrupted := structuredExitError(130, fmt.Sprintf("interrupted while polling job %s", jobID), "CLI_ERROR", "POLL_INTERRUPTED", fmt.Sprintf("Resume with: ttsbuddy status %s --watch", jobID), true, 0)
+				interrupted.action = statusAction(jobID)
+				return interrupted
 			case <-time.After(delay):
 			}
 			continue
@@ -150,6 +160,7 @@ func statusPoll(client *api.Client, jobID string, resolved *config.ResolvedConfi
 			return &exitError{code: 1, msg: fmt.Sprintf("unexpected job status %q from API. Job ID: %s", resp.Status, jobID)}
 		}
 		if timeoutErr := pollDelayDeadlineError(jobID, deadline, delay, delayHint); timeoutErr != nil {
+			timeoutErr.action = statusAction(jobID)
 			return timeoutErr
 		}
 
@@ -171,7 +182,11 @@ func renderStatus(resp *api.TTSResponse, jobID string, resolved *config.Resolved
 	if resp.Status == "failed" || resp.Status == "expired" {
 		// Terminal failures use the same sanitized recovery envelope in human
 		// and JSON modes; successful response shapes remain unchanged.
-		return classifyTerminalResponse(resp, jobID)
+		mapped := classifyTerminalResponse(resp, jobID)
+		if mapped.action == nil {
+			mapped.action = submissionRetryAction()
+		}
+		return mapped
 	}
 	if resp.Status == "completed" {
 		if err := validateCompletedAudioURL(resp, resolved); err != nil {
@@ -193,7 +208,7 @@ func renderStatus(resp *api.TTSResponse, jobID string, resolved *config.Resolved
 		}
 		if resp.Audio != nil {
 			if resp.Audio.DurationSeconds != nil {
-				fmt.Fprintf(os.Stderr, "Duration: %.1fs\n", *resp.Audio.DurationSeconds)
+				fmt.Fprintf(os.Stderr, "Duration: %.1fs%s\n", *resp.Audio.DurationSeconds, metadataSourceSuffix(normalizeMetadataSource(resp.Audio.DurationSource)))
 			}
 			if resp.Audio.ExpiresAt != "" {
 				fmt.Fprintf(os.Stderr, "Expires: %s\n", resp.Audio.ExpiresAt)
@@ -226,15 +241,21 @@ func handleStatusError(err error, jobID string) error {
 		if apiErr.ErrorCode() == api.ErrNotFound {
 			mapped := structuredExitError(1, fmt.Sprintf("job not found: %s", jobID), "CLI_ERROR", "JOB_NOT_FOUND", fmt.Sprintf("Check the job ID and retry: ttsbuddy status %s", jobID), false, 0)
 			mapped.serverCode = api.ErrNotFound
+			mapped.action = statusAction(jobID)
 			return mapped
 		}
 		mapped := classifyAPIError(err, apiErr.StatusCode)
 		if mapped.reason == "RATE_LIMITED" || mapped.reason == "SERVICE_ERROR" {
 			mapped.nextAction = fmt.Sprintf("Wait for the provided retry delay or bounded backoff, then retry: ttsbuddy status %s", jobID)
 		}
+		if mapped.action == nil {
+			mapped.action = statusAction(jobID)
+		}
 		return mapped
 	}
-	return structuredExitError(1, "checking job status failed", "CLI_ERROR", "TRANSPORT_ERROR", fmt.Sprintf("Retry: ttsbuddy status %s", jobID), true, 0)
+	mapped := structuredExitError(1, "checking job status failed", "CLI_ERROR", "TRANSPORT_ERROR", fmt.Sprintf("Retry: ttsbuddy status %s", jobID), true, 0)
+	mapped.action = statusAction(jobID)
+	return mapped
 }
 
 func isAPIErr(err error, target **api.APIResponseError) bool {

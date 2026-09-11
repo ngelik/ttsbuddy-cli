@@ -44,6 +44,22 @@ func TestHelpExitsZero(t *testing.T) {
 	assertContains(t, r.Stdout, "Usage:", "stdout")
 }
 
+func TestRootHelpDiscoversAgentQuickstartAndRecoveryCommands(t *testing.T) {
+	r := runCLI(t, nil, "--help")
+	assertExitCode(t, r, 0)
+	for _, want := range []string{
+		"https://www.ttsbuddy.com/docs/developers/agent-quickstart",
+		"doctor --json",
+		"auth email start",
+		"auth browser",
+		"voices --json",
+		"speak --json",
+		"download <job_id>",
+	} {
+		assertContains(t, r.Stdout, want, "root help")
+	}
+}
+
 func TestArgErrorShowsCommandHelp(t *testing.T) {
 	r := runCLI(t, nil, "web")
 	assertExitCode(t, r, 2)

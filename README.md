@@ -231,6 +231,9 @@ ttsbuddy speak "こんにちは" -v st_f2 --language ja
 # JSON output (for scripting)
 ttsbuddy speak "Hello" --json
 
+# Save locally and return the saved-file metadata as JSON
+ttsbuddy speak "Hello" --output hello.mp3 --json
+
 # Print URL without downloading
 ttsbuddy speak "Hello" --no-download
 
@@ -327,6 +330,31 @@ ttsbuddy status <job_id> --watch
 # JSON output
 ttsbuddy status <job_id> --json
 ```
+
+### download
+
+Download audio for an existing job without submitting new synthesis work. The
+job ID is required so a failed or interrupted transfer can be retried without
+duplicating generation. Processing jobs are polled using the configured
+timeout, and downloads use the same URL allowlist, redirect checks, bounded
+size, and atomic file handling as `speak`.
+
+```bash
+# Save to a chosen path
+ttsbuddy download <job_id> --output audio.mp3
+
+# Poll if needed and return the completed API response plus local file metadata
+ttsbuddy download <job_id> --output audio.mp3 --json
+
+# Auto-name within the configured output directory
+ttsbuddy download <job_id>
+```
+
+The JSON `download` object is added only after a file is saved and contains an
+absolute `path` plus the actual local `bytes` written. `--json` cannot be
+combined with `--output -`; use `--output -` without JSON when a raw MP3 stream
+is required. An interrupted or failed transfer returns an executable download
+recovery action when the job and output path are known.
 
 ### config
 
@@ -434,7 +462,8 @@ These work on any command:
 | Mode | stdout | stderr |
 |------|--------|--------|
 | Default `speak` | nothing (file saved to disk) | spinner, status, "Saved to ...", final stats |
-| `--json` | JSON response | nothing |
+| `--json` | JSON response without downloading (unless an explicit output file is supplied) | nothing |
+| `--output <file> --json` | JSON response plus additive `download.path` and actual `download.bytes` | nothing |
 | `-o -` | raw MP3 bytes | spinner (if TTY) |
 | `--quiet` | nothing | suppresses progress; data output such as a `--no-download` audio URL remains |
 | `--no-download` | nothing | audio URL and final stats |
@@ -445,6 +474,13 @@ Human progress output shows honest stages such as fetching, submitting, queued,
 processing, finalizing, and downloading. Percentages appear only when the
 backend receives real provider progress. Completed jobs show speech length, MP3
 size when known, generation speed, and job ID.
+
+Completion JSON retains the API's numeric duration and file-size fields and
+adds separate provenance fields: `provider`, `estimated`, or `unknown` for
+duration, and `content_length`, `estimated`, or `unknown` for file size. A
+provider value means provider-reported metadata, not an independent local
+measurement. The `download.bytes` value is the authoritative byte count for
+the local file.
 
 Example human output for a webpage conversion:
 
