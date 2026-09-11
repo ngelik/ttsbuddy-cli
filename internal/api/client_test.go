@@ -5,10 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -35,6 +37,18 @@ func TestParseRetryAfterFormsAndInvalidValues(t *testing.T) {
 				t.Fatalf("parseRetryAfter(%q)=(%d,%t), want (%d,%t)", tc.value, got, ok, tc.want, tc.ok)
 			}
 		})
+	}
+}
+
+func TestParseRetryAfterRejectsPlatformOverflow(t *testing.T) {
+	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
+	maxInt := int64(math.MaxInt)
+	candidate := maxParsedRetryAfterSeconds + 1
+	if maxInt < candidate {
+		candidate = maxInt + 1
+	}
+	if got, ok := parseRetryAfter(strconv.FormatInt(candidate, 10), now); ok {
+		t.Fatalf("parseRetryAfter(%d)=(%d,true), want rejected on this platform", candidate, got)
 	}
 }
 

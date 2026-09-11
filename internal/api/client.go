@@ -504,14 +504,16 @@ func parseRetryAfter(value string, now time.Time) (int, bool) {
 		}
 	}
 	if digitsOnly {
-		seconds, err := strconv.ParseInt(value, 10, 64)
+		// Atoi intentionally parses into the platform-sized int that the
+		// caller returns, rejecting values that cannot fit on this build.
+		seconds, err := strconv.Atoi(value)
 		if err != nil {
 			return 0, false
 		}
-		if seconds < 0 || seconds > maxParsedRetryAfterSeconds {
+		if seconds < 0 || int64(seconds) > maxParsedRetryAfterSeconds {
 			return 0, false
 		}
-		return int(seconds), true
+		return seconds, true
 	}
 	when, err := http.ParseTime(value)
 	if err != nil {
@@ -520,11 +522,13 @@ func parseRetryAfter(value string, now time.Time) (int, bool) {
 	if when.Before(now) {
 		return 0, true
 	}
-	seconds := int(math.Ceil(when.Sub(now).Seconds()))
-	if int64(seconds) < 0 || int64(seconds) > maxParsedRetryAfterSeconds {
+	secondsFloat := math.Ceil(when.Sub(now).Seconds())
+	// Validate both the duration-safe and platform-int bounds before the
+	// conversion below. This is important for cross-compiled 32-bit builds.
+	if secondsFloat < 0 || secondsFloat > float64(maxParsedRetryAfterSeconds) || secondsFloat > float64(math.MaxInt) {
 		return 0, false
 	}
-	return seconds, true
+	return int(secondsFloat), true
 }
 
 // ErrForbidden is used for synthetic (non-JSON) 403 responses where the
