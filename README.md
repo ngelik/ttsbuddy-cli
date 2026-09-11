@@ -134,8 +134,9 @@ and expired-session messages point to both interactive methods: `ttsbuddy auth
 email` or `ttsbuddy auth browser`.
 
 For automation that can read an authorized mailbox, use the two-step email
-contract. The start command never accepts a code on argv and returns one JSON
-document with an opaque, short-lived challenge ID:
+contract (available in v0.12.0 and newer). The start command never accepts a
+code on argv and returns one JSON document with an opaque, short-lived
+challenge ID:
 
 ```bash
 ttsbuddy auth email start --email operator@example.com --json
@@ -282,6 +283,9 @@ ttsbuddy voices --engine supertonic --recommended --json
 
 Voice output includes `ID`, native display `NAME`, `LANGUAGE`, language `CODE`, and `TYPE`; JSON also includes lowercase `engine`, `min_speed`, `max_speed`, and `recommended_speed` fields when authoritative metadata is available. `--language CODE` and `--engine ENGINE` are additive filters, and `--recommended` returns one deterministic match (preferring `st_m1`, then `af_heart`). The JSON shape remains an array, including an empty array when no voice matches. Supertonic Fast voices (`st_m1`-`st_m5`, `st_f1`-`st_f5`) appear once per supported language mode, for example `st_m1` appears as `Louis` under French with code `fr` and `Noah` under German with code `de`. If `--all` can't reach the live catalog, it falls back to the curated list with a warning on stderr.
 
+The `--language`, `--engine`, and `--recommended` discovery options are
+available in v0.12.0 and newer.
+
 Kokoro voices use compact provider codes such as `a` for American English, `b` for British English, `f` for French, and `z` for Chinese. Fast voices use standard language codes from the list above.
 
 ### status
@@ -324,7 +328,7 @@ ttsbuddy config set allow_custom_api_url true
 
 Valid keys: `key`, `api_key`, `voice`, `language`, `default_language`, `speed`, `timeout`, `output_dir`, `api_url`, `cli_auth_url`, `tts_api_base_url`, `allow_custom_api_url`. `api_key` aliases `key`, and `default_language` aliases `language`.
 
-### doctor
+### doctor (v0.12.0+)
 
 Inspect local readiness without changing configuration. The default is offline
 and safe for signed-out machines; `--online` adds bounded, read-only
