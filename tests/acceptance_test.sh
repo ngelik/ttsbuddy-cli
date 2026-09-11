@@ -233,7 +233,7 @@ else
     fail "AUTH.7 email verify recovery JSON" "expected no-pending challenge recovery document"
 fi
 set +e
-tb doctor --json >"$TB_OUT/_stdout" 2>"$TB_OUT/_stderr"
+TTSBUDDY_API_KEY= tb doctor --json >"$TB_OUT/_stdout" 2>"$TB_OUT/_stderr"
 doctor_exit=$?
 set -e
 if [ "$doctor_exit" -eq 1 ] && [ ! -s "$TB_OUT/_stderr" ] && jq -e '.ready == false and (.next_actions | length) > 0' "$TB_OUT/_stdout" >/dev/null 2>&1; then
