@@ -181,6 +181,41 @@ the same opaque ID can be retried, while terminal failures clear it.
 Successful sign-in replaces the existing CLI session; the prepared result
 includes this handoff boundary explicitly.
 
+Starting in v0.13.4, a successful email start also returns an additive
+`next_step` object. Existing `status: "verification_required"` and `next_action`
+fields remain unchanged:
+
+```json
+{
+  "next_step": {
+    "status": "awaiting_verification_code",
+    "challenge_id": "<returned challenge ID>",
+    "expires_at": "<same RFC3339 deadline as the top-level response>",
+    "expiry_scope": "cli_continuation_deadline",
+    "required_input": {"name": "verification_code", "channel": "stdin"},
+    "action": {
+      "type": "verify_code",
+      "argv": ["ttsbuddy", "auth", "email", "verify", "--challenge-id", "<returned challenge ID>", "--code-stdin", "--json"],
+      "required_inputs": ["verification_code"]
+    },
+    "if_mailbox_unavailable": {
+      "action": "ask_user_for_verification_code",
+      "message": "Ask the user for the verification code and retain the challenge ID and config directory."
+    }
+  }
+}
+```
+
+This example abbreviates the fallback message. The returned action includes
+`--config-dir` when the start used a config override. Preserve the action's
+argument array and provide the code through protected stdin; do not execute it
+until the code is available. If authorized mailbox access is unavailable, ask
+the owner for the code and wait. Do not search unrelated accounts or start
+another challenge merely because no code has arrived. The deadline applies to
+the CLI continuation only; the provider's code may expire earlier. Follow any
+expiry error's restart guidance. `human_action_required` remains reserved for
+mandatory browser handoffs, not this conditional mailbox fallback.
+
 If a speak/web submission is interrupted or its transport outcome is
 ambiguous, the JSON error includes `error.idempotency_key` and a same-input,
 same-options retry command. Reuse that key with `--idempotency-key`; once a job

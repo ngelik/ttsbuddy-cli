@@ -228,6 +228,20 @@ func pendingChallengeResult(state *config.PendingAuth) map[string]any {
 		"expires_at":                  state.ExpiresAt.UTC().Format(time.RFC3339),
 		"expiry_scope":                "cli_continuation_deadline",
 		"handoff":                     pendingAuthHandoff,
+		"next_step": map[string]any{
+			"status":       "awaiting_verification_code",
+			"challenge_id": state.ChallengeID,
+			"expires_at":   state.ExpiresAt.UTC().Format(time.RFC3339),
+			"expiry_scope": "cli_continuation_deadline",
+			"required_input": map[string]string{
+				"name": "verification_code", "channel": "stdin",
+			},
+			"action": verifyCodeAction(state.ChallengeID),
+			"if_mailbox_unavailable": map[string]string{
+				"action":  "ask_user_for_verification_code",
+				"message": "Ask the authorized mailbox owner for the six-digit verification code and wait for their reply. Keep the same challenge ID and config directory to resume. Do not put the code in command arguments or logs.",
+			},
+		},
 	}
 }
 
