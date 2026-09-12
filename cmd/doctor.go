@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -21,6 +22,8 @@ var doctorOnline bool
 var doctorCLICredentialPattern = regexp.MustCompile(`^ttsc_[0-9a-f]{8}_[0-9a-f]{48}$`)
 
 type doctorCheck struct {
+	Reason  string         `json:"reason,omitempty"`
+	Action  *api.CLIAction `json:"action,omitempty"`
 	Name    string         `json:"name"`
 	Status  string         `json:"status"`
 	Message string         `json:"message,omitempty"`
@@ -78,7 +81,15 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 		}
 		checks = append(checks, doctorCheck{Name: "config_directory", Status: "failed", Message: "could not resolve the config directory", Details: details})
 		next = append(next, "Set TTSBUDDY_CONFIG_DIR to an accessible absolute directory.")
-	} else if info, err := os.Stat(configDir); err != nil {
+	} else if dirErr := config.CheckConfigDirPermissions(configDir); dirErr != nil {
+		var permissionErr *config.ConfigDirPermissionsError
+		if errors.As(dirErr, &permissionErr) {
+			checks = append(checks, doctorCheck{Name: "config_directory", Status: "failed", Reason: configDirPermissionsReason, Message: "Email authentication requires this directory to have mode 0700 (owner access only).", Details: configPermissionDetails(permissionErr), Action: configPermissionAction(permissionErr)})
+			next = append(next, "Fix: "+configPermissionFix(permissionErr), "Then rerun: ttsbuddy doctor --json")
+		} else {
+			checks = append(checks, doctorCheck{Name: "config_directory", Status: "failed", Message: "config directory cannot be used; inspect its type and access permissions", Details: map[string]any{"path": configDir}})
+		}
+	} else if info, err := os.Lstat(configDir); err != nil {
 		if os.IsNotExist(err) {
 			checks = append(checks, doctorCheck{Name: "config_directory", Status: "warning", Message: "config directory does not exist yet", Details: map[string]any{"path": configDir}})
 		} else {
@@ -130,10 +141,12 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 	next = append(next, endpointNext...)
 	checks = append(checks, doctorCheck{Name: "mode", Status: "healthy", Details: map[string]any{"mode": doctorMode(resolved.APIURL)}})
 
-	if doctorOnline {
+	if doctorOnline && !doctorHasBlockingCheck(checks) {
 		onlineChecks, onlineNext := doctorOnlineChecks(cmd.Context(), cfg, resolved, credentialDetails["source"])
 		checks = append(checks, onlineChecks...)
 		next = append(next, onlineNext...)
+	} else if doctorOnline {
+		checks = append(checks, doctorCheck{Name: "connectivity", Status: "not_checked", Message: "repair the failed local configuration checks before running online diagnostics"})
 	} else {
 		checks = append(checks, doctorCheck{Name: "connectivity", Status: "not_checked", Message: "offline checks only; rerun with --online for bounded read-only connectivity"})
 	}
@@ -148,6 +161,10 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 	}
 	_, _ = fmt.Fprintf(os.Stdout, "TTSBuddy doctor: %s\n", map[bool]string{true: "ready", false: "not ready"}[ready])
 	for _, check := range checks {
+		if check.Reason == configDirPermissionsReason {
+			_, _ = fmt.Fprintf(os.Stdout, "FAIL config_directory\nPath: %s\nPermissions: %s\nRequired: %s (owner access only)\n\n%s\n", check.Details["path"], check.Details["actual_mode"], check.Details["required_mode"], check.Message)
+			continue
+		}
 		message := check.Status
 		if check.Message != "" {
 			message += " — " + check.Message

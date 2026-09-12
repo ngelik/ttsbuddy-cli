@@ -133,7 +133,19 @@ func checkPendingAuthFile(path string) error {
 	return nil
 }
 
-func checkPendingAuthDir(dir string) error {
+// ConfigDirPermissionsError reports the exact directory rejected for email auth.
+type ConfigDirPermissionsError struct {
+	Path       string
+	ActualMode os.FileMode
+}
+
+func (e *ConfigDirPermissionsError) Error() string {
+	return fmt.Sprintf("config directory %q has permissions %04o; email authentication requires 0700 (owner access only)", e.Path, e.ActualMode)
+}
+
+// CheckConfigDirPermissions inspects the directory itself without creating or
+// modifying it. Missing directories are allowed; writes create them privately.
+func CheckConfigDirPermissions(dir string) error {
 	info, err := os.Lstat(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -145,7 +157,7 @@ func checkPendingAuthDir(dir string) error {
 		return errors.New("pending auth config directory is not a directory")
 	}
 	if info.Mode().Perm() != 0700 {
-		return errors.New("pending auth config directory has unsafe permissions")
+		return &ConfigDirPermissionsError{Path: dir, ActualMode: info.Mode().Perm()}
 	}
 	return nil
 }
@@ -162,7 +174,7 @@ func SavePendingAuth(state PendingAuth) error {
 	if err != nil {
 		return err
 	}
-	if err := checkPendingAuthDir(dir); err != nil {
+	if err := CheckConfigDirPermissions(dir); err != nil {
 		return err
 	}
 	path := filepath.Join(dir, pendingAuthFile)
@@ -184,7 +196,7 @@ func LoadPendingAuth() (*PendingAuth, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := checkPendingAuthDir(filepath.Dir(path)); err != nil {
+	if err := CheckConfigDirPermissions(filepath.Dir(path)); err != nil {
 		return nil, err
 	}
 	if err := checkPendingAuthFile(path); err != nil {
@@ -220,7 +232,7 @@ func ClearPendingAuth(expectedID string) error {
 	if err != nil {
 		return err
 	}
-	if err := checkPendingAuthDir(filepath.Dir(path)); err != nil {
+	if err := CheckConfigDirPermissions(filepath.Dir(path)); err != nil {
 		return err
 	}
 	if err := checkPendingAuthFile(path); err != nil {

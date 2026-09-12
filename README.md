@@ -51,6 +51,21 @@ After installing or updating, confirm that the first `ttsbuddy` found on your
 inspect them before changing `PATH` or removing anything; do not delete an
 install whose origin is unclear.
 
+## Agent skill
+
+Use the repository's [TTS Buddy skill](skills/tts-buddy/SKILL.md) for agent-driven
+text and webpage narration. It covers latest stable CLI discovery, isolated
+authentication, voice selection, saved MP3s, existing-job recovery, and logout.
+Give your agent that file, or copy `skills/tts-buddy/` into your agent's skills
+directory. For Codex, use `~/.codex/skills/tts-buddy/`.
+
+The actual directory selected by `TTSBUDDY_CONFIG_DIR` must have mode `0700`
+(owner access only), even if its parent is already private. `ttsbuddy doctor
+--json` reports `CONFIG_DIR_PERMISSIONS` with the actual mode and an explicit
+`chmod` action when this requirement is not met. Doctor only reports the fix;
+it does not change permissions. Apply the correction to your own config directory
+and rerun doctor before email authentication.
+
 ## Quick Start
 
 ```bash

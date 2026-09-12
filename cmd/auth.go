@@ -249,6 +249,9 @@ func runAuthEmailStart(cmd *cobra.Command, _ []string) error {
 	if strings.TrimSpace(authEmailStartAddress) == "" {
 		return structuredExitError(2, "--email is required", "CLI_ERROR", "INVALID_ARGUMENT", "ttsbuddy auth email start --email <address> --json", false, 0)
 	}
+	if err := checkEmailConfigDirectory(); err != nil {
+		return err
+	}
 	clerkOrigin, apiOrigin, err := validateStructuredAuthConfig()
 	if err != nil {
 		return structuredExitError(1, "authentication configuration is invalid", "CLI_ERROR", "INVALID_CONFIGURATION", "Check the CLI endpoint configuration.", false, 0)
@@ -259,7 +262,10 @@ func runAuthEmailStart(cmd *cobra.Command, _ []string) error {
 	}
 	defer func() { _ = lock.Release() }()
 	if pending, loadErr := config.LoadPendingAuth(); loadErr != nil {
-		return structuredExitError(1, "pending authentication state could not be read", "CLI_ERROR", "PENDING_STATE_INVALID", "Run: ttsbuddy auth email cancel --challenge-id <id> --json", false, 0)
+		if mapped := configPermissionExit(loadErr); mapped != nil {
+			return mapped
+		}
+		return structuredExitError(1, "pending authentication state could not be read", "CLI_ERROR", "PENDING_STATE_INVALID", "Inspect the isolated config directory and run ttsbuddy doctor --json before starting again.", false, 0)
 	} else if pending != nil {
 		if pending.ExpiresAt.After(time.Now().UTC()) {
 			if pending.ClerkOrigin != clerkOrigin || pending.APIOrigin != apiOrigin {
@@ -352,6 +358,9 @@ func runAuthEmailVerify(cmd *cobra.Command, _ []string) error {
 	if !config.IsPendingAuthID(authEmailVerifyID) {
 		return structuredExitError(2, "--challenge-id must be the opaque ID returned by auth email start", "CLI_ERROR", "INVALID_ARGUMENT", "Start a new challenge with auth email start.", false, 0)
 	}
+	if err := checkEmailConfigDirectory(); err != nil {
+		return err
+	}
 	lock, err := config.AcquireLoginLock()
 	if err != nil {
 		return structuredExitError(1, err.Error(), "CLI_ERROR", "AUTH_IN_PROGRESS", "Wait for the other authentication process to finish.", true, 0)
@@ -363,7 +372,10 @@ func runAuthEmailVerify(cmd *cobra.Command, _ []string) error {
 	}
 	state, err := config.LoadPendingAuth()
 	if err != nil {
-		return structuredExitError(1, "pending authentication state could not be read", "CLI_ERROR", "PENDING_STATE_INVALID", "Cancel the pending challenge and start again.", false, 0)
+		if mapped := configPermissionExit(err); mapped != nil {
+			return mapped
+		}
+		return structuredExitError(1, "pending authentication state could not be read", "CLI_ERROR", "PENDING_STATE_INVALID", "Inspect the isolated config directory and run ttsbuddy doctor --json before starting again.", false, 0)
 	}
 	if state == nil {
 		return structuredExitError(1, "no pending authentication challenge", "CLI_ERROR", "NO_PENDING_CHALLENGE", "Start one with: ttsbuddy auth email start --email <address> --json", false, 0)
@@ -453,6 +465,9 @@ func runAuthEmailCancel(cmd *cobra.Command, _ []string) error {
 	}
 	if !config.IsPendingAuthID(authEmailCancelID) {
 		return structuredExitError(2, "--challenge-id must be the opaque ID returned by auth email start", "CLI_ERROR", "INVALID_ARGUMENT", "Use the challenge ID returned by auth email start.", false, 0)
+	}
+	if err := checkEmailConfigDirectory(); err != nil {
+		return err
 	}
 	lock, err := config.AcquireLoginLock()
 	if err != nil {
