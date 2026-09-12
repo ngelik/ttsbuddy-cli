@@ -138,15 +138,16 @@ type CLIError struct {
 // recovery fields are additive so existing consumers can continue reading
 // error.code and error.message.
 type CLIErrorDetail struct {
-	Code                string     `json:"code"`
-	Message             string     `json:"message"`
-	ServerCode          string     `json:"server_code,omitempty"`
-	Reason              string     `json:"reason,omitempty"`
-	Retryable           bool       `json:"retryable"`
-	RetryAfterSeconds   int        `json:"retry_after_seconds,omitempty"`
-	NextAction          string     `json:"next_action,omitempty"`
-	Action              *CLIAction `json:"action,omitempty"`
-	HumanActionRequired bool       `json:"human_action_required,omitempty"`
+	Details             map[string]any `json:"details,omitempty"`
+	Code                string         `json:"code"`
+	Message             string         `json:"message"`
+	ServerCode          string         `json:"server_code,omitempty"`
+	Reason              string         `json:"reason,omitempty"`
+	Retryable           bool           `json:"retryable"`
+	RetryAfterSeconds   int            `json:"retry_after_seconds,omitempty"`
+	NextAction          string         `json:"next_action,omitempty"`
+	Action              *CLIAction     `json:"action,omitempty"`
+	HumanActionRequired bool           `json:"human_action_required,omitempty"`
 	// IdempotencyKey is returned only when a submission outcome is ambiguous,
 	// allowing an operator to retry the identical request without guessing a
 	// new identity. It is never a credential or a copy of input text.
