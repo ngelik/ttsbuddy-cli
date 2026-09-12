@@ -314,7 +314,22 @@ Enter the code through protected terminal input; do not paste it into the Python
 source. If the runner has an in-memory secret input instead, pass that value to
 `subprocess.run(input=...)` with the same argv/environment; no PTY is needed.
 If no protected input/mailbox mechanism exists, preserve the challenge and hand
-off to the owner. Do not claim fully unattended completion in that case.
+off to the owner. Ask for the verification code through a protected input channel
+and wait; do not search unrelated accounts or report the entire audio task as
+finished. Resume verification after the code arrives using the same challenge
+and config directory, unless the returned expiry error requires a new start.
+Do not claim fully unattended completion in that case.
+
+When `auth email start --json` returns
+`next_step.status: "awaiting_verification_code"`, follow its structured action.
+`next_step.action.argv` preserves the challenge and explicit config override;
+`required_inputs` identifies the missing verification code, supplied through
+stdin. If the authorized mailbox is unavailable, use the
+`if_mailbox_unavailable` handoff to ask the owner and wait. `expires_at` with
+`expiry_scope: "cli_continuation_deadline"` describes the local continuation,
+not a guarantee about the provider code's lifetime. These fields are additive;
+older CLI responses still expose the top-level challenge, deadline and prose
+next action.
 
 Direct CLI `--code-stdin` reads until EOF. If using it directly in a PTY, a newline
 alone may leave it waiting: finish input with EOF (usually Ctrl-D on an empty

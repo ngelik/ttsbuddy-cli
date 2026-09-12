@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -1155,6 +1156,108 @@ func TestAuthLogoutUnconfirmedSuccessRetainsSession(t *testing.T) {
 			configBody, _ := os.ReadFile(filepath.Join(home, ".ttsbuddy", "config.json"))
 			if !strings.Contains(string(configBody), "ttsc_") {
 				t.Fatal("session was cleared without confirmed revocation")
+			}
+		})
+	}
+}
+
+func TestAuthEmailStartVerificationHandoffFreshAndReused(t *testing.T) {
+	for _, tc := range []struct{ mode, configSource string }{{"login", "flag"}, {"signup", "flag"}, {"login", "env"}, {"signup", "env"}} {
+		t.Run(tc.mode+"/"+tc.configSource, func(t *testing.T) {
+			var requests atomic.Int32
+			server := startMockAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				w.Header().Set("Authorization", "private-native-continuation")
+				var response map[string]any
+				switch r.URL.Path {
+				case "/v1/client":
+					response = map[string]any{"id": "client_handoff"}
+				case "/v1/client/sign_ins":
+					response = map[string]any{"id": "si_handoff", "status": "needs_first_factor", "supported_first_factors": []map[string]any{{"strategy": "email_code", "email_address_id": "idn_handoff"}}}
+				case "/v1/client/sign_ins/si_handoff/prepare_first_factor":
+					response = map[string]any{"id": "si_handoff", "status": "needs_first_factor"}
+				case "/v1/client/sign_ups":
+					response = map[string]any{"id": "su_handoff", "status": "missing_requirements", "unverified_fields": []string{"email_address"}, "verifications": map[string]any{"email_address": map[string]any{"supported_strategies": []string{"email_code"}}}}
+				case "/v1/client/sign_ups/su_handoff/prepare_verification":
+					response = map[string]any{"id": "su_handoff", "status": "missing_requirements", "unverified_fields": []string{"email_address"}}
+				default:
+					t.Fatalf("unexpected request: %s", r.URL.Path)
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"response": response})
+			}))
+			dir := t.TempDir()
+			if err := os.Chmod(dir, 0700); err != nil {
+				t.Fatal(err)
+			}
+			env := []string{"HOME=" + t.TempDir(), "TTSBUDDY_CLERK_FRONTEND_API_URL=" + server, "TTSBUDDY_CLI_AUTH_URL=" + server + "/v1/cli-auth", "TTSBUDDY_ALLOW_CUSTOM_API_URL=true"}
+			args := []string{"auth", "email", "start", "--email", "handoff@example.com", "--json"}
+			if tc.configSource == "flag" {
+				args = append([]string{"--config-dir", dir}, args...)
+				env = append(env, "TTSBUDDY_CONFIG_DIR="+t.TempDir()) // The explicit flag must win.
+			} else {
+				env = append(env, "TTSBUDDY_CONFIG_DIR="+dir)
+			}
+			if tc.mode == "signup" {
+				args = append(args, "--signup")
+			}
+			first := runCLI(t, env, args...)
+			if first.ExitCode != 0 || first.Stderr != "" {
+				t.Fatalf("start=%#v", first)
+			}
+			var pending struct {
+				Status              string `json:"status"`
+				ChallengeID         string `json:"challenge_id"`
+				ExpiresAt           string `json:"expires_at"`
+				HumanActionRequired bool   `json:"human_action_required"`
+				NextStep            struct {
+					Status               string            `json:"status"`
+					ChallengeID          string            `json:"challenge_id"`
+					ExpiresAt            string            `json:"expires_at"`
+					ExpiryScope          string            `json:"expiry_scope"`
+					RequiredInput        map[string]string `json:"required_input"`
+					Action               api.CLIAction     `json:"action"`
+					IfMailboxUnavailable map[string]string `json:"if_mailbox_unavailable"`
+				} `json:"next_step"`
+			}
+			if err := json.Unmarshal([]byte(first.Stdout), &pending); err != nil {
+				t.Fatal(err)
+			}
+			step := pending.NextStep
+			if pending.Status != "verification_required" || pending.HumanActionRequired || step.Status != "awaiting_verification_code" || step.ChallengeID != pending.ChallengeID || step.ExpiresAt != pending.ExpiresAt || step.ExpiryScope != "cli_continuation_deadline" {
+				t.Fatalf("invalid continuation: %#v", pending)
+			}
+			if step.RequiredInput["name"] != "verification_code" || step.RequiredInput["channel"] != "stdin" || step.Action.Type != "verify_code" || !reflect.DeepEqual(step.Action.RequiredInputs, []string{"verification_code"}) {
+				t.Fatalf("unsafe input handoff: %#v", step)
+			}
+			wantArgv := []string{"ttsbuddy", "auth", "email", "verify", "--challenge-id", pending.ChallengeID, "--code-stdin", "--json", "--config-dir", dir}
+			if !reflect.DeepEqual(step.Action.Argv, wantArgv) {
+				t.Fatalf("resume argv=%q want=%q", step.Action.Argv, wantArgv)
+			}
+			if step.IfMailboxUnavailable["action"] != "ask_user_for_verification_code" || !strings.Contains(step.IfMailboxUnavailable["message"], "wait for their reply") {
+				t.Fatalf("missing conditional handoff: %#v", step)
+			}
+			stateBytes, err := os.ReadFile(filepath.Join(dir, "pending_auth.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var state config.PendingAuth
+			if err := json.Unmarshal(stateBytes, &state); err != nil {
+				t.Fatal(err)
+			}
+			if state.ChallengeID != step.ChallengeID || state.ExpiresAt.UTC().Format(time.RFC3339) != step.ExpiresAt {
+				t.Fatal("handoff does not match persisted continuation")
+			}
+			for _, private := range []string{"private-native-continuation", "handoff@example.com", "si_handoff", "su_handoff", "idn_handoff", "123456"} {
+				if strings.Contains(first.Stdout, private) {
+					t.Fatalf("output contains private fixture %q", private)
+				}
+			}
+			reused := runCLI(t, env, args...)
+			if reused.ExitCode != 0 || reused.Stderr != "" || reused.Stdout != first.Stdout {
+				t.Fatalf("reused challenge changed: %#v", reused)
+			}
+			if requests.Load() != 3 {
+				t.Fatalf("reuse sent additional authentication requests: %d", requests.Load())
 			}
 		})
 	}
