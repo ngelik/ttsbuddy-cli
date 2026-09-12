@@ -17,6 +17,29 @@ func TestVersion(t *testing.T) {
 	assertNotContains(t, r.Stdout, "ttsbuddy-cli", "stdout")
 }
 
+func TestResolveExecutionContext(t *testing.T) {
+	for _, tc := range []struct {
+		name, flag, env string
+		flagSet         bool
+		want            string
+	}{
+		{name: "default", want: "unknown"},
+		{name: "env", env: "automation", want: "automation_declared"},
+		{name: "flag wins", flag: "human", env: "agent", flagSet: true, want: "human_declared"},
+		{name: "canonical", flag: "agent_declared", flagSet: true, want: "agent_declared"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := resolveExecutionContext(tc.flag, tc.env, tc.flagSet)
+			if err != nil || got != tc.want {
+				t.Fatalf("resolveExecutionContext()=(%q,%v), want %q", got, err, tc.want)
+			}
+		})
+	}
+	if _, err := resolveExecutionContext("robot", "", true); err == nil {
+		t.Fatal("invalid context should fail")
+	}
+}
+
 func TestVersionJSON(t *testing.T) {
 	r := runCLI(t, nil, "version", "--json")
 	assertExitCode(t, r, 0)

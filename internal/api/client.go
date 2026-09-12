@@ -19,19 +19,27 @@ import (
 
 // Client is the HTTP client for the agent-tts API.
 type Client struct {
-	httpClient *http.Client
-	apiURL     string
-	apiKey     string
-	version    string
+	httpClient       *http.Client
+	apiURL           string
+	apiKey           string
+	version          string
+	executionContext string
 }
 
 // NewClient creates a new API client.
 func NewClient(apiURL, apiKey, version string) *Client {
+	return NewClientWithExecutionContext(apiURL, apiKey, version, "unknown")
+}
+
+// NewClientWithExecutionContext creates an API client whose synthesis
+// requests carry the CLI's declared execution context.
+func NewClientWithExecutionContext(apiURL, apiKey, version, executionContext string) *Client {
 	return &Client{
-		httpClient: newAPIHTTPClient(apiURL),
-		apiURL:     strings.TrimRight(apiURL, "/"),
-		apiKey:     apiKey,
-		version:    version,
+		httpClient:       newAPIHTTPClient(apiURL),
+		apiURL:           strings.TrimRight(apiURL, "/"),
+		apiKey:           apiKey,
+		version:          version,
+		executionContext: executionContext,
 	}
 }
 
@@ -71,6 +79,13 @@ func (c *Client) Speak(ctx context.Context, req SpeakRequest, idempotencyKey str
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
+	if req.ClientContext == nil {
+		req.ClientContext = &ClientContext{
+			Client:           "cli",
+			Version:          c.version,
+			ExecutionContext: c.executionContext,
+		}
+	}
 	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, 0, fmt.Errorf("marshaling request: %w", err)

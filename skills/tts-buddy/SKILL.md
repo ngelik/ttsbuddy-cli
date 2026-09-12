@@ -14,6 +14,19 @@ accepted request, job ID, or temporary audio URL.
 
 ## Start here: ordinary text or webpage audio
 
+### Execution context declaration
+
+For synthesis submitted by a human, agent, or automation, pass the declaration
+on the `speak` or `web` command with `--execution-context human|agent|automation`.
+The equivalent environment variable is `TTSBUDDY_EXECUTION_CONTEXT`; a command
+flag takes precedence. Omit it (or use `unknown`) when the caller cannot make a
+reliable declaration. This value is analytics attribution only and does not
+grant access or change billing.
+
+The declaration is validated before submission. Invalid values are rejected;
+status and download commands never rewrite the context recorded on the original
+job, and the value does not affect idempotency keys.
+
 Complete the workflow from this skill and live CLI discovery. Routine installation,
 network diagnosis, and argument handling should not need coordinator advice.
 A platform approval, unavailable mailbox, CAPTCHA, MFA, legal acceptance, or a

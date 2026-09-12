@@ -21,15 +21,26 @@ const (
 
 // SpeakRequest is the POST body for agent-tts.
 type SpeakRequest struct {
-	Text            string  `json:"text"`
-	Voice           string  `json:"voice,omitempty"`
-	Speed           float64 `json:"speed,omitempty"`
-	Language        string  `json:"language,omitempty"`
-	Source          string  `json:"source,omitempty"`
-	Webpage         string  `json:"webpage,omitempty"`
-	SourceTitle     string  `json:"source_title,omitempty"`
-	ArticleLanguage string  `json:"article_language,omitempty"`
-	Translate       string  `json:"translate,omitempty"`
+	Text            string         `json:"text"`
+	Voice           string         `json:"voice,omitempty"`
+	Speed           float64        `json:"speed,omitempty"`
+	Language        string         `json:"language,omitempty"`
+	Source          string         `json:"source,omitempty"`
+	Webpage         string         `json:"webpage,omitempty"`
+	SourceTitle     string         `json:"source_title,omitempty"`
+	ArticleLanguage string         `json:"article_language,omitempty"`
+	Translate       string         `json:"translate,omitempty"`
+	ClientContext   *ClientContext `json:"client_context,omitempty"`
+}
+
+// ClientContext is the analytics-only attribution declaration attached to a
+// synthesis request. The API normalizes the execution_context value and never
+// uses it for authorization or billing.
+type ClientContext struct {
+	Client           string `json:"client,omitempty"`
+	Version          string `json:"version,omitempty"`
+	Build            string `json:"build,omitempty"`
+	ExecutionContext string `json:"execution_context,omitempty"`
 }
 
 // TTSResponse is the unified response shape from agent-tts.

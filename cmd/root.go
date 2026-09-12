@@ -29,11 +29,38 @@ var (
 	flagConfigDir        string
 	flagJSON             bool
 	flagQuiet            bool
+	flagExecutionContext string
 	configDirOverrideErr error
 )
 
 // Resolved config available to all commands after PersistentPreRunE.
 var resolvedCfg *config.ResolvedConfig
+
+// resolvedExecutionContext is the bounded declaration forwarded on synthesis
+// requests. Keep the wire values stable while accepting concise CLI values.
+var resolvedExecutionContext = "unknown"
+
+func resolveExecutionContext(flagValue, envValue string, flagSet bool) (string, error) {
+	value := strings.TrimSpace(envValue)
+	if flagSet {
+		value = strings.TrimSpace(flagValue)
+	}
+	if value == "" {
+		return "unknown", nil
+	}
+	switch strings.ToLower(value) {
+	case "unknown":
+		return "unknown", nil
+	case "human", "human_declared":
+		return "human_declared", nil
+	case "agent", "agent_declared":
+		return "agent_declared", nil
+	case "automation", "automation_declared":
+		return "automation_declared", nil
+	default:
+		return "", fmt.Errorf("invalid execution context %q; use unknown, human, agent, or automation", value)
+	}
+}
 
 var rootCmd = &cobra.Command{
 	Use:   "ttsbuddy",
@@ -51,6 +78,15 @@ download <job_id>; email verification requires an authorized mailbox owner.`,
 
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		configDirOverrideErr = nil
+		if commandUsesTTSSubmission(cmd) {
+			resolved, err := resolveExecutionContext(flagExecutionContext, os.Getenv("TTSBUDDY_EXECUTION_CONTEXT"), cmd.Flags().Changed("execution-context"))
+			if err != nil {
+				return err
+			}
+			resolvedExecutionContext = resolved
+		} else {
+			resolvedExecutionContext = "unknown"
+		}
 		if cmd.Flags().Changed("config-dir") && strings.TrimSpace(flagConfigDir) == "" {
 			_ = config.SetConfigDirOverride("")
 			if cmd.Name() == "doctor" {
@@ -115,6 +151,15 @@ func commandUsesCredentialedAPI(cmd *cobra.Command) bool {
 	}
 }
 
+func commandUsesTTSSubmission(cmd *cobra.Command) bool {
+	switch cmd.CommandPath() {
+	case "ttsbuddy speak", "ttsbuddy web":
+		return true
+	default:
+		return false
+	}
+}
+
 func init() {
 	info, ok := debug.ReadBuildInfo()
 	Version, Commit, Date = resolveBuildMetadata(Version, Commit, Date, info, ok)
@@ -125,6 +170,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&flagConfigDir, "config-dir", "", "config/session directory (absolute path; env: TTSBUDDY_CONFIG_DIR)")
 	rootCmd.PersistentFlags().BoolVar(&flagJSON, "json", false, "JSON output to stdout only")
 	rootCmd.PersistentFlags().BoolVar(&flagQuiet, "quiet", false, "suppress progress output")
+	rootCmd.PersistentFlags().StringVar(&flagExecutionContext, "execution-context", "", "declared execution context for synthesis (unknown, human, agent, automation; env: TTSBUDDY_EXECUTION_CONTEXT)")
 
 	rootCmd.SetVersionTemplate(versionString() + "\n")
 	rootCmd.Version = Version
