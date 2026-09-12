@@ -1,7 +1,9 @@
 package cmd
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -28,6 +30,72 @@ func TestClassifyClerkAuthErrorUsesHTTP429WithoutProviderCode(t *testing.T) {
 	mapped := classifyClerkAuthError(&clerkfapi.RequestError{StatusCode: http.StatusTooManyRequests, RetryAfterSeconds: 12}, false)
 	if mapped.reason != "RATE_LIMITED" || !mapped.retryable || mapped.retryAfterSeconds != 12 {
 		t.Fatalf("mapped=%#v", mapped)
+	}
+}
+
+func TestClassifyClerkAuthErrorInvalidInputPreservesStatusAndNextAction(t *testing.T) {
+	codes := []string{"form_param_format_invalid", "form_param_missing"}
+	statuses := []int{http.StatusBadRequest, http.StatusUnprocessableEntity}
+	for _, code := range codes {
+		for _, status := range statuses {
+			for _, signup := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s-http%d-signup%t", code, status, signup), func(t *testing.T) {
+					mapped := classifyClerkAuthError(&clerkfapi.RequestError{
+						StatusCode: status,
+						Code:       code,
+						RequestID:  "provider-request-id",
+					}, signup)
+					payload := structuredErrorPayload(mapped)
+					expectedNext := "ttsbuddy auth email start --email <address> --json"
+					if signup {
+						expectedNext = "ttsbuddy auth email start --email <address> --signup --json"
+					}
+					if payload.Error.Reason != "INVALID_INPUT" || payload.Error.NextAction != expectedNext {
+						t.Fatalf("payload=%#v, want INVALID_INPUT next_action=%q", payload.Error, expectedNext)
+					}
+					statusText := fmt.Sprintf("status %d", status)
+					if !strings.Contains(mapped.msg, statusText) {
+						t.Fatalf("message=%q, want truthful %s", mapped.msg, statusText)
+					}
+					if status == http.StatusBadRequest && strings.Contains(mapped.msg, "status 422") {
+						t.Fatalf("HTTP 400 message retained a hardcoded 422: %q", mapped.msg)
+					}
+					encoded, err := json.Marshal(payload)
+					if err != nil {
+						t.Fatal(err)
+					}
+					jsonText := string(encoded)
+					if strings.Contains(jsonText, code) || strings.Contains(jsonText, "provider-request-id") {
+						t.Fatalf("provider detail leaked: %s", jsonText)
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestClassifyClerkAuthErrorAccountNotFoundHasExactSignupAction(t *testing.T) {
+	const expectedNext = "ttsbuddy auth email start --email <address> --signup --json"
+	for _, signup := range []bool{false, true} {
+		t.Run(fmt.Sprintf("signup%t", signup), func(t *testing.T) {
+			mapped := classifyClerkAuthError(&clerkfapi.RequestError{
+				StatusCode: http.StatusUnprocessableEntity,
+				Code:       "form_identifier_not_found",
+				RequestID:  "provider-request-id",
+			}, signup)
+			payload := structuredErrorPayload(mapped)
+			if payload.Error.Reason != "ACCOUNT_NOT_FOUND" || payload.Error.NextAction != expectedNext {
+				t.Fatalf("payload=%#v, want reason ACCOUNT_NOT_FOUND next_action=%q", payload.Error, expectedNext)
+			}
+			encoded, err := json.Marshal(payload)
+			if err != nil {
+				t.Fatal(err)
+			}
+			jsonText := string(encoded)
+			if strings.Contains(jsonText, "form_identifier_not_found") || strings.Contains(jsonText, "provider-request-id") {
+				t.Fatalf("provider detail leaked: %s", jsonText)
+			}
+		})
 	}
 }
 

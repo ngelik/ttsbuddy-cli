@@ -90,7 +90,13 @@ func classifyClerkAuthError(err error, signup bool) *exitError {
 		message = signupEmailAddressBlockedMessage + ". Or run: ttsbuddy auth browser"
 		reason = "EMAIL_ADDRESS_NOT_ACCEPTED"
 	case code == "form_param_format_invalid" || code == "form_param_missing":
-		message = "Clerk request returned status 422: the supplied authentication input was not accepted. Check the provided values and try again."
+		message = "the supplied authentication input was not accepted. Check the provided values and try again."
+		if requestErr != nil {
+			// Keep the status truthful when Clerk reports a different client
+			// error (for example HTTP 400), while retaining its fixed,
+			// provider-safe wording.
+			message = requestErr.Error() + ": " + message
+		}
 		reason = "INVALID_INPUT"
 		if signup {
 			next = "ttsbuddy auth email start --email <address> --signup --json"
