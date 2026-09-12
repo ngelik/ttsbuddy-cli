@@ -310,6 +310,94 @@ func TestSpeakJSON(t *testing.T) {
 	}
 }
 
+func TestSpeakQuietAndJSONSuppressPollingProgress(t *testing.T) {
+	tests := []struct {
+		name string
+		args func(string) []string
+		json bool
+	}{
+		{
+			name: "quiet",
+			args: func(home string) []string {
+				return []string{"speak", "hello", "--quiet", "--output", filepath.Join(home, "quiet.mp3"), "--timeout", "5s"}
+			},
+		},
+		{
+			name: "json",
+			args: func(string) []string {
+				return []string{"speak", "hello", "--json", "--timeout", "5s"}
+			},
+			json: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var gets atomic.Int32
+			apiSrv := startMockAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/audio.mp3" {
+					w.Header().Set("Content-Type", "audio/mpeg")
+					_, _ = w.Write([]byte("async-poll-audio"))
+					return
+				}
+				if r.Method == http.MethodPost {
+					w.WriteHeader(http.StatusAccepted)
+					_ = json.NewEncoder(w).Encode(map[string]any{
+						"success":             true,
+						"status":              "processing",
+						"job_id":              "async-poll-job",
+						"retry_after_seconds": 0,
+					})
+					return
+				}
+				if r.Method == http.MethodGet {
+					if gets.Add(1) == 1 {
+						_ = json.NewEncoder(w).Encode(map[string]any{
+							"success":             true,
+							"status":              "processing",
+							"job_id":              "async-poll-job",
+							"retry_after_seconds": 0,
+							"progress":            map[string]any{"phase": "processing", "percent": 50},
+						})
+						return
+					}
+					_ = json.NewEncoder(w).Encode(map[string]any{
+						"success":   true,
+						"status":    "completed",
+						"job_id":    "async-poll-job",
+						"audio_url": sameOriginAudioURL(r),
+					})
+				}
+			}))
+			home := t.TempDir()
+
+			r := runCLI(t, envForTest(home, apiSrv, "ttsb_test_key"), tc.args(home)...)
+			assertExitCode(t, r, 0)
+			if got := gets.Load(); got < 2 {
+				t.Fatalf("polls = %d, want processing and completed responses", got)
+			}
+			if r.Stderr != "" {
+				t.Fatalf("%s leaked polling progress to stderr: %q", tc.name, r.Stderr)
+			}
+			if tc.json {
+				assertValidJSON(t, r.Stdout)
+				assertContains(t, r.Stdout, `"status": "completed"`, "stdout")
+			} else {
+				if r.Stdout != "" {
+					t.Fatalf("quiet mode wrote to stdout: %q", r.Stdout)
+				}
+				got, err := os.ReadFile(filepath.Join(home, "quiet.mp3"))
+				if err != nil {
+					t.Fatalf("quiet output file: %v", err)
+				}
+				if string(got) != "async-poll-audio" {
+					t.Fatalf("quiet output bytes = %q, want fixture audio", got)
+				}
+			}
+		})
+	}
+}
+
 func TestSpeakJSONPreservesProgressAndStats(t *testing.T) {
 	apiSrv := startMockAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{

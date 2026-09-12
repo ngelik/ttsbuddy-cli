@@ -1,6 +1,8 @@
 package display
 
 import (
+	"io"
+	"os"
 	"strings"
 	"testing"
 )
@@ -31,6 +33,31 @@ func TestErrorGuidanceUnknownCode(t *testing.T) {
 	guidance := ErrorGuidance("COMPLETELY_UNKNOWN_CODE")
 	if guidance != "" {
 		t.Errorf("expected empty for unknown code, got %q", guidance)
+	}
+}
+
+func TestSpinnerUpdateBeforeStartIsSilent(t *testing.T) {
+	previousStderr := os.Stderr
+	readPipe, writePipe, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = writePipe
+	t.Cleanup(func() {
+		os.Stderr = previousStderr
+		_ = readPipe.Close()
+	})
+
+	spinner := &Spinner{isTTY: false}
+	spinner.Update("should not be printed")
+	_ = writePipe.Close()
+
+	got, err := io.ReadAll(readPipe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("Update before Start wrote %q to stderr", got)
 	}
 }
 

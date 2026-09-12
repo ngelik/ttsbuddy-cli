@@ -52,6 +52,10 @@ func (s *Spinner) Start(msg string) {
 // Update changes the spinner message.
 func (s *Spinner) Update(msg string) {
 	s.mu.Lock()
+	if !s.active {
+		s.mu.Unlock()
+		return
+	}
 	s.msg = msg
 	s.mu.Unlock()
 
