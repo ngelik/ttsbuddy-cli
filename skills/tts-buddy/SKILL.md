@@ -23,6 +23,15 @@ flag takes precedence. Omit it (or use `unknown`) when the caller cannot make a
 reliable declaration. This value is analytics attribution only and does not
 grant access or change billing.
 
+When following this skill as an agent, declare agent execution on synthesis:
+
+```bash
+ttsbuddy speak "Text to narrate" --execution-context agent --output audio.mp3 --json
+ttsbuddy web "https://example.com/article" --execution-context agent --output article.mp3 --json
+```
+
+Preserve `--execution-context agent` on retries of these submissions.
+
 The declaration is validated before submission. Invalid values are rejected;
 status and download commands never rewrite the context recorded on the original
 job, and the value does not affect idempotency keys.

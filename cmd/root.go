@@ -81,7 +81,7 @@ download <job_id>; email verification requires an authorized mailbox owner.`,
 		if commandUsesTTSSubmission(cmd) {
 			resolved, err := resolveExecutionContext(flagExecutionContext, os.Getenv("TTSBUDDY_EXECUTION_CONTEXT"), cmd.Flags().Changed("execution-context"))
 			if err != nil {
-				return err
+				return structuredExitError(2, err.Error(), "CLI_ERROR", "INVALID_EXECUTION_CONTEXT", "Set --execution-context or TTSBUDDY_EXECUTION_CONTEXT to unknown, human, agent, or automation.", false, 0)
 			}
 			resolvedExecutionContext = resolved
 		} else {
