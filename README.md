@@ -289,6 +289,10 @@ ttsbuddy speak "Hello" --no-download
 
 # Raw MP3 to stdout (pipe to player)
 ttsbuddy speak "Hello" -o - | afplay -
+
+# Declare who is submitting the synthesis for analytics (optional)
+ttsbuddy speak "Build summary" --execution-context agent
+TTSBUDDY_EXECUTION_CONTEXT=automation ttsbuddy web https://example.com/article
 ```
 
 **Flags:**
@@ -305,6 +309,7 @@ ttsbuddy speak "Hello" -o - | afplay -
 | `--raw` | Skip markdown preprocessing |
 | `--no-download` | Print audio URL instead of downloading |
 | `--idempotency-key <key>` | Override auto-generated idempotency key |
+| `--execution-context <value>` | Optional analytics declaration: `unknown`, `human`, `agent`, or `automation` (flag overrides `TTSBUDDY_EXECUTION_CONTEXT`) |
 
 **Notes:**
 - `.md` and `.markdown` files are automatically preprocessed: headings, links, images, and code blocks are stripped for cleaner narration. Use `--raw` to send verbatim.
@@ -331,6 +336,13 @@ ttsbuddy web https://www.ttsbuddy.com/docs/ --no-download
 `web` fetches only `http` and `https` pages, extracts the readable article text locally, and sends the extracted text plus source URL to the API. If `--voice`, `--language`, or `--speed` are omitted, the backend applies your TTSBuddy account preferences. When the extracted article language differs from the target language, the backend translates the article before speech generation.
 
 `web` supports the same output and polling flags as `speak`: `--voice`, `--language`, `--speed`, `--output`, `--output-dir`, `--timeout`, `--no-download`, and `--idempotency-key`.
+
+Both `speak` and `web` also accept `--execution-context unknown|human|agent|automation`
+or the equivalent `TTSBUDDY_EXECUTION_CONTEXT` environment variable. The flag
+takes precedence over the environment variable; invalid explicit values fail
+before submission. The declaration is analytics-only, defaults to `unknown`,
+and does not change authentication, billing, synthesis content, or idempotency
+keys. Status and download commands never rewrite the creating job's context.
 
 During longer jobs, `web` shows the local extraction step, backend submission,
 queued/processing status, and real provider percentages when the API has them.

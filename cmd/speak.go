@@ -168,7 +168,7 @@ func runSpeak(cmd *cobra.Command, args []string) error {
 	}
 
 	// 6. Create API client
-	client := api.NewClient(resolved.APIURL, resolved.APIKey, Version)
+	client := api.NewClientWithExecutionContext(resolved.APIURL, resolved.APIKey, Version, resolvedExecutionContext)
 
 	// 7. Set up context with SIGINT handling
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)

@@ -97,6 +97,12 @@ func TestSpeak200Completed(t *testing.T) {
 		if r.Header.Get("User-Agent") != "ttsbuddy-cli/test" {
 			t.Errorf("wrong user agent: %s", r.Header.Get("User-Agent"))
 		}
+		var body SpeakRequest
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode request: %v", err)
+		} else if body.ClientContext == nil || body.ClientContext.Client != "cli" || body.ClientContext.Version != "test" || body.ClientContext.ExecutionContext != "unknown" {
+			t.Errorf("default client context = %#v", body.ClientContext)
+		}
 		_ = json.NewEncoder(w).Encode(TTSResponse{
 			Success:  true,
 			Status:   "completed",
@@ -125,6 +131,25 @@ func TestSpeak200Completed(t *testing.T) {
 	}
 	if resp.Billing == nil {
 		t.Error("expected billing info")
+	}
+}
+
+func TestSpeakCarriesDeclaredExecutionContext(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body SpeakRequest
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if body.ClientContext == nil || body.ClientContext.ExecutionContext != "agent_declared" {
+			t.Fatalf("client context = %#v", body.ClientContext)
+		}
+		_ = json.NewEncoder(w).Encode(TTSResponse{Success: true, Status: "completed"})
+	}))
+	defer srv.Close()
+
+	client := NewClientWithExecutionContext(srv.URL, "key", "1.2.3", "agent_declared")
+	if _, _, err := client.Speak(context.Background(), SpeakRequest{Text: "hello"}, "idem"); err != nil {
+		t.Fatalf("Speak error: %v", err)
 	}
 }
 

@@ -148,7 +148,7 @@ func runWeb(cmd *cobra.Command, rawURL string) error {
 		Translate:   "auto",
 	}
 
-	client := api.NewClient(resolved.APIURL, resolved.APIKey, Version)
+	client := api.NewClientWithExecutionContext(resolved.APIURL, resolved.APIKey, Version, resolvedExecutionContext)
 
 	submitSpin := display.New()
 	if !flagJSON && !flagQuiet {
