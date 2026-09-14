@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/ngelik/ttsbuddy-cli/internal/config"
 	"github.com/spf13/cobra"
@@ -84,8 +83,8 @@ var configSetCmd = &cobra.Command{
 			return &exitError{code: 2, msg: fmt.Sprintf("unknown config key: %s\n%s", key, validConfigKeysMessage)}
 		}
 
-		if (key == "key" || key == "api_key") && !strings.HasPrefix(value, "ttsb_") {
-			return &exitError{code: 2, msg: "API key must start with 'ttsb_'"}
+		if (key == "key" || key == "api_key") && !config.IsExternalCredential(value) {
+			return &exitError{code: 2, msg: "credential must start with 'ttsb_' or 'ttsa_' and match the expected credential format"}
 		}
 
 		if err := config.Set(key, value); err != nil {

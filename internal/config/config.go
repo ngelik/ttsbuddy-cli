@@ -290,8 +290,8 @@ func Set(key, value string) error {
 	return mutateAndSaveConfig(func(cfg *Config) (bool, error) {
 		switch key {
 		case "key", "api_key":
-			if !IsManualSubscriptionCredential(value) {
-				return false, &ValidationError{Msg: "API key must start with 'ttsb_' and match the expected key format"}
+			if !IsExternalCredential(value) {
+				return false, &ValidationError{Msg: "credential must start with 'ttsb_' or 'ttsa_' and match the expected credential format"}
 			}
 			cfg.APIKey = value
 		case "voice":
@@ -417,7 +417,7 @@ func RedactKey(key string) string {
 	if key == "" {
 		return ""
 	}
-	if !strings.HasPrefix(key, "ttsb_") && !strings.HasPrefix(key, "ttsc_") {
+	if !strings.HasPrefix(key, "ttsb_") && !strings.HasPrefix(key, "ttsc_") && !strings.HasPrefix(key, "ttsa_") {
 		return "***"
 	}
 	// ttsb_<public_id>_<secret>
@@ -449,6 +449,20 @@ func IsSubscriptionCredential(credential string) bool {
 
 func IsManualSubscriptionCredential(credential string) bool {
 	return IsSubscriptionCredential(credential)
+}
+
+// IsAgentCredential reports whether credential is an expiring Auth.md agent
+// access token. Agent credentials use the same public-id/secret shape as
+// permanent keys but have their own prefix and lifecycle.
+func IsAgentCredential(credential string) bool {
+	return validCredential(credential, "ttsa")
+}
+
+// IsExternalCredential reports whether credential is accepted through the
+// CLI's API-key flag, environment variable, or persisted API key setting.
+// Stored CLI sessions remain separately validated as ttsc_ credentials.
+func IsExternalCredential(credential string) bool {
+	return IsSubscriptionCredential(credential) || IsAgentCredential(credential)
 }
 
 func validCLICredential(value string) bool { return validCredential(value, "ttsc") }

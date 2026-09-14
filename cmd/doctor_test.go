@@ -131,6 +131,113 @@ func TestDoctorOnlineChecksEffectiveCLISession(t *testing.T) {
 	}
 }
 
+func TestDoctorOnlineChecksAgentCredentialWithAuthenticatedMissingID(t *testing.T) {
+	agent := "ttsa_" + strings.Repeat("a", 8) + "_" + strings.Repeat("b", 48)
+	server := startMockAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/agent-tts" || r.URL.RawQuery != "" {
+			t.Fatalf("unexpected agent verification request: %s %s", r.Method, r.URL.RequestURI())
+		}
+		if r.Header.Get("Authorization") != "Bearer "+agent {
+			t.Fatalf("agent verification auth header = %q", r.Header.Get("Authorization"))
+		}
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"success": false,
+			"error": map[string]string{
+				"code":    "INVALID_REQUEST",
+				"message": "'id' query parameter is required",
+			},
+			"request_id": "req-agent-doctor",
+		})
+	}))
+	result := runCLI(t, []string{"HOME=" + t.TempDir(), "TTSBUDDY_API_URL=" + server + "/v1/agent-tts", "TTSBUDDY_API_KEY=" + agent}, "doctor", "--online", "--json")
+	if result.ExitCode != 0 {
+		t.Fatalf("agent doctor exit=%d stdout=%s stderr=%s", result.ExitCode, result.Stdout, result.Stderr)
+	}
+	report := decodeDoctorReport(t, result.Stdout)
+	for _, check := range report.Checks {
+		if check.Name == "credential" && (check.Details["kind"] != "agent_session" || check.Details["source"] != "environment") {
+			t.Fatalf("agent credential details=%#v", check)
+		}
+		if check.Name == "connectivity" && (check.Status != "healthy" || !strings.Contains(check.Message, "authenticated")) {
+			t.Fatalf("agent connectivity check=%#v", check)
+		}
+	}
+}
+
+func TestDoctorReportsExpiredOrRevokedAgentCredentialWithAuthMDGuidance(t *testing.T) {
+	agent := "ttsa_" + strings.Repeat("c", 8) + "_" + strings.Repeat("d", 48)
+	server := startMockAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/agent-tts" {
+			t.Fatalf("unexpected agent verification request: %s %s", r.Method, r.URL.RequestURI())
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"success": false,
+			"error": map[string]string{
+				"code":    "INVALID_KEY",
+				"message": "expired or revoked",
+			},
+		})
+	}))
+	result := runCLI(t, []string{"HOME=" + t.TempDir(), "TTSBUDDY_API_URL=" + server + "/v1/agent-tts", "TTSBUDDY_API_KEY=" + agent}, "doctor", "--online", "--json")
+	if result.ExitCode != 1 || result.Stderr != "" {
+		t.Fatalf("agent revoked doctor=%#v", result)
+	}
+	if !strings.Contains(result.Stdout, "https://www.ttsbuddy.com/auth.md") || !strings.Contains(result.Stdout, "expired or revoked") {
+		t.Fatalf("missing Auth.md renewal guidance: %s", result.Stdout)
+	}
+	if strings.Contains(result.Stdout, "ttsbuddy auth email") || strings.Contains(result.Stdout, agent) {
+		t.Fatalf("agent rejection used CLI-session guidance or leaked token: %s", result.Stdout)
+	}
+}
+
+func TestDoctorAgentCredentialProbeFailsClosedOnUnexpectedResponses(t *testing.T) {
+	agent := "ttsa_" + strings.Repeat("e", 8) + "_" + strings.Repeat("f", 48)
+	for _, tc := range []struct {
+		name       string
+		statusCode int
+		body       map[string]any
+	}{
+		{
+			name:       "malformed missing-id response",
+			statusCode: http.StatusBadRequest,
+			body: map[string]any{
+				"success": false,
+				"error":   map[string]string{"code": "INVALID_REQUEST", "message": "unexpected request"},
+			},
+		},
+		{
+			name:       "unexpected success response",
+			statusCode: http.StatusOK,
+			body:       map[string]any{"success": true, "status": "completed"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := startMockAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet || r.URL.Path != "/v1/agent-tts" || r.URL.RawQuery != "" {
+					t.Fatalf("unexpected agent verification request: %s %s", r.Method, r.URL.RequestURI())
+				}
+				w.WriteHeader(tc.statusCode)
+				_ = json.NewEncoder(w).Encode(tc.body)
+			}))
+			result := runCLI(t, []string{"HOME=" + t.TempDir(), "TTSBUDDY_API_URL=" + server + "/v1/agent-tts", "TTSBUDDY_API_KEY=" + agent}, "doctor", "--online", "--json")
+			if result.ExitCode != 1 || result.Stderr != "" {
+				t.Fatalf("unexpected agent probe doctor=%#v", result)
+			}
+			report := decodeDoctorReport(t, result.Stdout)
+			if report.Ready {
+				t.Fatalf("unexpected response reported ready: %#v", report)
+			}
+			for _, check := range report.Checks {
+				if check.Name == "connectivity" && check.Status != "failed" {
+					t.Fatalf("connectivity check=%#v", check)
+				}
+			}
+		})
+	}
+}
+
 func TestDoctorReportsInvalidConfigDirAsJSON(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "not-a-directory")
 	if err := os.WriteFile(path, []byte("x"), 0600); err != nil {

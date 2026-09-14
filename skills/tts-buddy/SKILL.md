@@ -276,6 +276,21 @@ or logs.
 API keys are created through the account dashboard. Do not invent a key,
 registration endpoint, or unattended signup bypass.
 
+### Auth.md agent access
+
+An Auth.md agent access token uses the `ttsa_<8hex>_<48hex>` format and requires
+CLI v0.14.0 or newer. Obtain the token through the Auth.md approval flow, then
+pass it through `TTSBUDDY_API_KEY`, `--key`, or `ttsbuddy config set key`; the
+CLI does not register agents or run a background refresh process. Credential
+precedence remains `--key` > `TTSBUDDY_API_KEY` > an active stored `ttsc_` CLI
+session > the persisted API key, so use `--key` or the environment for an agent
+canary when a CLI session may also be stored. Tokens last up to one hour and
+can be renewed through Auth.md within the seven-day authorization period.
+If a token is expired or revoked, follow the Auth.md renewal guidance rather
+than running CLI email or browser login. `ttsbuddy auth logout` revokes only a
+stored `ttsc_` CLI session. Disconnect an agent authorization through Auth.md
+or the account management operation documented there.
+
 ### Email authentication
 
 Before starting, establish whether the agent has authorized access to the

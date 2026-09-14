@@ -222,6 +222,7 @@ func TestRedactKey(t *testing.T) {
 		want  string
 	}{
 		{"ttsb_a1b2c3d4_e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8", "ttsb_a1b2c3d4_..."},
+		{"ttsa_a1b2c3d4_e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8", "ttsa_a1b2c3d4_..."},
 		{"ttsb_short_secret", "ttsb_short_..."},
 		{"", ""},
 		{"not_a_key", "***"},
@@ -361,6 +362,52 @@ func TestResolveMalformedEnvironmentAPIKeyIgnored(t *testing.T) {
 	}
 	if len(warnings) != 1 || !strings.Contains(warnings[0], "invalid TTSBUDDY_API_KEY") {
 		t.Fatalf("warnings = %v", warnings)
+	}
+}
+
+func TestAgentCredentialAcceptedThroughExternalInputs(t *testing.T) {
+	agent := fixtureCredential("ttsa", 'e', 'f')
+	permanent := fixtureCredential("ttsb", 'a', 'b')
+	cli := fixtureCredential("ttsc", 'c', 'd')
+	cfg := &Config{APIKey: permanent, CLISession: &StoredCLISession{Credential: cli, ExpiresAt: time.Now().Add(time.Hour).UTC().Format(time.RFC3339)}}
+
+	resolved, warnings := Resolve(&Config{APIKey: agent}, FlagValues{})
+	if len(warnings) != 0 || resolved.APIKey != agent {
+		t.Fatalf("stored agent credential resolved=%q warnings=%v", resolved.APIKey, warnings)
+	}
+	t.Setenv("TTSBUDDY_API_KEY", agent)
+	resolved, warnings = Resolve(cfg, FlagValues{})
+	if len(warnings) != 0 || resolved.APIKey != agent {
+		t.Fatalf("environment agent credential resolved=%q warnings=%v", resolved.APIKey, warnings)
+	}
+	flag := agent
+	resolved, warnings = Resolve(cfg, FlagValues{APIKey: &flag})
+	if len(warnings) != 0 || resolved.APIKey != agent {
+		t.Fatalf("flag agent credential resolved=%q warnings=%v", resolved.APIKey, warnings)
+	}
+
+	t.Setenv("TTSBUDDY_API_KEY", "")
+	resolved, warnings = Resolve(cfg, FlagValues{})
+	if len(warnings) != 0 || resolved.APIKey != cli {
+		t.Fatalf("active CLI session should remain preferred without external agent credential: resolved=%q warnings=%v", resolved.APIKey, warnings)
+	}
+}
+
+func TestSetAgentCredentialPreservesShapeAndRedacts(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	agent := fixtureCredential("ttsa", '1', '2')
+	if err := Set("key", agent); err != nil {
+		t.Fatalf("Set agent credential: %v", err)
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.APIKey != agent {
+		t.Fatalf("stored credential = %q", cfg.APIKey)
+	}
+	if got := RedactKey(cfg.APIKey); got != "ttsa_11111111_..." {
+		t.Fatalf("redacted agent credential = %q", got)
 	}
 }
 

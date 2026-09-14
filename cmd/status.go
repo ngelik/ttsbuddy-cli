@@ -84,7 +84,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 func statusOnce(client *api.Client, jobID string, resolved *config.ResolvedConfig) error {
 	resp, _, err := client.GetStatus(context.Background(), jobID)
 	if err != nil {
-		return handleStatusError(err, jobID)
+		return handleStatusErrorWithCredential(err, jobID, resolved.APIKey)
 	}
 	return renderStatus(resp, jobID, resolved)
 }
@@ -116,7 +116,7 @@ func statusPoll(client *api.Client, jobID string, resolved *config.ResolvedConfi
 		resp, pollStatus, err := client.GetStatus(ctx, jobID)
 		if err != nil {
 			if isPermanentError(err, pollStatus) {
-				return handleStatusError(err, jobID)
+				return handleStatusErrorWithCredential(err, jobID, resolved.APIKey)
 			}
 			stderrMsg("Status check failed (HTTP %d), retrying...\n", pollStatus)
 			if resp != nil && resp.RetryAfterSeconds != nil {
@@ -235,7 +235,7 @@ func renderStatus(resp *api.TTSResponse, jobID string, resolved *config.Resolved
 	}
 }
 
-func handleStatusError(err error, jobID string) error {
+func handleStatusErrorWithCredential(err error, jobID, credential string) error {
 	var apiErr *api.APIResponseError
 	if isAPIErr(err, &apiErr) {
 		if apiErr.ErrorCode() == api.ErrNotFound {
@@ -244,7 +244,7 @@ func handleStatusError(err error, jobID string) error {
 			mapped.action = statusAction(jobID)
 			return mapped
 		}
-		mapped := classifyAPIError(err, apiErr.StatusCode)
+		mapped := classifyAPIErrorWithCredential(err, apiErr.StatusCode, "", credential)
 		if mapped.reason == "RATE_LIMITED" || mapped.reason == "SERVICE_ERROR" {
 			mapped.nextAction = fmt.Sprintf("Wait for the provided retry delay or bounded backoff, then retry: ttsbuddy status %s", jobID)
 		}

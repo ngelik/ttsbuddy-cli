@@ -172,7 +172,7 @@ func runWeb(cmd *cobra.Command, rawURL string) error {
 			mapped.idempotencyKey = retryResult.EffectiveKey
 			return mapped
 		}
-		return classifyAPIErrorWithKey(err, status, retryResult.EffectiveKey)
+		return classifyAPIErrorWithCredential(err, status, retryResult.EffectiveKey, resolved.APIKey)
 	}
 	submitSpin.Stop()
 

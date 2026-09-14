@@ -320,6 +320,40 @@ func TestGetStatus200Completed(t *testing.T) {
 	}
 }
 
+func TestVerifyCredentialUsesAuthenticatedMissingIDProbe(t *testing.T) {
+	credential := "ttsa_" + strings.Repeat("a", 8) + "_" + strings.Repeat("b", 48)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/agent-tts" || r.URL.RawQuery != "" {
+			t.Fatalf("unexpected verification request: %s %s", r.Method, r.URL.RequestURI())
+		}
+		if r.Header.Get("Authorization") != "Bearer "+credential {
+			t.Fatalf("verification auth header = %q", r.Header.Get("Authorization"))
+		}
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"success": false,
+			"error": map[string]string{
+				"code":    ErrInvalidRequest,
+				"message": "'id' query parameter is required",
+			},
+			"request_id": "req-agent-doctor",
+		})
+	}))
+	defer srv.Close()
+
+	client := NewClient(srv.URL+"/v1/agent-tts", credential, "test")
+	resp, status, err := client.VerifyCredential(context.Background())
+	if err == nil {
+		t.Fatal("expected the missing-id response to be surfaced as an API error")
+	}
+	if status != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", status)
+	}
+	if resp == nil || resp.Error == nil || resp.Error.Code != ErrInvalidRequest || resp.Error.Message != "'id' query parameter is required" {
+		t.Fatalf("verification response = %#v", resp)
+	}
+}
+
 func TestGetStatus404(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(404)

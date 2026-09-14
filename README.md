@@ -59,6 +59,17 @@ authentication, voice selection, saved MP3s, existing-job recovery, and logout.
 Give your agent that file, or copy `skills/tts-buddy/` into your agent's skills
 directory. For Codex, use `~/.codex/skills/tts-buddy/`.
 
+Auth.md agent access tokens use the `ttsa_<8hex>_<48hex>` format and require
+CLI v0.14.0 or newer. Obtain these tokens through the Auth.md approval flow and
+provide one through `TTSBUDDY_API_KEY`, `--key`, or `ttsbuddy config set key`.
+Credential precedence remains `--key` > `TTSBUDDY_API_KEY` > an active stored
+`ttsc_` CLI session > the persisted API key, so use `--key` or the environment
+for an agent canary when a CLI session may also be stored. Agent tokens last
+up to one hour and can be renewed through Auth.md within the seven-day
+authorization period. The CLI does not register or refresh them. `ttsbuddy
+auth logout` revokes only the stored `ttsc_` CLI session; disconnect agent
+access through the documented Auth.md or account-management operation.
+
 The actual directory selected by `TTSBUDDY_CONFIG_DIR` must have mode `0700`
 (owner access only), even if its parent is already private. `ttsbuddy doctor
 --json` reports `CONFIG_DIR_PERMISSIONS` with the actual mode and an explicit
@@ -430,7 +441,9 @@ ttsbuddy config
 ttsbuddy config get voice
 
 # Set values
-ttsbuddy config set key ttsb_...
+ttsbuddy config set key ttsb_...       # permanent account key
+# Auth.md agent token (CLI v0.14.0+): ttsa_...
+ttsbuddy config set key ttsa_...
 ttsbuddy config set voice st_m1
 ttsbuddy config set language fr
 ttsbuddy config set speed 0.9
@@ -600,6 +613,7 @@ For full API details, see the [API Reference](https://ttsbuddy.com/docs/develope
 | Error | Fix |
 |-------|-----|
 | "Invalid API key or CLI session" | Run either `ttsbuddy auth email` or `ttsbuddy auth browser`; for automation, set a permanent key with `ttsbuddy config set key <your-key>` |
+| "Agent access token is expired or revoked" | Renew the agent authorization through [Auth.md](https://www.ttsbuddy.com/auth.md); `ttsbuddy auth logout` manages only the stored CLI session |
 | "Subscription inactive" | Reactivate at [ttsbuddy.com/billing](https://ttsbuddy.com/billing) |
 | "Rate limited" | Wait and retry (automatic with backoff) |
 | "Monthly minutes exhausted" | Upgrade plan or wait for reset |

@@ -6,6 +6,7 @@ import (
 
 	"github.com/ngelik/ttsbuddy-cli/internal/api"
 	"github.com/ngelik/ttsbuddy-cli/internal/clerkfapi"
+	"github.com/ngelik/ttsbuddy-cli/internal/config"
 )
 
 // structuredExitError keeps human copy and machine recovery metadata together.
@@ -201,6 +202,10 @@ func classifyAPIError(err error, status int) *exitError {
 }
 
 func classifyAPIErrorWithKey(err error, status int, idempotencyKey string) *exitError {
+	return classifyAPIErrorWithCredential(err, status, idempotencyKey, "")
+}
+
+func classifyAPIErrorWithCredential(err error, status int, idempotencyKey, credential string) *exitError {
 	var apiErr *api.APIResponseError
 	if !errors.As(err, &apiErr) {
 		mapped := structuredExitError(1, "API request failed", "CLI_ERROR", "TRANSPORT_ERROR", "Retry the same request with --idempotency-key <same-value> if it was not accepted.", true, 0)
@@ -216,6 +221,11 @@ func classifyAPIErrorWithKey(err error, status int, idempotencyKey string) *exit
 	retryAfter := 0
 	if apiErr.Response.RetryAfterSeconds != nil {
 		retryAfter = *apiErr.Response.RetryAfterSeconds
+	}
+	if config.IsAgentCredential(credential) && status == http.StatusUnauthorized {
+		mapped := structuredExitError(1, "agent access token is expired or revoked. Renew the agent authorization through Auth.md at "+agentAuthURL, "CLI_ERROR", "AGENT_ACCESS_REJECTED", "Renew the agent authorization through Auth.md: "+agentAuthURL, false, retryAfter)
+		mapped.serverCode = code
+		return mapped
 	}
 	switch code {
 	case api.ErrInvalidKey:
