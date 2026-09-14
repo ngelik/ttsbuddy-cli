@@ -589,7 +589,7 @@ ttsbuddy speak "Hello" --no-download --json | jq -r '.audio_url'
 |-------|-------|
 | POST requests per minute | 1 per API key |
 | GET requests per minute | 30 per API key |
-| Max text length | 500,000 characters |
+| Max text length | 500,000 UTF-16 code units (most common characters count as one; many emoji count as two) |
 | Monthly TTS minutes | Depends on plan |
 | Audio URL lifetime | Temporary — download immediately |
 

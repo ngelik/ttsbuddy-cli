@@ -310,6 +310,54 @@ func TestSpeakJSON(t *testing.T) {
 	}
 }
 
+func TestSpeakUTF16PreflightBoundaries(t *testing.T) {
+	var requests atomic.Int32
+	apiSrv := startMockAPI(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":   true,
+			"status":    "completed",
+			"job_id":    "utf16-job",
+			"audio_url": sameOriginAudioURL(r),
+			"audio":     map[string]interface{}{"format": "mp3", "voice": "st_m1", "speed": 1.2},
+		})
+	}))
+
+	cases := []struct {
+		name     string
+		text     string
+		rejected bool
+	}{
+		{name: "ascii at limit", text: strings.Repeat("a", 500_000)},
+		{name: "ascii over limit", text: strings.Repeat("a", 500_001), rejected: true},
+		{name: "emoji at limit", text: strings.Repeat("😀", 250_000)},
+		{name: "emoji over limit", text: strings.Repeat("😀", 250_001), rejected: true},
+		{name: "mixed at limit", text: strings.Repeat("a", 499_998) + "😀"},
+		{name: "mixed over limit", text: strings.Repeat("a", 499_999) + "😀", rejected: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			input := filepath.Join(home, "input.txt")
+			if err := os.WriteFile(input, []byte(tc.text), 0600); err != nil {
+				t.Fatal(err)
+			}
+			r := runCLI(t, envForTest(home, apiSrv, "ttsb_test_key"), "speak", "--file", input, "--no-download", "--json")
+			if tc.rejected {
+				assertExitCode(t, r, 2)
+				assertContains(t, r.Stdout, "UTF-16", "stdout")
+				return
+			}
+			assertExitCode(t, r, 0)
+		})
+	}
+
+	if requests.Load() != 3 {
+		t.Fatalf("accepted input reached API %d times, want 3", requests.Load())
+	}
+}
+
 func TestSpeakQuietAndJSONSuppressPollingProgress(t *testing.T) {
 	tests := []struct {
 		name string

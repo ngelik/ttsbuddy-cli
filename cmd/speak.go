@@ -12,12 +12,12 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/ngelik/ttsbuddy-cli/internal/api"
 	"github.com/ngelik/ttsbuddy-cli/internal/config"
 	"github.com/ngelik/ttsbuddy-cli/internal/display"
 	"github.com/ngelik/ttsbuddy-cli/internal/markdown"
+	"github.com/ngelik/ttsbuddy-cli/internal/units"
 	"github.com/spf13/cobra"
 )
 
@@ -126,9 +126,9 @@ func runSpeak(cmd *cobra.Command, args []string) error {
 		return &exitError{code: 2, msg: "no text provided"}
 	}
 
-	charCount := utf8.RuneCountInString(text)
-	if charCount > 500_000 {
-		return &exitError{code: 2, msg: fmt.Sprintf("input exceeds 500,000 characters (%d characters). Split into smaller chunks.", charCount)}
+	inputUnits := units.UTF16Units(strings.TrimSpace(text))
+	if inputUnits > 500_000 {
+		return &exitError{code: 2, msg: fmt.Sprintf("input exceeds 500,000 UTF-16 code units (%d units). Split into smaller chunks.", inputUnits)}
 	}
 
 	// 4. Resolve voice and speed
@@ -596,8 +596,8 @@ func apiHostFromURL(rawURL string) string {
 
 // --- Input helpers ---
 
-// maxInputSize is a byte-level memory safety cap (~2MB to cover 500k multi-byte chars).
-// The actual 500k character limit is enforced via utf8.RuneCountInString after reading.
+// maxInputSize is a byte-level memory safety cap (~2MB to cover 500k UTF-16 units).
+// The actual 500k UTF-16-unit limit is enforced after reading.
 const maxInputSize = 2*1024*1024 + 1024
 
 func readInput(args []string, filePath string) (text string, inputFile string, fromStdin bool, err error) {

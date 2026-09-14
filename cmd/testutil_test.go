@@ -31,10 +31,18 @@ func TestHelperProcess(t *testing.T) {
 	}
 	if os.Getenv("TTSBUDDY_TEST_FAKE_WEB_ARTICLE") == "1" {
 		fetchArticleForWeb = func(ctx context.Context, rawURL, version string) (*webpage.Article, error) {
+			text := "Readable article text for the web command test."
+			if fixture := os.Getenv("TTSBUDDY_TEST_WEB_ARTICLE_FILE"); fixture != "" {
+				content, err := os.ReadFile(fixture)
+				if err != nil {
+					return nil, err
+				}
+				text = string(content)
+			}
 			return &webpage.Article{
 				URL:   rawURL,
 				Title: "Docs Page",
-				Text:  "Readable article text for the web command test.",
+				Text:  text,
 			}, nil
 		}
 	}

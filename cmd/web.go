@@ -12,6 +12,7 @@ import (
 	"github.com/ngelik/ttsbuddy-cli/internal/api"
 	"github.com/ngelik/ttsbuddy-cli/internal/config"
 	"github.com/ngelik/ttsbuddy-cli/internal/display"
+	"github.com/ngelik/ttsbuddy-cli/internal/units"
 	"github.com/ngelik/ttsbuddy-cli/internal/webpage"
 	"github.com/spf13/cobra"
 )
@@ -124,8 +125,9 @@ func runWeb(cmd *cobra.Command, rawURL string) error {
 	if strings.TrimSpace(article.Text) == "" {
 		return &exitError{code: 2, msg: "no readable text found on webpage"}
 	}
-	if charCount := utf8.RuneCountInString(article.Text); charCount > 500_000 {
-		return &exitError{code: 2, msg: fmt.Sprintf("webpage text exceeds 500,000 characters (%d characters)", charCount)}
+	inputUnits := units.UTF16Units(strings.TrimSpace(article.Text))
+	if inputUnits > 500_000 {
+		return &exitError{code: 2, msg: fmt.Sprintf("webpage text exceeds 500,000 UTF-16 code units (%d units)", inputUnits)}
 	}
 
 	idemKey := speakIdempotencyKey

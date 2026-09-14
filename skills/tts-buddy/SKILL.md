@@ -16,21 +16,21 @@ accepted request, job ID, or temporary audio URL.
 
 ### Execution context declaration
 
-For synthesis submitted by a human, agent, or automation, pass the declaration
-on the `speak` or `web` command with `--execution-context human|agent|automation`.
+When the caller chooses to declare a synthesis context, pass it on the `speak`
+or `web` command with `--execution-context human|agent|automation`.
 The equivalent environment variable is `TTSBUDDY_EXECUTION_CONTEXT`; a command
 flag takes precedence. Omit it (or use `unknown`) when the caller cannot make a
 reliable declaration. This value is analytics attribution only and does not
 grant access or change billing.
 
-When following this skill as an agent, declare agent execution on synthesis:
+An agent may declare its execution context on synthesis:
 
 ```bash
-ttsbuddy speak "Text to narrate" --execution-context agent --output audio.mp3 --json
-ttsbuddy web "https://example.com/article" --execution-context agent --output article.mp3 --json
+"$TTSBUDDY_BIN" speak "Text to narrate" --execution-context agent --output audio.mp3 --json
+"$TTSBUDDY_BIN" web "https://example.com/article" --execution-context agent --output article.mp3 --json
 ```
 
-Preserve `--execution-context agent` on retries of these submissions.
+If supplied, preserve the same context on retries of these submissions.
 
 The declaration is validated before submission. Invalid values are rejected;
 status and download commands never rewrite the context recorded on the original
@@ -426,6 +426,9 @@ For multilingual Supertonic voices, select the spoken language separately.
 Set voice, language, and speed explicitly when reproducibility matters.
 CLI, REST, and account-preference defaults may differ.
 
+These `--language` examples are Supertonic recipes. For Kokoro/non-`st_*`
+voices, omit `--language`; the chosen voice determines its language.
+
 ## 5. Prepare narration input
 
 Supported CLI patterns:
@@ -462,9 +465,12 @@ addresses, or arbitrary downloadable document formats. It extracts content
 locally and submits narration content and webpage metadata. Translation
 behavior depends on source and target language; set options deliberately.
 
-The documented maximum is 500,000 characters per synthesis request. Split
-larger input at meaningful boundaries, assign each chunk its own request
-identity, and preserve playback order.
+Agent TTS accepts up to 500,000 UTF-16 code units per synthesis request; most
+common characters count as one, while many emoji count as two. This is the
+request-size limit, not a billing change. Split larger input at meaningful
+boundaries, assign each chunk its own request identity, and preserve playback
+order. WebMCP previews are limited to 300 units, while hosted MCP defaults to
+100,000 units and is configurable up to 500,000.
 
 ## 6. Generate and save real audio
 
@@ -481,6 +487,7 @@ a new key inside an automatic retry loop.
 Create the output parent directory first.
 
 ```sh
+# Supertonic voice: pass its language explicitly.
 "$TTSBUDDY_BIN" speak --file "$INPUT_FILE" \
   --voice "$VOICE_ID" \
   --language "$LANGUAGE" \
@@ -490,9 +497,19 @@ Create the output parent directory first.
   --json
 ```
 
+For Kokoro/non-`st_*` voices, omit `--language`; the chosen voice determines
+its language:
+
+```sh
+"$TTSBUDDY_BIN" speak --file "$INPUT_FILE" \
+  --voice af_heart --speed 1.2 \
+  --idempotency-key "$REQUEST_KEY" --output "$OUTPUT_FILE" --json
+```
+
 For a public webpage:
 
 ```sh
+# Supertonic voice: pass its language explicitly.
 "$TTSBUDDY_BIN" web "$PUBLIC_URL" \
   --voice "$VOICE_ID" \
   --language "$LANGUAGE" \
@@ -500,6 +517,15 @@ For a public webpage:
   --idempotency-key "$REQUEST_KEY" \
   --output "$OUTPUT_FILE" \
   --json
+```
+
+For Kokoro/non-`st_*` voices, omit `--language`; the chosen voice determines
+its language:
+
+```sh
+"$TTSBUDDY_BIN" web "$PUBLIC_URL" \
+  --voice af_heart --speed 1.2 \
+  --idempotency-key "$REQUEST_KEY" --output "$OUTPUT_FILE" --json
 ```
 
 Parse stdout as JSON and inspect the process exit status. Preserve structured
@@ -515,6 +541,9 @@ error output even when the process exits nonzero.
 | `status JOB_ID --json` | Inspects the job; does not download |
 | `download JOB_ID --output file.mp3 --json` | Waits if needed, then saves existing job audio |
 | `--output -` | Binary stdout workflow; keep separate from JSON |
+
+`--json` keeps stdout machine-readable. `voices --all --json` may write a live-
+catalog fallback warning to stderr; add `--quiet` to suppress that warning.
 
 After a successful saved result, `download.path` is the absolute destination
 and `download.bytes` is the actual saved byte count.

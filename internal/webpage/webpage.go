@@ -13,15 +13,16 @@ import (
 	"time"
 
 	readability "github.com/go-shiori/go-readability"
+	"github.com/ngelik/ttsbuddy-cli/internal/units"
 	"golang.org/x/net/html"
 )
 
 const (
-	maxHTMLBytes     = 6 * 1024 * 1024
-	maxArticleRunes  = 500_000
-	minReadableRunes = 40
-	fetchTimeout     = 20 * time.Second
-	maxRedirects     = 5
+	maxHTMLBytes         = 6 * 1024 * 1024
+	maxArticleUTF16Units = 500_000
+	minReadableRunes     = 40
+	fetchTimeout         = 20 * time.Second
+	maxRedirects         = 5
 )
 
 var privateWebPrefixes = []netip.Prefix{
@@ -149,8 +150,8 @@ func fetchArticleWithClient(ctx context.Context, client *http.Client, parsed *ur
 	if strings.TrimSpace(text) == "" {
 		return nil, errors.New("no readable text found on webpage")
 	}
-	if countRunes(text) > maxArticleRunes {
-		return nil, fmt.Errorf("webpage text exceeds 500,000 characters (%d characters)", countRunes(text))
+	if inputUnits := units.UTF16Units(strings.TrimSpace(text)); inputUnits > maxArticleUTF16Units {
+		return nil, fmt.Errorf("webpage text exceeds 500,000 UTF-16 code units (%d units)", inputUnits)
 	}
 	if title == "" {
 		title = finalURL.Hostname()
