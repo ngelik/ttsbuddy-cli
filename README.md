@@ -4,7 +4,7 @@ Convert text to speech from the command line using the [TTSBuddy](https://ttsbud
 
 ## Install
 
-### Homebrew (macOS/Linux)
+### Homebrew (macOS)
 
 ```bash
 brew install ngelik/tap/ttsbuddy
@@ -604,7 +604,7 @@ For full API details, see the [API Reference](https://ttsbuddy.com/docs/develope
 | "Rate limited" | Wait and retry (automatic with backoff) |
 | "Monthly minutes exhausted" | Upgrade plan or wait for reset |
 | "No API access" | Your plan may not include API access |
-| "Text too long" | Split input into chunks under 500k characters |
+| "Text too long" | Split input into chunks of at most 500,000 UTF-16 code units |
 | Audio file not found | Files expire based on plan — re-generate |
 
 ## Development
