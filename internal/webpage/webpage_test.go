@@ -2,6 +2,7 @@ package webpage
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -105,6 +106,43 @@ func TestFetchArticleTestOptionAllowsInitialPrivateNetworkURL(t *testing.T) {
 	}
 	if article.Title != "Local Test" {
 		t.Fatalf("Title = %q, want Local Test", article.Title)
+	}
+}
+
+func TestFetchArticleRejectsOverLimitUTF16Text(t *testing.T) {
+	text := strings.Repeat("😀", 250_001)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = fmt.Fprintf(w, "<html><body><article><p>%s</p></article></body></html>", text)
+	}))
+	defer srv.Close()
+
+	_, err := fetchArticle(context.Background(), srv.URL, "test", fetchOptions{allowInitialPrivateNetwork: true})
+	if err == nil {
+		t.Fatal("expected UTF-16 size error")
+	}
+	if !strings.Contains(err.Error(), "UTF-16") {
+		t.Fatalf("error = %q, want UTF-16 guidance", err.Error())
+	}
+}
+
+func TestFetchArticleAcceptsExactLimitUTF16Text(t *testing.T) {
+	text := strings.Repeat("😀", 250_000)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = fmt.Fprintf(w, "<html><body><article><p>%s</p></article></body></html>", text)
+	}))
+	defer srv.Close()
+
+	article, err := fetchArticle(context.Background(), srv.URL, "test", fetchOptions{allowInitialPrivateNetwork: true})
+	if err != nil {
+		t.Fatalf("expected exact UTF-16 limit to pass: %v", err)
+	}
+	if got := countRunes(article.Text); got == 0 {
+		t.Fatal("expected extracted article body")
+	}
+	if got := len([]rune(article.Text)); got < 250_000 {
+		t.Fatalf("extracted body lost content: %d runes", got)
 	}
 }
 
