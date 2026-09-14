@@ -516,7 +516,7 @@ These work on any command:
 | Flag | Description |
 |------|-------------|
 | `-k, --key <key>` | API key (overrides config/env) |
-| `--json` | JSON output to stdout only, no human output on stderr |
+| `--json` | JSON output to stdout; `voices --all --json` may warn on stderr if the live catalog falls back (use `--quiet` to suppress) |
 | `--quiet` | Suppress progress output |
 
 ## Output Modes
@@ -524,7 +524,7 @@ These work on any command:
 | Mode | stdout | stderr |
 |------|--------|--------|
 | Default `speak` | nothing (file saved to disk) | spinner, status, "Saved to ...", final stats |
-| `--json` | JSON response without downloading (unless an explicit output file is supplied) | nothing |
+| `--json` | JSON response without downloading (unless an explicit output file is supplied) | Usually nothing; `voices --all --json` may warn on catalog fallback (use `--quiet` to suppress) |
 | `--output <file> --json` | JSON response plus additive `download.path` and actual `download.bytes` | nothing |
 | `-o -` | raw MP3 bytes | spinner (if TTY) |
 | `--quiet` | nothing | suppresses progress; data output such as a `--no-download` audio URL remains |
