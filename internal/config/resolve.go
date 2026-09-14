@@ -51,7 +51,7 @@ func Resolve(cfg *Config, flags FlagValues) (*ResolvedConfig, []string) {
 		OutputDir:           or(cfg.OutputDir, DefaultOutputDir),
 		PollTimeout:         or(cfg.PollTimeout, DefaultPollTimeout),
 	}
-	if r.APIKey != "" && !IsSubscriptionCredential(r.APIKey) {
+	if r.APIKey != "" && !IsExternalCredential(r.APIKey) {
 		r.APIKey = ""
 		warnings = append(warnings, "stored API key is malformed; ignoring it")
 	}
@@ -83,7 +83,7 @@ func applyEnv(r *ResolvedConfig) []string {
 		}
 	}
 	if v := os.Getenv("TTSBUDDY_API_KEY"); v != "" {
-		if IsSubscriptionCredential(v) {
+		if IsExternalCredential(v) {
 			r.APIKey = v
 		} else {
 			warnings = append(warnings, "invalid TTSBUDDY_API_KEY; ignoring it")

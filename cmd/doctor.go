@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -20,6 +21,8 @@ import (
 var doctorOnline bool
 
 var doctorCLICredentialPattern = regexp.MustCompile(`^ttsc_[0-9a-f]{8}_[0-9a-f]{48}$`)
+
+const agentAuthURL = "https://www.ttsbuddy.com/auth.md"
 
 type doctorCheck struct {
 	Reason  string         `json:"reason,omitempty"`
@@ -188,11 +191,11 @@ func doctorCredentialStatus(cfg *config.Config, resolved *config.ResolvedConfig,
 		if strings.TrimSpace(flagAPIKey) == "ttsb_demo_cli" && doctorMode(resolved.APIURL) == "demo" {
 			return "healthy"
 		}
-		if !config.IsSubscriptionCredential(strings.TrimSpace(flagAPIKey)) {
+		if !config.IsExternalCredential(strings.TrimSpace(flagAPIKey)) {
 			return "warning"
 		}
 	}
-	if config.IsSubscriptionCredential(strings.TrimSpace(resolved.APIKey)) || doctorCLICredentialPattern.MatchString(strings.TrimSpace(resolved.APIKey)) {
+	if config.IsExternalCredential(strings.TrimSpace(resolved.APIKey)) || doctorCLICredentialPattern.MatchString(strings.TrimSpace(resolved.APIKey)) {
 		return "healthy"
 	}
 	return "warning"
@@ -203,16 +206,19 @@ func doctorCredentialDetails(cfg *config.Config, resolved *config.ResolvedConfig
 	kind := "none"
 	if flagSet {
 		source, kind = "flag", "permanent"
+		if config.IsAgentCredential(strings.TrimSpace(flagAPIKey)) {
+			kind = "agent_session"
+		}
 		if strings.TrimSpace(flagAPIKey) == "ttsb_demo_cli" && resolved != nil && doctorMode(resolved.APIURL) == "demo" {
 			kind = "demo"
 		}
-	} else if config.IsSubscriptionCredential(os.Getenv("TTSBUDDY_API_KEY")) {
-		source, kind = "environment", "permanent"
+	} else if configured := strings.TrimSpace(os.Getenv("TTSBUDDY_API_KEY")); config.IsExternalCredential(configured) {
+		source, kind = "environment", doctorCredentialKind(configured)
 	} else if cfg != nil {
 		if session, warning := config.ActiveCLISession(cfg, time.Now()); session != nil && warning == "" && resolved != nil && resolved.APIKey == session.Credential {
 			source, kind = "cli_session", "temporary"
-		} else if config.IsSubscriptionCredential(cfg.APIKey) && resolved != nil && resolved.APIKey == cfg.APIKey {
-			source, kind = "config", "permanent"
+		} else if config.IsExternalCredential(cfg.APIKey) && resolved != nil && resolved.APIKey == cfg.APIKey {
+			source, kind = "config", doctorCredentialKind(cfg.APIKey)
 		}
 	}
 	details := map[string]any{"configured": resolved != nil && resolved.APIKey != "", "source": source, "kind": kind}
@@ -289,6 +295,9 @@ func doctorOnlineChecks(parent context.Context, cfg *config.Config, resolved *co
 	if resolved.APIKey == "" {
 		return []doctorCheck{{Name: "connectivity", Status: "not_checked", Message: "no credential is configured"}}, nil
 	}
+	if config.IsAgentCredential(resolved.APIKey) {
+		return doctorAgentCredentialChecks(ctx, resolved)
+	}
 	// Permanent ttsb credentials are never sent to the CLI-auth endpoint. A
 	// public voices request verifies network reachability without disclosing it.
 	client := api.NewClient("", "", Version)
@@ -296,6 +305,34 @@ func doctorOnlineChecks(parent context.Context, cfg *config.Config, resolved *co
 		return []doctorCheck{{Name: "connectivity", Status: "failed", Message: "public voice endpoint could not be reached"}}, []string{"Check network access and the TTS API endpoint."}
 	}
 	return []doctorCheck{{Name: "connectivity", Status: "healthy", Message: "public voice endpoint reachable; permanent key syntax checked locally"}}, nil
+}
+
+func doctorAgentCredentialChecks(ctx context.Context, resolved *config.ResolvedConfig) ([]doctorCheck, []string) {
+	client := api.NewClient(resolved.APIURL, resolved.APIKey, Version)
+	response, status, err := client.VerifyCredential(ctx)
+	if status == 400 && response != nil && response.Error != nil && response.Error.Code == api.ErrInvalidRequest && response.Error.Message == "'id' query parameter is required" {
+		return []doctorCheck{{Name: "connectivity", Status: "healthy", Message: "agent access token authenticated and API entitlement verified", Details: map[string]any{"http_status": status}}}, nil
+	}
+	if status == http.StatusUnauthorized {
+		return []doctorCheck{{Name: "connectivity", Status: "failed", Message: "agent access token is expired or revoked"}}, []string{"Renew the agent authorization through Auth.md: " + agentAuthURL}
+	}
+	if status == http.StatusForbidden {
+		return []doctorCheck{{Name: "connectivity", Status: "failed", Message: "agent access is not entitled for TTS Buddy API access", Details: map[string]any{"http_status": status}}}, []string{"Check the account plan and API access at https://ttsbuddy.com/billing"}
+	}
+	if err != nil {
+		return []doctorCheck{{Name: "connectivity", Status: "failed", Message: "agent credential could not be verified", Details: map[string]any{"http_status": status}}}, []string{"Check network access and the TTS Buddy API endpoint."}
+	}
+	return []doctorCheck{{Name: "connectivity", Status: "failed", Message: "agent credential check returned an unexpected response", Details: map[string]any{"http_status": status}}}, []string{"Retry the agent credential check or renew the agent authorization through Auth.md: " + agentAuthURL}
+}
+
+func doctorCredentialKind(credential string) string {
+	if config.IsAgentCredential(credential) {
+		return "agent_session"
+	}
+	if config.IsSubscriptionCredential(credential) {
+		return "permanent"
+	}
+	return "none"
 }
 
 func doctorMode(apiURL string) string {

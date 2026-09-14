@@ -86,7 +86,7 @@ func runDownload(cmd *cobra.Command, args []string) error {
 			interrupted.action = downloadAction(jobID, downloadOutput)
 			return interrupted
 		}
-		return handleDownloadStatusError(err, status, jobID)
+		return handleDownloadStatusErrorWithCredential(err, status, jobID, resolved.APIKey)
 	}
 	return handleDownloadStatus(ctx, client, resp, resolved, jobID)
 }
@@ -117,7 +117,7 @@ func handleDownloadStatus(ctx context.Context, client *api.Client, resp *api.TTS
 	}
 }
 
-func handleDownloadStatusError(err error, status int, jobID string) error {
+func handleDownloadStatusErrorWithCredential(err error, status int, jobID, credential string) error {
 	var apiErr *api.APIResponseError
 	if errors.As(err, &apiErr) {
 		if apiErr.ErrorCode() == api.ErrNotFound {
@@ -126,7 +126,7 @@ func handleDownloadStatusError(err error, status int, jobID string) error {
 			mapped.action = downloadAction(jobID, downloadOutput)
 			return mapped
 		}
-		mapped := classifyAPIError(err, status)
+		mapped := classifyAPIErrorWithCredential(err, status, "", credential)
 		if mapped.action == nil && mapped.retryable {
 			mapped.action = downloadAction(jobID, downloadOutput)
 		}

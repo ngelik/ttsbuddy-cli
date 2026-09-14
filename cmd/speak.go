@@ -203,7 +203,7 @@ func runSpeak(cmd *cobra.Command, args []string) error {
 			mapped.action = submissionRetryAction()
 			return mapped
 		}
-		return classifyAPIErrorWithKey(err, status, retryResult.EffectiveKey)
+		return classifyAPIErrorWithCredential(err, status, retryResult.EffectiveKey, resolved.APIKey)
 	}
 	spin.Stop()
 
@@ -302,7 +302,7 @@ func pollUntilComplete(ctx context.Context, client *api.Client, initial *api.TTS
 				// A permanent response is authoritative. Preserve classifier
 				// actions (for example authenticate/account/input correction)
 				// rather than replacing them with a known-job recovery command.
-				return handleAPIError(err, pollStatus)
+				return handleAPIErrorWithCredential(err, pollStatus, resolved.APIKey)
 			}
 			stderrMsg("Status check failed (HTTP %d), retrying...\n", pollStatus)
 			if resp != nil && resp.RetryAfterSeconds != nil {
@@ -438,7 +438,7 @@ func handleCompletedWithFreshRetry(ctx context.Context, client *api.Client, req 
 			mapped.idempotencyKey = freshRetryResult.EffectiveKey
 			return mapped
 		}
-		return classifyAPIErrorWithKey(freshErr, status, freshRetryResult.EffectiveKey)
+		return classifyAPIErrorWithCredential(freshErr, status, freshRetryResult.EffectiveKey, resolved.APIKey)
 	}
 
 	if freshResp.JobID != "" {
@@ -704,6 +704,10 @@ func (e *exitError) Unwrap() error { return e.err }
 
 func handleAPIError(err error, status int) error {
 	return classifyAPIError(err, status)
+}
+
+func handleAPIErrorWithCredential(err error, status int, credential string) error {
+	return classifyAPIErrorWithCredential(err, status, "", credential)
 }
 
 // classifyTerminalResponse routes provider/job terminal states through the

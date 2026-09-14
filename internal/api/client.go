@@ -135,6 +135,30 @@ func (c *Client) GetStatus(ctx context.Context, jobID string) (*TTSResponse, int
 	return parseResponse(resp)
 }
 
+// VerifyCredential performs the authenticated, read-only agent endpoint probe
+// used by doctor. The endpoint authenticates and checks entitlement before it
+// validates the required job ID, so an authenticated request without an ID
+// returns the stable INVALID_REQUEST response without creating work.
+func (c *Client) VerifyCredential(ctx context.Context) (*TTSResponse, int, error) {
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, c.apiURL, nil)
+	if err != nil {
+		return nil, 0, fmt.Errorf("creating credential verification request: %w", err)
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
+	httpReq.Header.Set("User-Agent", "ttsbuddy-cli/"+c.version)
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, 0, fmt.Errorf("sending credential verification request: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	return parseResponse(resp)
+}
+
 // maxAudioSize caps audio downloads to prevent disk/memory exhaustion.
 const maxAudioSize = 500 * 1024 * 1024 // 500MB
 

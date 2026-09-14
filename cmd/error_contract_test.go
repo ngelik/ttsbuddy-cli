@@ -111,6 +111,22 @@ func TestClassifyAPIErrorPreservesServerCodeAndRecovery(t *testing.T) {
 	}
 }
 
+func TestClassifyAgentCredential401UsesAuthMDRenewalGuidance(t *testing.T) {
+	agent := "ttsa_" + strings.Repeat("a", 8) + "_" + strings.Repeat("b", 48)
+	err := &api.APIResponseError{StatusCode: http.StatusUnauthorized, Response: api.TTSResponse{Error: &api.APIError{Code: api.ErrInvalidKey, Message: "expired or revoked"}}}
+	mapped := classifyAPIErrorWithCredential(err, http.StatusUnauthorized, "", agent)
+	if mapped.reason != "AGENT_ACCESS_REJECTED" || mapped.retryable || !strings.Contains(mapped.msg, "Auth.md") || !strings.Contains(mapped.nextAction, agentAuthURL) {
+		t.Fatalf("mapped=%#v", mapped)
+	}
+	if strings.Contains(mapped.msg, "auth email") || strings.Contains(mapped.msg, agent) {
+		t.Fatalf("mapped used CLI login guidance or leaked token: %q", mapped.msg)
+	}
+	payload := structuredErrorPayload(mapped)
+	if payload.Error.Reason != "AGENT_ACCESS_REJECTED" || !strings.Contains(payload.Error.NextAction, agentAuthURL) {
+		t.Fatalf("payload=%#v", payload.Error)
+	}
+}
+
 func TestStructuredRecoveryCarriesEffectiveIdempotencyKey(t *testing.T) {
 	mapped := classifyAPIErrorWithKey(errors.New("transport interrupted"), 0, "idem-effective")
 	payload := structuredErrorPayload(mapped)
