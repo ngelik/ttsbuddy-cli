@@ -77,6 +77,40 @@ The actual directory selected by `TTSBUDDY_CONFIG_DIR` must have mode `0700`
 it does not change permissions. Apply the correction to your own config directory
 and rerun doctor before email authentication.
 
+## Owner-approved agent billing
+
+An `ttsa_` token identifies an approved agent. Login approval alone is not
+spending permission: billing requires a separate owner grant for one exact
+monthly upgrade. The owner
+reviews the destination plan, recurring base price, currency, tax treatment,
+renewal terms, and payment method in TTS Buddy's Agent Billing page. Setup may
+collect payment details without purchasing anything.
+
+Use the read-before-write command sequence:
+
+```bash
+ttsbuddy billing plans --json
+ttsbuddy billing status --json
+ttsbuddy billing quote --plan pro --json
+ttsbuddy billing upgrade --quote <operation-id> --json
+ttsbuddy billing status --operation <operation-id> --json
+```
+
+`billing upgrade` is the only command that can request a plan change. `speak`,
+login, and ordinary command retries never purchase implicitly. On an agent
+credential's quota error, the CLI suggests read-only `billing status`.
+An owner-preauthorized agent may explicitly quote the approved upgrade, execute
+it, and poll the operation. Only after `state: "succeeded"` **and**
+`entitlement_ready: true`, retry the original TTS request once with the same
+input, voice, language, speed, and idempotency key. Stop if quota is still
+exhausted; a historical successful purchase alone does not prove current access.
+Without the required grant, or when payment action/manual review is required,
+follow the human handoff. The server rechecks the live owner grant, exact Stripe Price, automatic-tax preview,
+customer, invoice, and resulting subscription. A decline, payment
+authentication step, or uncertain transport result stays in the operation state;
+do not blindly retry it. Taxes and the immediate invoice total are
+provider-calculated and can differ from the recurring base price.
+
 ## Quick Start
 
 ```bash

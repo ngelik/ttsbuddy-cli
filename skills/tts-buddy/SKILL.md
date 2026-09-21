@@ -701,7 +701,42 @@ the API bearer credential to a storage host or blindly follow redirects into
 private network destinations. Prefer the CLI’s existing downloader when it
 fits the task.
 
-## 10. Finish and report
+## 10. Owner-approved billing recovery
+
+An `ttsa_` credential identifies the agent; login approval alone is not spending
+permission. Billing requires a separate owner grant for one exact upgrade in
+the TTS Buddy Agent Billing page. `speak`, login, and ordinary command retries
+never purchase implicitly. An agent quota error suggests read-only billing
+status. With the owner's existing authorization for that exact upgrade, the
+agent may explicitly orchestrate this sequence:
+
+```sh
+ttsbuddy billing plans --json
+ttsbuddy billing status --json
+ttsbuddy billing quote --plan pro --json
+ttsbuddy billing upgrade --quote <operation-id> --json
+ttsbuddy billing status --operation <operation-id> --json
+```
+
+After the operation reports both `state: "succeeded"` and
+`entitlement_ready: true`, retry the original TTS request once with identical
+input, voice, language, speed, and idempotency key. Retain the original input,
+including webpage content or stdin; do not fetch replacement content for the
+retry. Stop if quota is still exhausted. Historical success without current
+entitlement does not authorize resuming synthesis. If the grant is absent,
+payment action is required, or manual review is requested, follow the human
+handoff instead of executing another purchase or looping synthesis.
+
+The owner reviews the exact recurring Stripe Price, currency, tax treatment,
+renewal terms, and payment method. Setup can collect a billing address and
+payment method without purchasing. The server verifies the current grant,
+automatic-tax invoice preview, owned customer and invoice, then reads back the
+subscription before entitlement changes. A decline, payment-authentication
+step, or uncertain network response is a recovery state: do not blindly replay
+the command. Taxes and the immediate invoice total are provider-calculated and
+may differ from the recurring base price.
+
+## 11. Finish and report
 
 For a requested local MP3:
 

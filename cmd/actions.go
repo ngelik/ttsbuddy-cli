@@ -21,6 +21,8 @@ const (
 	actionDownload        = "download"
 	actionAccount         = "account"
 	actionInputCorrection = "input_correction"
+	actionBillingStatus   = "billing_status"
+	actionBillingOwner    = "owner_billing_authorization"
 )
 
 func commandAction(actionType string, argv ...string) *api.CLIAction {
@@ -115,6 +117,32 @@ func accountAction(url string) *api.CLIAction {
 
 func inputCorrectionAction() *api.CLIAction {
 	return requiredAction(actionInputCorrection, "corrected_input")
+}
+
+func billingStatusAction(operationID string) *api.CLIAction {
+	argv := []string{"ttsbuddy", "billing", "status"}
+	if operationID != "" {
+		argv = append(argv, "--operation", operationID)
+	}
+	if flagJSON {
+		argv = append(argv, "--json")
+	}
+	return commandAction(actionBillingStatus, argv...)
+}
+
+func billingActionFromAPI(action *api.BillingAction, reasons ...string) *api.CLIAction {
+	base := ""
+	if resolvedCfg != nil {
+		base = resolvedCfg.APIURL
+	}
+	safe := api.SanitizeBillingAction(action, base, reasons...)
+	if safe == nil {
+		return nil
+	}
+	if safe.URL != "" {
+		return &api.CLIAction{Type: safe.Type, URL: safe.URL}
+	}
+	return billingStatusAction(safe.Argv[4])
 }
 
 func validateJobID(jobID string) error {
