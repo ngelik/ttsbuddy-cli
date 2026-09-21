@@ -35,7 +35,7 @@ func structuredErrorPayload(err *exitError) api.CLIError {
 	payload := api.NewCLIErrorWithRecovery(code, err.msg, err.reason, err.nextAction, err.retryable, err.retryAfterSeconds)
 	payload.Error.ServerCode = err.serverCode
 	payload.Error.Action = err.action
-	payload.Error.HumanActionRequired = err.reason == "BROWSER_AUTH_REQUIRED"
+	payload.Error.HumanActionRequired = err.reason == "BROWSER_AUTH_REQUIRED" || err.reason == "PAYMENT_ACTION_REQUIRED" || err.reason == "PAYMENT_SETUP_REQUIRED" || err.reason == "BILLING_AUTHORIZATION_REQUIRED" || err.reason == "BILLING_MANUAL_REVIEW_REQUIRED"
 	payload.Error.IdempotencyKey = err.idempotencyKey
 	return payload
 }
@@ -310,6 +310,11 @@ func classifyAPIErrorWithCredential(err error, status int, idempotencyKey, crede
 		mapped.action = authenticateAction()
 	case "SUBSCRIPTION_INACTIVE", "API_ACCESS_UNAVAILABLE", "QUOTA_EXCEEDED":
 		mapped.action = accountAction("https://ttsbuddy.com/billing")
+		if reason == "QUOTA_EXCEEDED" && config.IsAgentCredential(credential) {
+			mapped.msg = "monthly TTS minutes exhausted. Inspect agent billing status before continuing."
+			mapped.nextAction = "Run ttsbuddy billing status to inspect quota and owner authorization; owner billing is available at https://ttsbuddy.com/billing."
+			mapped.action = billingStatusAction("")
+		}
 	case "INPUT_TOO_LONG", "INVALID_INPUT":
 		if idempotencyKey != "" {
 			mapped.action = inputCorrectionAction()

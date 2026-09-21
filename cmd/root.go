@@ -146,6 +146,8 @@ func commandUsesCredentialedAPI(cmd *cobra.Command) bool {
 	switch cmd.CommandPath() {
 	case "ttsbuddy speak", "ttsbuddy web", "ttsbuddy status", "ttsbuddy download":
 		return true
+	case "ttsbuddy billing plans", "ttsbuddy billing status", "ttsbuddy billing quote", "ttsbuddy billing upgrade":
+		return true
 	default:
 		return false
 	}
