@@ -703,6 +703,14 @@ fits the task.
 
 ## 10. Owner-approved billing recovery
 
+Billing commands require CLI v0.15.0 or newer. As of September 30, 2026,
+production purchase execution remains disabled: an approved agent's
+`billing upgrade` request is blocked with `AGENT_BILLING_NOT_ENABLED`.
+Owner approval does not bypass this gate. Use read-only `billing plans` and
+`billing status` for discovery; do not retry a disabled purchase or infer live
+availability from Stripe test-mode results. The purchase sequence below applies
+only once execution is enabled for the account.
+
 An `ttsa_` credential identifies the agent; login approval alone is not spending
 permission. Billing requires a separate owner grant for one exact upgrade in
 the TTS Buddy Agent Billing page. `speak`, login, and ordinary command retries
