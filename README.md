@@ -79,14 +79,20 @@ and rerun doctor before email authentication.
 
 ## Owner-approved agent billing
 
+The billing commands are available in **CLI v0.15.0 and newer**. As of
+September 30, 2026, **production purchase execution remains disabled**:
+`billing upgrade` cannot purchase a production plan and returns
+`AGENT_BILLING_NOT_ENABLED`. Owner approval does not bypass this rollout gate.
+Read-only `billing plans` and `billing status` are available. Stripe test-mode
+validation does not mean live purchasing is enabled.
+
 An `ttsa_` token identifies an approved agent. Login approval alone is not
 spending permission: billing requires a separate owner grant for one exact
-monthly upgrade. The owner
-reviews the destination plan, recurring base price, currency, tax treatment,
-renewal terms, and payment method in TTS Buddy's Agent Billing page. Setup may
-collect payment details without purchasing anything.
+monthly upgrade. The owner reviews the destination plan, recurring base price,
+currency, tax treatment, renewal terms, and payment method in TTS Buddy's Agent
+Billing page. Setup may collect payment details without purchasing anything.
 
-Use the read-before-write command sequence:
+Use this read-before-write sequence once purchase execution is enabled:
 
 ```bash
 ttsbuddy billing plans --json
@@ -98,16 +104,18 @@ ttsbuddy billing status --operation <operation-id> --json
 
 `billing upgrade` is the only command that can request a plan change. `speak`,
 login, and ordinary command retries never purchase implicitly. On an agent
-credential's quota error, the CLI suggests read-only `billing status`.
+credential's quota error, the CLI suggests read-only `billing status`; quota
+exhaustion never automatically charges the account or retries synthesis.
 An owner-preauthorized agent may explicitly quote the approved upgrade, execute
 it, and poll the operation. Only after `state: "succeeded"` **and**
 `entitlement_ready: true`, retry the original TTS request once with the same
 input, voice, language, speed, and idempotency key. Stop if quota is still
 exhausted; a historical successful purchase alone does not prove current access.
 Without the required grant, or when payment action/manual review is required,
-follow the human handoff. The server rechecks the live owner grant, exact Stripe Price, automatic-tax preview,
-customer, invoice, and resulting subscription. A decline, payment
-authentication step, or uncertain transport result stays in the operation state;
+follow the human handoff. The server rechecks the live owner grant, exact
+Stripe Price, automatic-tax preview, customer, invoice, and resulting
+subscription. A decline, payment authentication step, or uncertain transport
+result stays in the operation state;
 do not blindly retry it. Taxes and the immediate invoice total are
 provider-calculated and can differ from the recurring base price.
 
