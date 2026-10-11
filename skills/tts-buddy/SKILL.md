@@ -1,16 +1,21 @@
 ---
 name: tts-buddy
-description: Generate and download speech with TTS Buddy from text, Markdown, or public webpages. Use for TTSBuddy CLI workflows, voice selection, authorized authentication, asynchronous jobs, and recovery without duplicate synthesis. Also guides selection of the REST API or hosted MCP integration.
+description: Text-to-speech for AI agents using the TTS Buddy CLI. Convert plain text, text or Markdown files, piped input (stdin), and public HTML webpages into saved MP3 audio. Use for voice and language selection, speech speed control, authorized sign-in, asynchronous job tracking, and interrupted-job recovery without duplicate synthesis. Includes guidance for REST API and hosted MCP integrations.
 ---
 
-# TTS Buddy
+# TTS Buddy — Text-to-Speech for AI Agents
 
-Turn the user’s content into usable MP3 audio. Prefer the CLI for local files,
-stdin, and shell automation. Preserve the user’s language, content, output
-location, and authentication choices.
+Use TTS Buddy to turn notes, articles, Markdown documents, and public HTML
+webpages into MP3 audio you can save and listen to. The CLI accepts plain text,
+text or Markdown files, and piped input (stdin) for shell automation.
 
-For ordinary audio tasks, the goal is a downloaded artifact—not merely an
-accepted request, job ID, or temporary audio URL.
+This skill guides CLI setup, authorized sign-in, voice and language selection,
+speech speed settings, job tracking, and audio downloads. Recover interrupted
+jobs using their existing job IDs or request identities to avoid duplicate
+synthesis. It also explains when to use the REST API or hosted MCP integration.
+
+Preserve the user’s language, content, output location, and authentication choices.
+For ordinary audio tasks, finish with a saved MP3 file and verify the download.
 
 ## Start here: ordinary text or webpage audio
 
