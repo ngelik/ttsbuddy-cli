@@ -262,6 +262,37 @@ Doctor is read-only. It does not send verification emails or generate audio.
 Do not enable a custom API host just to silence a connection error. A custom
 credentialed endpoint must be explicitly trusted with the bearer credential.
 
+### Configuration reference
+
+Configuration normally lives in `~/.ttsbuddy/config.json`. Directory selection
+is `--config-dir` > `TTSBUDDY_CONFIG_DIR` > the default; overrides must be absolute.
+Use `config`, `config get <key>`, and `config set <key> <value>` to inspect or
+change it. Credential output is redacted. For secrets, prefer a protected
+environment over `config set key`, which places the value in process arguments.
+
+| Purpose | Config key | Environment | Command flag |
+|---|---|---|---|
+| Credential | `key` / `api_key` | `TTSBUDDY_API_KEY` | `--key` |
+| Voice (`speak`) | `voice` | `TTSBUDDY_VOICE` | `--voice` |
+| Language (`speak`) | `language` / `default_language` | `TTSBUDDY_LANGUAGE` | `--language` |
+| Speed (`speak`) | `speed` | `TTSBUDDY_SPEED` | `--speed` |
+| Output directory | `output_dir` | `TTSBUDDY_OUTPUT_DIR` | `--output-dir` |
+| Poll timeout | `timeout` | `TTSBUDDY_TIMEOUT` | `--timeout` |
+
+Normal option precedence is flags > environment > config > defaults. Credential
+precedence additionally includes stored CLI sessions, as described below.
+Default output directory is the current directory; default polling timeout is
+`10m`. Use Go durations such as `30s` or `2m`. `status --timeout` applies with
+`--watch`; a timeout does not cancel the server job. `status` accepts an omitted
+job ID to use saved last-job state; `download` requires an explicit ID. Prefer
+explicit IDs for concurrent workflows.
+
+Advanced endpoint settings are `api_url` / `TTSBUDDY_API_URL`, `cli_auth_url` /
+`TTSBUDDY_CLI_AUTH_URL`, and `tts_api_base_url` / `TTSBUDDY_TTS_API_BASE_URL`.
+`allow_custom_api_url` / `TTSBUDDY_ALLOW_CUSTOM_API_URL` opts into trusting a
+custom host; never enable it merely to work around an error. Keep production
+defaults unless the user specifically authorizes another endpoint.
+
 ## 3. Authenticate using the available authorized method
 
 Prefer an existing authorized credential over creating another account or
@@ -278,8 +309,8 @@ registration endpoint, or unattended signup bypass.
 
 ### Auth.md agent access
 
-An Auth.md agent access token uses the `ttsa_<8hex>_<48hex>` format and requires
-CLI v0.14.0 or newer. Obtain the token through the Auth.md approval flow, then
+An Auth.md agent access token uses the `ttsa_<8hex>_<48hex>` format.
+Obtain the token through the Auth.md approval flow, then
 pass it through `TTSBUDDY_API_KEY`, `--key`, or `ttsbuddy config set key`; the
 CLI does not register agents or run a background refresh process. Credential
 precedence remains `--key` > `TTSBUDDY_API_KEY` > an active stored `ttsc_` CLI
@@ -292,6 +323,12 @@ stored `ttsc_` CLI session. Disconnect an agent authorization through Auth.md
 or the account management operation documented there.
 
 ### Email authentication
+
+Email and browser login store a separate expiring `ttsc_` CLI session, not a
+permanent API key. Login/logout preserve the persisted `api_key`. Use
+`auth status --json` to inspect session state; sessions have an absolute
+seven-day lifetime. `auth logout` revokes the stored session; on remote failure
+it retains local state. `auth logout --local-only` only removes local state.
 
 Before starting, establish whether the agent has authorized access to the
 mailbox or must hand off code entry to the owner. Reuse the same retained
@@ -364,9 +401,8 @@ When `auth email start --json` returns
 stdin. If the authorized mailbox is unavailable, use the
 `if_mailbox_unavailable` handoff to ask the owner and wait. `expires_at` with
 `expiry_scope: "cli_continuation_deadline"` describes the local continuation,
-not a guarantee about the provider code's lifetime. These fields are additive;
-older CLI responses still expose the top-level challenge, deadline and prose
-next action.
+not a guarantee about the provider code's lifetime. Use the structured
+continuation rather than parsing the prose next action.
 
 Direct CLI `--code-stdin` reads until EOF. If using it directly in a PTY, a newline
 alone may leave it waiting: finish input with EOF (usually Ctrl-D on an empty
@@ -422,6 +458,9 @@ Query the catalog instead of guessing IDs or speed ranges:
 ```
 
 Replace the language and optional engine filter with the user’s requirements.
+This command filters the built-in curated catalog; it is not a live availability
+check. Add `--all` to fetch the live catalog. If that fetch fails, the CLI falls
+back to the curated catalog and warns on stderr unless `--quiet` is set.
 
 Inspect the returned voice’s:
 
@@ -439,7 +478,11 @@ an ID.
 
 For multilingual Supertonic voices, select the spoken language separately.
 Set voice, language, and speed explicitly when reproducibility matters.
-CLI, REST, and account-preference defaults may differ.
+`speak` resolves flags, environment, local configuration, then built-in defaults
+(`st_m1`, `en`, speed `1.2`). `web` sends voice, language, and speed only when
+their flags are explicit; otherwise the backend uses account preferences.
+Local voice/language/speed configuration and environment variables do not
+override those omitted `web` options.
 
 These `--language` examples are Supertonic recipes. For Kokoro/non-`st_*`
 voices, omit `--language`; the chosen voice determines its language.
@@ -477,15 +520,15 @@ with an appropriate document tool first and verify the reading order.
 
 `web` handles public HTTP(S) HTML, not authenticated pages, private network
 addresses, or arbitrary downloadable document formats. It extracts content
-locally and submits narration content and webpage metadata. Translation
-behavior depends on source and target language; set options deliberately.
+locally and submits narration content and webpage metadata. It sends
+`translate: "auto"`; the backend decides whether translation is
+needed from the source and target language. There is no CLI translation toggle.
 
 Agent TTS accepts up to 500,000 UTF-16 code units per synthesis request; most
 common characters count as one, while many emoji count as two. This is the
 request-size limit, not a billing change. Split larger input at meaningful
 boundaries, assign each chunk its own request identity, and preserve playback
-order. WebMCP previews are limited to 300 units, while hosted MCP defaults to
-100,000 units and is configurable up to 500,000.
+order. Other interfaces have their own limits; consult their live documentation.
 
 ## 6. Generate and save real audio
 
@@ -552,13 +595,22 @@ error output even when the process exits nonzero.
 |---|---|
 | `speak --output file.mp3 --json` | Saves audio and returns JSON with download details |
 | `web --output file.mp3 --json` | Saves audio and returns JSON with download details |
-| Bare `speak --json` or `web --json` | Returns metadata without saving audio |
+| Bare `speak --json` or `web --json` | Returns metadata without saving audio, even with `--output-dir` |
+| `speak` or `web` without JSON/output flags | Saves an automatically named MP3 in the resolved output directory |
+| `--no-download` without JSON | Prints the temporary audio URL to stderr; saves no file |
 | `status JOB_ID --json` | Inspects the job; does not download |
 | `download JOB_ID --output file.mp3 --json` | Waits if needed, then saves existing job audio |
 | `--output -` | Binary stdout workflow; keep separate from JSON |
 
-`--json` keeps stdout machine-readable. `voices --all --json` may write a live-
-catalog fallback warning to stderr; add `--quiet` to suppress that warning.
+For synthesis, status, download, machine-readable auth commands, billing,
+doctor, and voices, `--json` provides structured stdout; retain stderr
+separately. Completion JSON uses
+top-level `audio_url` and `job_id`, with metadata under `audio` and `stats`.
+Do not pipe `--no-download` stdout expecting a URL. `--json` with `--output -`
+is rejected. Do not combine `--no-download` with an output path: `speak` rejects
+it, while `web` skips saving. The config get/set and shell-completion commands
+are not JSON APIs. Interactive `auth email` /
+`auth login` reject `--json`; use email start/verify for automation.
 
 After a successful saved result, `download.path` is the absolute destination
 and `download.bytes` is the actual saved byte count.
@@ -622,16 +674,30 @@ account changes, or other new external actions.
 Reuse an idempotency key only for the identical logical request. Changing text,
 voice, language, speed, or webpage content changes the request.
 
-For ambiguous webpage submissions, retain the original input/context: fetching
-the same URL later may produce different content.
+The `web` command fetches and extracts the page on every invocation; it has no
+option to replay saved extracted content. Its internal transport retries reuse
+the same request body, but rerunning the command can change that body. Recover
+a known job with `download`. If no job is known and unchanged content cannot be
+established, stop rather than reuse the original key with a newly fetched page.
+For workflows that need reproducible content retries, save extracted text first
+and submit it with `speak --file`.
 
 Respect returned retry timing. If a transient error provides no timing, use a
 small bounded backoff, such as three attempts, within the task’s deadline.
 Do not automatically retry authentication, quota, validation, or human-handoff
 failures as if they were transient network errors.
 
-Exit `130` indicates interruption. Preserve the structured recovery information
-and any known job ID rather than starting over.
+TTS submission already performs up to three retries for transport failures
+and HTTP 429/500/502, with bounded backoff. Server delays above its 30-second
+automatic limit are returned to the caller instead of retried early. Explicit
+server guidance can rotate an idempotency key; retain the effective key from
+recovery output. Avoid stacking unbounded outer retry loops.
+
+Exit codes are `0` for command success, `1` for runtime/API failures, `2` for
+usage/input errors, and `130` for handled interruption. Read the payload too:
+`status` can succeed while a job is still processing, and `billing status` can
+succeed while an operation is pending. Preserve recovery information and any
+known job ID rather than starting over.
 
 ## 8. Interpret metadata honestly
 
@@ -649,8 +715,8 @@ local observations:
 | `download.bytes` | Actual bytes saved locally |
 | Missing `expires_at` | Expiry is unknown |
 
-New completion metadata is persisted so completion, status, and replay agree.
-Do not relabel estimates as measured facts.
+Metadata is returned by the service and may be absent on older jobs. The CLI
+preserves its provenance fields; do not relabel estimates as measured facts.
 
 Download temporary audio promptly. A job’s existence does not guarantee its
 audio remains available indefinitely.
@@ -703,14 +769,13 @@ fits the task.
 
 ## 10. Owner-approved billing recovery
 
-Billing commands require CLI v0.15.0 or newer. Production purchases are
-available with a separate owner grant for the exact monthly upgrade and
-completed payment setup. Use read-only `billing plans` and `billing status`
+Production purchases are available with a separate owner grant for the exact
+monthly upgrade and completed payment setup. Use read-only `billing plans` and `billing status`
 for discovery, obtain a quote, and explicitly execute `billing upgrade` only
 within that grant. If the server returns `AGENT_BILLING_NOT_ENABLED`, stop;
 owner approval does not bypass a disabled execution gate.
 
-An `ttsa_` credential identifies the agent; login approval alone is not spending
+A `ttsa_` credential identifies the agent; login approval alone is not spending
 permission. Billing requires a separate owner grant for one exact upgrade in
 the TTS Buddy Agent Billing page. `speak`, login, and ordinary command retries
 never purchase implicitly. An agent quota error suggests read-only billing
@@ -718,18 +783,25 @@ status. With the owner's existing authorization for that exact upgrade, the
 agent may explicitly orchestrate this sequence:
 
 ```sh
-ttsbuddy billing plans --json
-ttsbuddy billing status --json
-ttsbuddy billing quote --plan pro --json
-ttsbuddy billing upgrade --quote <operation-id> --json
-ttsbuddy billing status --operation <operation-id> --json
+"$TTSBUDDY_BIN" billing plans --json
+"$TTSBUDDY_BIN" billing status --json
+"$TTSBUDDY_BIN" billing quote --plan pro --json
+"$TTSBUDDY_BIN" billing upgrade --quote "$OPERATION_ID" --json
+"$TTSBUDDY_BIN" billing status --operation "$OPERATION_ID" --json
 ```
+
+Set `OPERATION_ID` to the returned quote’s `operation_id`; placeholders are not
+literal command arguments. Plans are monthly `pro` or `ultimate`; actual
+eligibility is determined by the server. `quote` creates a server-side operation
+without charging. Inspect its `quote` amounts (minor currency units), currency,
+recurring interval, tax, estimate flag, and expiration before execution.
 
 After the operation reports both `state: "succeeded"` and
 `entitlement_ready: true`, retry the original TTS request once with identical
 input, voice, language, speed, and idempotency key. Retain the original input,
-including webpage content or stdin; do not fetch replacement content for the
-retry. Stop if quota is still exhausted. Historical success without current
+including stdin. For `web`, apply the retained-content limitation in section 7;
+do not claim an identical retry after fetching changed content. Stop if quota
+is still exhausted. Historical success without current
 entitlement does not authorize resuming synthesis. If the grant is absent,
 payment action is required, or manual review is requested, follow the human
 handoff instead of executing another purchase or looping synthesis.
