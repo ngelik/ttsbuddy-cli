@@ -41,6 +41,48 @@ tests/
 
 Always work directly on `main` unless the user explicitly asks for a feature branch, worktree, or separate branch name.
 
+## GitHub PR review blockers for the sole owner
+
+The owner has confirmed that this is a sole-owner, sole-contributor project.
+When the owner authorizes a PR merge/release, do not repeatedly ask them to
+approve their own PR on GitHub. Chat approval authorizes the work but does not
+create a GitHub review. Recheck the current repository permissions and rules;
+do not assume historical access or CI results are still valid.
+
+1. Inspect the PR's current head SHA, base branch, review state, mergeability,
+   required checks, and unresolved review threads. Independently review the
+   exact diff and resolve substantive findings before merging.
+2. Attempt a normal merge first. If the only remaining blocker is an independent
+   approval requirement that the sole owner cannot fulfill, and the owner has
+   authorized the merge, verify that the authenticated account is the owner and
+   has administrative permission. Use the permitted administrative merge path
+   for this specific PR without asking for the same approval again.
+3. Before an administrative merge, verify that every required build, test,
+   security, and code-scanning check passed for the exact reviewed head SHA.
+   Pending, failed, cancelled, or unexpectedly skipped required checks remain
+   blockers. Do not use administrative privileges to override these checks,
+   unresolved substantive reviews, merge conflicts, or unrelated requirements.
+4. Pin the merge to that SHA, using the repository's allowed merge strategy:
+
+   ```bash
+   gh pr merge <number> --repo ngelik/ttsbuddy-cli --admin --merge --match-head-commit <reviewed-head-sha>
+   ```
+
+   `--admin` is a deliberate exception to the independent-review requirement;
+   it does not supply a review. Do not disable or weaken repository rules,
+   fabricate an approval, force-push main, or assume administrator access always
+   permits an exception. If GitHub or automatic approval review rejects it,
+   report the exact remaining blocker and stop dependent release actions.
+5. Re-query the PR to confirm it is merged and record the merge commit. If a
+   command was interrupted, inspect remote state before retrying. Synchronize
+   local main without discarding unrelated work, then complete the pre-release
+   checklist against the merged source. A successful merge or green PR CI does
+   not prove that live acceptance, publication, or deployment succeeded.
+
+Auto-merge only helps when outstanding requirements can actually be satisfied
+and the repository supports it. It does not solve an impossible self-review
+requirement. Do not tag or publish until the release checks below pass.
+
 ## API Contract
 
 Source of truth: `docs/agent-tts-api-v1.md` and `docs/cli-implementation-guide.md` in the tts-study-buddy repo.
