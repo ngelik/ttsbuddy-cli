@@ -79,12 +79,12 @@ and rerun doctor before email authentication.
 
 ## Owner-approved agent billing
 
-The billing commands are available in **CLI v0.15.0 and newer**. As of
-September 30, 2026, **production purchase execution remains disabled**:
-`billing upgrade` cannot purchase a production plan and returns
-`AGENT_BILLING_NOT_ENABLED`. Owner approval does not bypass this rollout gate.
-Read-only `billing plans` and `billing status` are available. Stripe test-mode
-validation does not mean live purchasing is enabled.
+The billing commands are available in **CLI v0.15.0 and newer**, including
+production purchases with a separate owner grant for the exact monthly upgrade
+and completed payment setup. Inspect `billing plans` and `billing status`,
+obtain a quote, then explicitly execute `billing upgrade` as shown below.
+If the server returns `AGENT_BILLING_NOT_ENABLED`, stop: owner approval does not
+bypass a disabled execution gate.
 
 An `ttsa_` token identifies an approved agent. Login approval alone is not
 spending permission: billing requires a separate owner grant for one exact
@@ -92,7 +92,7 @@ monthly upgrade. The owner reviews the destination plan, recurring base price,
 currency, tax treatment, renewal terms, and payment method in TTS Buddy's Agent
 Billing page. Setup may collect payment details without purchasing anything.
 
-Use this read-before-write sequence once purchase execution is enabled:
+With the owner grant and payment setup complete, use this read-before-write sequence:
 
 ```bash
 ttsbuddy billing plans --json

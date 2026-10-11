@@ -703,13 +703,12 @@ fits the task.
 
 ## 10. Owner-approved billing recovery
 
-Billing commands require CLI v0.15.0 or newer. As of September 30, 2026,
-production purchase execution remains disabled: an approved agent's
-`billing upgrade` request is blocked with `AGENT_BILLING_NOT_ENABLED`.
-Owner approval does not bypass this gate. Use read-only `billing plans` and
-`billing status` for discovery; do not retry a disabled purchase or infer live
-availability from Stripe test-mode results. The purchase sequence below applies
-only once execution is enabled for the account.
+Billing commands require CLI v0.15.0 or newer. Production purchases are
+available with a separate owner grant for the exact monthly upgrade and
+completed payment setup. Use read-only `billing plans` and `billing status`
+for discovery, obtain a quote, and explicitly execute `billing upgrade` only
+within that grant. If the server returns `AGENT_BILLING_NOT_ENABLED`, stop;
+owner approval does not bypass a disabled execution gate.
 
 An `ttsa_` credential identifies the agent; login approval alone is not spending
 permission. Billing requires a separate owner grant for one exact upgrade in
