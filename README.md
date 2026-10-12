@@ -87,6 +87,7 @@ For `speak` and `web`, `--json` alone returns the API response without downloadi
 | `status [job_id]` | Inspect a job; omit the ID to use the last local job |
 | `download <job_id>` | Save audio from an existing job, polling if needed |
 | `auth` | Sign in, inspect the stored CLI session, or log out |
+| `account delete` | Prepare, confirm, inspect or cancel permanent account deletion |
 | `billing` | Inspect agent billing and explicitly execute an authorized upgrade |
 | `config` | View or set local configuration |
 | `doctor` | Check local readiness; `--online` adds connectivity checks |
@@ -101,9 +102,41 @@ Use the [TTS Buddy agent skill](skills/tts-buddy/SKILL.md) for authentication, v
 
 For Hermes Agent, see the [native TTS Buddy plugin guide](plugins/hermes-ttsbuddy/README.md) for installation, profile setup, audio delivery, and job recovery.
 
+Find the text-to-speech skill in these directories:
+
+- [skills.sh](https://www.skills.sh/ngelik/ttsbuddy-cli/tts-buddy)
+- [SkillMD.ai](https://skillmd.ai/skills/tts-buddy-text-to-speech-agent-skill/)
+
 Agent access is issued through the owner-approved [Auth.md flow](https://www.ttsbuddy.com/auth.md). The CLI accepts those credentials but does not register or renew them. Structured email authentication is also available for authorized mailbox workflows; see the skill for the start/verify protocol.
 
 **Login approval is not spending permission.** Production agent purchases require a separate owner grant for the exact monthly upgrade, completed payment setup, a current quote, and an explicit `billing upgrade` command. Exhausted quota, login, and synthesis retries never purchase a plan automatically. Follow the skill's billing procedure before any purchase or synthesis retry.
+
+## Permanently delete an account
+
+Available from **v0.16.0**. Deletion cancels subscriptions and permanently removes
+cloud files, credentials, and identity. Local downloads remain. `auth logout`
+only signs out a CLI session; `auth delete` is not a command.
+
+```bash
+ttsbuddy account delete start --email you@example.com --json
+# Securely supply the fresh six-digit email code through stdin, followed by EOF.
+ttsbuddy account delete confirm --challenge-id <id> \
+  --confirm-email you@example.com --code-stdin --yes --json
+ttsbuddy account delete status --challenge-id <id> --json
+# Before submission only:
+ttsbuddy account delete cancel --challenge-id <id> --json
+```
+
+Fresh email verification, the exact prepared email, and `--yes` are required;
+saved speech or agent credentials do not authorize deletion. Keep codes out of
+arguments and logs. Use the same private config directory throughout.
+
+Preparation reports `deleted: false`; only verified completion reports
+`deleted: true`. Pending or unknown outcomes are not success. Preserve the
+challenge and request IDs; use `status` before any explicit retry. For read-only
+email verification, use `status --code-stdin`: it sends GET only.
+See the [skill's deletion contract](skills/tts-buddy/SKILL.md#permanently-delete-an-account-v0160)
+for recovery, receipt handling, and cancellation limits.
 
 ## Help and development
 
