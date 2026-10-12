@@ -1,6 +1,6 @@
 ---
 name: tts-buddy
-description: Text-to-speech for AI agents using the TTS Buddy CLI. Convert plain text, text or Markdown files, piped input (stdin), and public HTML webpages into saved MP3 audio. Use for voice and language selection, speech speed control, authorized sign-in, asynchronous job tracking, and interrupted-job recovery without duplicate synthesis. Includes guidance for REST API and hosted MCP integrations.
+description: Text-to-speech for AI agents using the TTS Buddy CLI. Convert plain text, text or Markdown files, piped input (stdin), and public HTML webpages into saved MP3 audio. Use for voice and language selection, speech speed control, authorized sign-in or explicitly requested account deletion, asynchronous job tracking, and interrupted-job recovery without duplicate synthesis. Includes guidance for REST API and hosted MCP integrations.
 ---
 
 # TTS Buddy — Text-to-Speech for AI Agents
@@ -161,6 +161,10 @@ when retaining or printing receipts for review.
 
 Authoritative entry points:
 
+- Agent capabilities: https://www.ttsbuddy.com/agentic
+- Capability manifest: https://www.ttsbuddy.com/agentic.json
+- Capability Markdown: https://www.ttsbuddy.com/agentic.md
+- OpenAPI contract: https://www.ttsbuddy.com/agentic.openapi.json
 - Agent quickstart: https://www.ttsbuddy.com/docs/developers/agent-quickstart
 - CLI reference: https://www.ttsbuddy.com/docs/developers/cli
 - Authentication: https://www.ttsbuddy.com/auth.md
@@ -454,6 +458,67 @@ Distinguish a tool-reported lock, timeout, unavailable tab, and actual login
 rejection. Do not change operating-system security settings as part of a TTS
 task.
 
+### Permanently delete an account (v0.16.0+)
+
+Use this workflow only when the user requests permanent deletion of the named
+account. Ordinary synthesis cleanup uses `auth logout`; it does not authorize
+account deletion. Deletion cancels subscriptions and removes cloud files,
+credentials, and identity. Local audio downloads remain.
+
+Deletion requires fresh existing-account email verification. Saved `ttsb_`,
+`ttsc_`, and `ttsa_` credentials cannot authorize it; do not pass `--key`.
+Keep the same private config directory throughout and read only the authorized
+mailbox's new verification message. Never expose codes, JWTs, native tokens, or
+raw continuation files in arguments, logs, or receipts.
+
+```sh
+"$TTSBUDDY_BIN" account delete start --email "$EMAIL" --json
+# Pass the six-digit code securely on stdin, ending with EOF:
+"$TTSBUDDY_BIN" account delete confirm --challenge-id "$CHALLENGE_ID" \
+  --confirm-email "$EMAIL" --code-stdin --yes --json
+"$TTSBUDDY_BIN" account delete status --challenge-id "$CHALLENGE_ID" --json
+```
+
+A new challenge returns `verification_required` and `deleted: false`; `start`
+never creates an account. An active continuation resumes its saved state.
+Use the returned challenge ID. `confirm` requires `--yes` and an exact match
+for the prepared email before verification or DELETE. Reuse the secure stdin
+code-entry method above with the deletion command's arguments.
+
+To verify identity and inspect status without deleting, use
+`account delete status --challenge-id "$CHALLENGE_ID" --code-stdin --json`
+after `start`. It verifies the code and sends GET only. Only explicit `confirm`
+may submit DELETE. `auth delete --json` is invalid and exits nonzero.
+
+Preserve challenge, request, and correlation IDs in a nonsecret receipt. The CLI
+saves a stable request UUID before DELETE and never automatically retries it.
+Pending, partial, failed, and unknown outcomes exit nonzero; neither preparation
+nor a failed subsequent login proves deletion. Recovery:
+
+- Run `status` with the same config and challenge first. Explicitly rerun
+  `confirm` with the same email and `--yes` only when a retry is authorized;
+  a valid saved proof needs no new code and reuses the original request UUID.
+- If proof expires, run `start` for the original email, then
+  `status --code-stdin` for read-only recovery. The original owner and request
+  UUID remain bound. If identity is already gone and completion cannot be
+  verified, report the unresolved outcome and contact support@ttsbuddy.com
+  with the saved request ID.
+- Only a validated completed receipt reports `deleted: true`. Cached completion
+  has `source: local_completed_receipt` and its verification timestamp.
+  `local_receipt_saved: false` with a nonzero exit means the server completed
+  deletion but local persistence failed: retain the server receipt and remove
+  temporary authentication state from this private config directory.
+
+Cancel an unused challenge with
+`account delete cancel --challenge-id "$CHALLENGE_ID" --json`. It revokes
+its temporary authentication; it cannot undo submitted deletion. Add
+`--apple-manual-fallback-confirmed` only if the service requires it and the
+user accepts manual Sign in with Apple revocation. Unrelated saved credentials
+are preserved because their ownership is not recorded; do not erase another
+workflow's profile. The production endpoint is pinned. Local fixtures alone
+may use `TTSBUDDY_ACCOUNT_DELETION_URL` with the explicit
+`TTSBUDDY_ALLOW_CUSTOM_API_URL=true` trust opt-in.
+
 ## 4. Discover a valid voice
 
 Query the catalog instead of guessing IDs or speed ranges:
@@ -607,7 +672,7 @@ error output even when the process exits nonzero.
 | `download JOB_ID --output file.mp3 --json` | Waits if needed, then saves existing job audio |
 | `--output -` | Binary stdout workflow; keep separate from JSON |
 
-For synthesis, status, download, machine-readable auth commands, billing,
+For synthesis, status, download, machine-readable auth commands, account deletion, billing,
 doctor, and voices, `--json` provides structured stdout; retain stderr
 separately. Completion JSON uses
 top-level `audio_url` and `job_id`, with metadata under `audio` and `stats`.

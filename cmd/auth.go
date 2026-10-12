@@ -52,7 +52,7 @@ var runBrowserOAuth = func(ctx context.Context, issuer, clientID string, allowCu
 	return client.Run(ctx)
 }
 
-var authCmd = &cobra.Command{Use: "auth", Short: "Sign in and manage the CLI session", Args: noArgs}
+var authCmd = &cobra.Command{Use: "auth", Short: "Sign in and manage the CLI session", Args: noArgs, RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() }}
 var authLoginCmd = &cobra.Command{Use: "login", Short: "Sign in with an email code (or create an account with --signup)", Args: noArgs, RunE: runAuthLogin}
 var authEmailCmd = &cobra.Command{Use: "email", Short: "Sign in with an email code (or create an account with --signup)", Args: noArgs, RunE: runAuthLogin}
 var authEmailStartCmd = &cobra.Command{Use: "start", Short: "Start a machine-readable email authentication challenge", Args: noArgs, RunE: runAuthEmailStart}
