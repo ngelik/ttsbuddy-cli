@@ -3,6 +3,8 @@ GORELEASER_VER  := v2.18.0
 LINT_VERSION    := v2.13.2
 GOVULNCHECK_VER := v1.7.0
 SYFT_VERSION    := v1.51.1
+HERMES_SOURCE   ?=
+HERMES_PYTHON   ?= python3
 
 VERSION ?= dev
 CLERK_OAUTH_CLIENT_ID ?= gRApqxGCscvVfceh
@@ -14,7 +16,7 @@ LDFLAGS := -s -w \
   -X $(MODULE)/cmd.Date=$(DATE) \
   -X $(MODULE)/cmd.ClerkOAuthClientID=$(CLERK_OAUTH_CLIENT_ID)
 
-.PHONY: build test test-live test-acceptance lint vuln tools release-snapshot check-actions-pinned clerk-auth-probe clean
+.PHONY: build test test-live test-acceptance test-hermes-plugin lint vuln tools release-snapshot check-actions-pinned clerk-auth-probe clean
 
 build:
 	go build -ldflags "$(LDFLAGS)" -o bin/ttsbuddy ./cmd/ttsbuddy
@@ -25,6 +27,11 @@ test:
 
 test-live:
 	TTSBUDDY_TEST_LIVE=1 go test -race -count=1 -run TestLive ./...
+
+test-hermes-plugin:
+	@test -n "$(HERMES_SOURCE)" || { echo "Set HERMES_SOURCE to a pinned Hermes Agent checkout." >&2; exit 2; }
+	@test -f "$(HERMES_SOURCE)/agent/tts_provider.py" || { echo "HERMES_SOURCE does not contain agent/tts_provider.py." >&2; exit 2; }
+	PYTHONPATH="$(abspath $(HERMES_SOURCE))" "$(HERMES_PYTHON)" -m unittest discover -s plugins/hermes-ttsbuddy/tests -v
 
 clerk-auth-probe:
 	go run ./tools/clerk-fapi-probe $(PROBE_ARGS)

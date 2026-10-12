@@ -61,6 +61,35 @@ jobs:
           cache: true
       - run: go test -race -count=1 ./...
 
+  hermes-plugin:
+    name: Hermes plugin tests
+    needs: actions-security
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout pinned Hermes source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NousResearch/hermes-agent
+          ref: 818c13be1dc4fd28987e1e881a9408224afd4535
+      - name: Checkout TTS Buddy CLI
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
+          path: ttsbuddy-cli
+      - name: Prepare Hermes PM test environment
+        id: hermes-pm
+        uses: ./.github/actions/setup-pm
+        with:
+          extras: '[]'
+          test-environment: 'true'
+      - name: Run plugin regression tests against pinned Hermes
+        env:
+          HERMES_SOURCE: ${{ github.workspace }}
+          HERMES_PYTHON: ${{ steps.hermes-pm.outputs.python-path }}
+        run: make -C ttsbuddy-cli test-hermes-plugin
+
   govulncheck:
     name: Govulncheck
     needs: actions-security
@@ -136,7 +165,7 @@ jobs:
   security-gate:
     name: Security gate
     if: always()
-    needs: [actions-security, dependency-review, test, govulncheck, codeql, lint, build]
+    needs: [actions-security, dependency-review, test, hermes-plugin, govulncheck, codeql, lint, build]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -146,6 +175,7 @@ jobs:
           ACTIONS_SECURITY: ${{ needs.actions-security.result }}
           DEPENDENCY_REVIEW: ${{ needs.dependency-review.result }}
           TEST: ${{ needs.test.result }}
+          HERMES_PLUGIN: ${{ needs.hermes-plugin.result }}
           GOVULNCHECK: ${{ needs.govulncheck.result }}
           CODEQL: ${{ needs.codeql.result }}
           LINT: ${{ needs.lint.result }}
@@ -154,6 +184,7 @@ jobs:
           set -euo pipefail
           test "$ACTIONS_SECURITY" = success
           test "$TEST" = success
+          test "$HERMES_PLUGIN" = success
           test "$GOVULNCHECK" = success
           test "$CODEQL" = success
           test "$LINT" = success

@@ -1,0 +1,30 @@
+name: ttsbuddy
+version: 0.1.0
+description: "TTS Buddy text-to-speech provider for Hermes Agent"
+requires_hermes: ">=0.21.6"
+provides_tools:
+  - ttsbuddy_recover
+config_schema:
+  api_key:
+    type: secret
+    env: TTSBUDDY_API_KEY
+    label: TTS Buddy API key
+    description: "Profile-scoped TTS Buddy agent credential"
+  cli_config_dir:
+    type: string
+    label: TTS Buddy CLI config directory
+    description: "Absolute path to the CLI profile whose saved credentials should be used"
+  cli_path:
+    type: string
+    default: ttsbuddy
+    label: TTS Buddy CLI executable
+    description: "Executable name on PATH or an absolute path to the CLI binary"
+  language:
+    type: string
+    label: Supertonic language
+    description: "Optional language code for Supertonic voices; Kokoro voices use their native language"
+  poll_timeout_seconds:
+    type: integer
+    default: 600
+    label: Job poll timeout in seconds
+    description: "Between 30 and 1800 seconds; download time is allowed in addition"
