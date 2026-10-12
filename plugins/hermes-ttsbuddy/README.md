@@ -1,6 +1,6 @@
 # TTS Buddy for Hermes Agent
 
-This native Hermes provider delegates authentication, submission, polling, and MP3 downloads to the installed TTS Buddy CLI. It makes no direct HTTP requests and does not install software, log in, or purchase plans. The plugin was validated with Hermes Agent 0.21.6 and TTS Buddy CLI 0.15.1; it declares Hermes 0.21.6 as its minimum version.
+This native Hermes provider invokes the installed TTS Buddy CLI for authentication, submission, polling, and MP3 downloads. The CLI sends synthesis text to the TTS Buddy API and uses the account's available usage quota; each synthesis is marked with the `agent` execution context. The plugin does not install software, log in, or purchase plans. It was validated with Hermes Agent 0.21.7 and TTS Buddy CLI 0.15.1; its minimum Hermes version is 0.21.7.
 
 ## Install
 
@@ -49,9 +49,11 @@ If both are configured, the profile secret takes precedence. The plugin resolves
 
 ## Audio and recovery
 
-The CLI downloads MP3. Hermes 0.21.6 can convert that artifact to Opus for voice-bubble platforms; the provider does not stream PCM. When another output format is requested, the saved file is still MP3 and uses an `.mp3` filename. TTS Buddy supports speed from `0.5` through `1.5`.
+The CLI downloads MP3. Hermes 0.21.7 can convert that artifact to Opus for voice-bubble platforms; the provider does not stream PCM. When another output format is requested, the saved file is still MP3 and uses an `.mp3` filename. TTS Buddy supports speed from `0.5` through `1.5`.
 
-The provider stages and verifies the MP3, publishes it without replacing an existing MP3, and checks that the reported path and byte count match. **For synthesis through Hermes 0.21.6, use the default timestamped output or provide a fresh, unique output path and stem on every call. Do not reuse an existing path or same-stem audio path.** Hermes's native TTS dispatcher registers intermediate paths for cleanup before calling a provider and can remove an existing path after a failed dispatch; its MP3-to-Opus conversion can also write a same-stem `.ogg`. The provider cannot prevent those host-level actions from inside the provider callback. This limitation does not apply to the separate recovery tool's destination check.
+The provider stages and verifies the MP3, publishes it without replacing an existing MP3, and checks that the reported path and byte count match. Hermes 0.21.7 stages synthesis beside an existing requested output, so a failed synthesis preserves that existing file. On successful delivery, Hermes may still replace the requested path, and MP3-to-Opus conversion may write a same-stem `.ogg`. **Use the default timestamped output or provide a fresh, unique output path and stem on every call.**
+
+The plugin launches the CLI as a subprocess and passes speech text through standard input. The CLI may read or update its own configuration and job state in the selected `cli_config_dir`; the plugin does not open CLI credential files. With the profile-secret route, Hermes supplies the API key to the CLI process. With the existing CLI login route, the CLI uses credentials from the selected CLI profile.
 
 A local timeout or interruption stops the CLI process and removes partial local files; it does not cancel a hosted job. If Hermes reports a known job ID, use its `ttsbuddy_recover` tool with that exact ID and a new output path. Recovery uses the same profile credential route and invokes the CLI's download command for that existing job; it never submits speech. If the outcome is uncertain and no job ID is available, keep the returned idempotency key and do not retry with a different key.
 

@@ -347,6 +347,34 @@ class ProviderTests(unittest.TestCase):
                 self.assertNotIn("outcome may be uncertain", str(caught.exception))
         self.assertEqual(sum("speak" in call["argv"] for call in self._calls()), 2)
 
+    def test_hermes_failed_dispatch_preserves_preexisting_output(self):
+        from tools import tts_tool
+        import tools.tts_tool_plugins as tts_tool_plugins
+
+        target = self.root / "existing.mp3"
+        original = b"preexisting user file"
+        target.write_bytes(original)
+        with mock.patch.object(tts_tool, "_load_tts_config", return_value={"provider": "ttsbuddy", "voice": "st_m1"}), \
+                mock.patch.object(tts_tool_plugins, "_lookup_plugin_provider", return_value=self.provider), \
+                mock.patch.object(self.provider, "synthesize", wraps=self.provider.synthesize) as synthesize, \
+                self._call_env(FAKE_MODE="quota"), \
+                profile_scope("alpha", {"TTSBUDDY_API_KEY": "ttsb_alpha"}):
+            with self.assertLogs(tts_tool.logger, level="ERROR"):
+                result = json.loads(tts_tool.text_to_speech_tool("hello", output_path=str(target)))
+
+        self.assertFalse(result["success"])
+        self.assertEqual(target.read_bytes(), original)
+        plugin_output = Path(synthesize.call_args.args[1])
+        self.assertNotEqual(plugin_output, target)
+        self.assertTrue(plugin_output.name.startswith(".existing."))
+        self.assertFalse(plugin_output.exists())
+        calls = self._calls()
+        self.assertEqual(sum("speak" in call["argv"] for call in calls), 1)
+        unexpected = {path.name for path in self.root.iterdir()} - {
+            "calls.jsonl", "hermes-home", self.cli.name, "existing.mp3",
+        }
+        self.assertEqual(unexpected, set())
+
     def test_exact_id_recovery_guidance_omits_raw_streams_and_urls(self):
         with self._call_env(FAKE_MODE="recovery"), profile_scope("alpha", {"TTSBUDDY_API_KEY": "ttsb_alpha"}):
             with self.assertRaises(TTSBuddyError) as caught:

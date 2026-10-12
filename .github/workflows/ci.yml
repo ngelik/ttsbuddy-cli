@@ -67,11 +67,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - name: Checkout pinned Hermes source
+      - name: Checkout Hermes v0.21.7 source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: NousResearch/hermes-agent
-          ref: 818c13be1dc4fd28987e1e881a9408224afd4535
+          ref: 71d34bad1045610252eda02ee79549436896e784 # v0.21.7
       - name: Checkout TTS Buddy CLI
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

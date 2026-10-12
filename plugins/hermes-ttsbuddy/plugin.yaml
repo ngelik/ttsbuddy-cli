@@ -1,7 +1,7 @@
 name: ttsbuddy
 version: 0.1.0
 description: "TTS Buddy text-to-speech provider for Hermes Agent"
-requires_hermes: ">=0.21.6"
+requires_hermes: ">=0.21.7"
 provides_tools:
   - ttsbuddy_recover
 config_schema:
