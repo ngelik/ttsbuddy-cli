@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import argparse
+import contextlib
+import io
 import json
 import importlib
 import importlib.util
@@ -28,6 +31,7 @@ provider_module = importlib.import_module("hermes_ttsbuddy.provider")
 TTSBuddyError = provider_module.TTSBuddyError
 TTSBuddyProvider = provider_module.TTSBuddyProvider
 register = plugin.register
+cli_module = importlib.import_module("hermes_ttsbuddy.cli")
 
 
 _ACTIVE_PROFILE: ContextVar[str] = ContextVar("ttsbuddy_test_profile", default="default")
@@ -39,6 +43,8 @@ class FakeContext:
         self.profiles = profiles or {}
         self.registered = []
         self.tools = []
+        self.cli_commands = []
+        self.commands = {}
 
     def get_config(self, key, default=None):
         selected = self.profiles.get(_ACTIVE_PROFILE.get(), self.settings)
@@ -49,6 +55,12 @@ class FakeContext:
 
     def register_tool(self, **tool):
         self.tools.append(tool)
+
+    def register_cli_command(self, **command):
+        self.cli_commands.append(command)
+
+    def register_command(self, name, handler, **metadata):
+        self.commands[name] = {"handler": handler, **metadata}
 
 
 @contextmanager
@@ -70,14 +82,64 @@ import sys
 import time
 
 argv = sys.argv[1:]
+read_stdin = "speak" in argv or "--code-stdin" in argv
 record = os.environ.get("FAKE_RECORD")
 if record:
     with open(record, "a", encoding="utf-8") as stream:
-        stream.write(json.dumps({"argv": argv, "env": dict(os.environ), "stdin": sys.stdin.read() if "speak" in argv else ""}) + "\n")
-elif "speak" in argv:
-    text = sys.stdin.read()
-else:
-    text = ""
+        stream.write(json.dumps({"argv": argv, "env": dict(os.environ), "stdin": sys.stdin.read() if read_stdin else ""}) + "\n")
+elif read_stdin:
+    sys.stdin.read()
+
+mode = os.environ.get("FAKE_MODE", "success")
+
+if "version" in argv:
+    print(json.dumps({"version": os.environ.get("FAKE_VERSION", "0.16.0")}))
+    sys.exit(0)
+
+if "account" in argv and "delete" in argv:
+    stage = argv[argv.index("delete") + 1]
+    if mode == "deletion_timeout":
+        time.sleep(5)
+    if mode == "deletion_invalid_json":
+        print("{not-json")
+        sys.exit(0)
+    state = os.environ.get("FAKE_DELETION_STATE")
+    if state is None:
+        state = {"start": "verification_required", "confirm": "completed", "status": "completed", "cancel": "cancelled"}[stage]
+    complete = state == "completed"
+    successful = state in ("verification_required", "ready", "unknown", "requested", "running",
+                           "failed", "none", "completed", "cancelled")
+    if "FAKE_DELETION_SUCCESS" in os.environ:
+        successful = os.environ["FAKE_DELETION_SUCCESS"] == "true"
+    payload = {
+        "success": successful,
+        "deleted": complete,
+        "state": state,
+        "challenge_id": os.environ.get("FAKE_DELETION_CHALLENGE_ID", "a" * 32),
+        "source": "server_response",
+        "request_id": "11111111-2222-3333-4444-555555555555",
+        "correlation_id": "66666666-7777-8888-9999-aaaaaaaaaaaa",
+        "apple_authorization": "revoked" if complete else "not_linked",
+        "verified_at": "2026-10-12T12:00:00Z" if complete else None,
+        "expires_at": "2026-10-12T12:30:00Z" if stage == "start" else None,
+        "expiry_scope": "cli_continuation_deadline" if stage == "start" else None,
+        "local_credentials": "preserved; ownership is not recorded" if complete else None,
+        "partial_cleanup": state == "partial",
+        "local_receipt_saved": os.environ.get("FAKE_DELETION_LOCAL_RECEIPT_SAVED", "true") == "true",
+        "pending_count": 2 if state == "partial" else 0,
+        "error_code": os.environ.get("FAKE_DELETION_ERROR_CODE", "DELETION_INCOMPLETE" if not successful else ""),
+        "message": "OTP-DO-NOT-RETURN https://secret.example.invalid/token",
+        "next_action": "RAW-UNSAFE-NEXT-ACTION",
+        "verification_code": "123456",
+    }
+    if os.environ.get("FAKE_DELETION_OMIT_CHALLENGE") == "true":
+        del payload["challenge_id"]
+    print(json.dumps(payload))
+    if mode == "deletion_timeout_after_receipt":
+        sys.stdout.flush()
+        time.sleep(5)
+    default_exit = "0" if successful else "1"
+    sys.exit(int(os.environ.get("FAKE_DELETION_EXIT", default_exit)))
 
 if "doctor" in argv:
     print(json.dumps({"ready": os.environ.get("FAKE_DOCTOR_READY", "yes") == "yes",
@@ -94,7 +156,6 @@ if "voices" in argv:
     ]))
     sys.exit(0)
 
-mode = os.environ.get("FAKE_MODE", "success")
 if "download" in argv:
     job_id = argv[argv.index("download") + 1]
     output = pathlib.Path(argv[argv.index("--output") + 1])
@@ -227,6 +288,338 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(context.tools[0]["name"], "ttsbuddy_recover")
         self.assertEqual(context.tools[0]["toolset"], "tts")
         self.assertEqual(context.tools[0]["schema"]["parameters"]["required"], ["job_id", "output_path"])
+        self.assertEqual(len(context.cli_commands), 1)
+        self.assertEqual(context.cli_commands[0]["name"], "ttsbuddy")
+        self.assertTrue(callable(context.cli_commands[0]["setup_fn"]))
+        self.assertTrue(callable(context.cli_commands[0]["handler_fn"]))
+        self.assertEqual(set(context.commands), {"ttsbuddy-account"})
+        self.assertNotIn("123456", str(context.tools[0]["schema"]))
+
+    def _registered_context(self, settings=None, profiles=None):
+        context = FakeContext(self.settings if settings is None else settings, profiles)
+        register(context)
+        return context
+
+    def _dispatch_registered_cli(self, context, argv):
+        from hermes_cli.main import _attach_plugin_cli_command
+
+        parser = argparse.ArgumentParser()
+        subparsers = parser.add_subparsers(dest="command")
+        _attach_plugin_cli_command(subparsers, context.cli_commands[0])
+        output = io.StringIO()
+        errors = io.StringIO()
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+            try:
+                args = parser.parse_args(["ttsbuddy", *argv])
+                status = args.func(args)
+            except SystemExit as exc:
+                status = int(exc.code or 0)
+        return status, output.getvalue(), errors.getvalue()
+
+    def test_account_deletion_all_stages_use_real_hermes_dispatch_and_cli_profile(self):
+        config_dir = self.root / "deletion-cli-config"
+        config_dir.mkdir(mode=0o700)
+        context = self._registered_context({"cli_path": str(self.cli), "cli_config_dir": str(config_dir)})
+        challenge = "a" * 32
+        with self._call_env(
+            FAKE_MODE="success",
+            TTSBUDDY_API_KEY="ambient-speech-key",
+            TTSBUDDY_ACCOUNT_DELETION_URL="https://untrusted.invalid/delete",
+            TTSBUDDY_CUSTOM_ENDPOINT="https://untrusted.invalid",
+        ), profile_scope("alpha", {"TTSBUDDY_API_KEY": "ttsb_profile_alpha"}):
+            start_rc, start_out, start_err = self._dispatch_registered_cli(
+                context, ["account", "delete", "start", "--email", "owner@example.com"],
+            )
+            with mock.patch.object(cli_module, "_is_tty", return_value=True), \
+                    mock.patch.object(cli_module.getpass, "getpass", return_value="123456"):
+                confirm_rc, confirm_out, confirm_err = self._dispatch_registered_cli(
+                    context, ["account", "delete", "confirm", "--challenge-id", challenge,
+                              "--confirm-email", "owner@example.com", "--yes"],
+                )
+            status_rc, status_out, status_err = self._dispatch_registered_cli(
+                context, ["account", "delete", "status", "--challenge-id", challenge],
+            )
+            cancel_rc, cancel_out, cancel_err = self._dispatch_registered_cli(
+                context, ["account", "delete", "cancel", "--challenge-id", challenge],
+            )
+
+        self.assertEqual([start_rc, confirm_rc, status_rc, cancel_rc], [0, 0, 0, 0])
+        self.assertEqual([start_err, confirm_err, status_err, cancel_err], ["", "", "", ""])
+        start_result, confirm_result, status_result, cancel_result = map(
+            json.loads, (start_out, confirm_out, status_out, cancel_out),
+        )
+        self.assertEqual(start_result["state"], "verification_required")
+        self.assertEqual(start_result["challenge_id"], challenge)
+        self.assertIn(f"confirm --challenge-id {challenge}", start_result["next_action"])
+        self.assertEqual(confirm_result["state"], "completed")
+        self.assertTrue(confirm_result["deleted"])
+        self.assertEqual(confirm_result["request_id"], "11111111-2222-3333-4444-555555555555")
+        self.assertEqual(status_result["state"], "completed")
+        self.assertEqual(cancel_result["state"], "cancelled")
+        self.assertNotIn("owner@example.com", start_out)
+        self.assertNotIn("123456", confirm_out)
+
+        calls = self._calls()
+        deletion_calls = [call for call in calls if "account" in call["argv"]]
+        self.assertEqual(len(calls), 8, "each stage gets one read-only version probe and one CLI delegation")
+        self.assertEqual([call["argv"][call["argv"].index("delete") + 1] for call in deletion_calls],
+                         ["start", "confirm", "status", "cancel"])
+        for call in calls:
+            self.assertFalse(any(key.upper().startswith("TTSBUDDY_") for key in call["env"]))
+        for call in deletion_calls:
+            argv = call["argv"]
+            self.assertEqual(argv[argv.index("--config-dir") + 1], str(config_dir.resolve()))
+            self.assertIn("--json", argv)
+            self.assertNotIn("123456", argv)
+        self.assertIn("--code-stdin", deletion_calls[1]["argv"])
+        self.assertEqual(deletion_calls[1]["stdin"], "123456\n")
+        self.assertNotIn("--code-stdin", deletion_calls[2]["argv"])
+        self.assertEqual(deletion_calls[2]["stdin"], "")
+
+    def test_account_deletion_protected_stdin_is_bounded_and_optional_for_status(self):
+        config_dir = self.root / "deletion-cli-config"
+        config_dir.mkdir(mode=0o700)
+        context = self._registered_context({"cli_path": str(self.cli), "cli_config_dir": str(config_dir)})
+        challenge = "a" * 32
+        with self._call_env(FAKE_MODE="success"), profile_scope("alpha", {"TTSBUDDY_API_KEY": "ttsb_alpha"}):
+            with mock.patch.object(cli_module.sys, "stdin", io.StringIO("654321\n")):
+                confirm_rc, confirm_out, _ = self._dispatch_registered_cli(
+                    context, ["account", "delete", "confirm", "--challenge-id", challenge,
+                              "--confirm-email", "owner@example.com", "--yes", "--code-stdin"],
+                )
+            with mock.patch.object(cli_module.sys, "stdin", io.StringIO("")):
+                status_rc, status_out, _ = self._dispatch_registered_cli(
+                    context, ["account", "delete", "status", "--challenge-id", challenge, "--code-stdin"],
+                )
+            with mock.patch.object(cli_module.sys, "stdin", io.StringIO("123456789")):
+                too_long_rc, too_long_out, too_long_err = self._dispatch_registered_cli(
+                    context, ["account", "delete", "status", "--challenge-id", challenge, "--code-stdin"],
+                )
+
+        self.assertEqual([confirm_rc, status_rc, too_long_rc], [0, 0, 2])
+        self.assertEqual(too_long_err, "")
+        self.assertEqual(json.loads(too_long_out)["error_code"], "INVALID_CODE_INPUT")
+        self.assertNotIn("654321", confirm_out)
+        self.assertEqual(json.loads(status_out)["state"], "completed")
+        actions = [call for call in self._calls() if "account" in call["argv"]]
+        self.assertEqual(len(actions), 2, "invalid bounded input must stop before the CLI operation")
+        self.assertEqual(actions[0]["stdin"], "654321\n")
+        self.assertIn("--code-stdin", actions[1]["argv"])
+        self.assertEqual(actions[1]["stdin"], "")
+
+    def test_account_deletion_hidden_input_fails_closed_without_tty_or_echo(self):
+        config_dir = self.root / "deletion-cli-config"
+        config_dir.mkdir(mode=0o700)
+        context = self._registered_context({"cli_path": str(self.cli), "cli_config_dir": str(config_dir)})
+        args = ["account", "delete", "confirm", "--challenge-id", "a" * 32,
+                "--confirm-email", "owner@example.com", "--yes"]
+        with self._call_env(FAKE_MODE="success"), profile_scope("alpha", {}):
+            with mock.patch.object(cli_module, "_is_tty", return_value=False):
+                no_tty_rc, no_tty_out, _ = self._dispatch_registered_cli(context, args)
+            with mock.patch.object(cli_module, "_is_tty", return_value=True), \
+                    mock.patch.object(cli_module.getpass, "getpass", side_effect=cli_module.getpass.GetPassWarning):
+                hidden_rc, hidden_out, _ = self._dispatch_registered_cli(context, args)
+
+        self.assertEqual([no_tty_rc, hidden_rc], [2, 2])
+        self.assertEqual(json.loads(no_tty_out)["error_code"], "CODE_INPUT_REQUIRED")
+        self.assertEqual(json.loads(hidden_out)["error_code"], "HIDDEN_INPUT_UNAVAILABLE")
+        self.assertNotIn("owner@example.com", no_tty_out + hidden_out)
+        calls = self._calls()
+        self.assertEqual(len(calls), 2)
+        self.assertTrue(all("version" in call["argv"] for call in calls))
+
+    def test_account_deletion_confirmation_and_unknown_args_fail_closed(self):
+        config_dir = self.root / "deletion-cli-config"
+        config_dir.mkdir(mode=0o700)
+        context = self._registered_context({"cli_path": str(self.cli), "cli_config_dir": str(config_dir)})
+        challenge = "a" * 32
+        with self._call_env(FAKE_MODE="success"), profile_scope("alpha", {"TTSBUDDY_API_KEY": "ttsb_alpha"}):
+            missing_rc, missing_out, _ = self._dispatch_registered_cli(
+                context, ["account", "delete", "confirm", "--challenge-id", challenge],
+            )
+            nested_unknown_rc, nested_unknown_out, nested_unknown_err = self._dispatch_registered_cli(
+                context, ["account", "delete", "confirm", "--challenge-id", challenge,
+                          "--confirm-email", "owner@example.com", "--yes", "--otp", "OTP-SENTINEL-123456"],
+            )
+            leading_unknown_rc, leading_unknown_out, leading_unknown_err = self._dispatch_registered_cli(
+                context, ["--otp", "OTP-SENTINEL-123456"],
+            )
+
+        self.assertEqual(missing_rc, 2)
+        self.assertEqual(json.loads(missing_out)["error_code"], "CONFIRMATION_REQUIRED")
+        self.assertEqual([nested_unknown_rc, leading_unknown_rc], [2, 2])
+        self.assertNotIn("OTP-SENTINEL-123456", nested_unknown_out + nested_unknown_err + leading_unknown_out + leading_unknown_err)
+        self.assertIn("Invalid TTS Buddy account command arguments", nested_unknown_err)
+        self.assertIn("Invalid TTS Buddy account command arguments", leading_unknown_err)
+        self.assertEqual(self._calls(), [])
+
+    def test_account_deletion_chat_command_is_guidance_only(self):
+        context = self._registered_context()
+        handler = context.commands["ttsbuddy-account"]["handler"]
+        guidance = handler("confirm --confirm-email owner@example.com --yes OTP-SENTINEL-123456")
+        self.assertIn("local Hermes terminal", guidance)
+        self.assertNotIn("owner@example.com", guidance)
+        self.assertNotIn("123456", guidance)
+        self.assertEqual(self._calls(), [])
+
+    def test_account_deletion_requires_explicit_config_and_supported_cli_only_for_deletion(self):
+        no_config = self._registered_context({"cli_path": str(self.cli)})
+        with self._call_env(FAKE_MODE="success"), profile_scope("alpha", {"TTSBUDDY_API_KEY": "ttsb_speech_only"}):
+            missing_rc, missing_out, _ = self._dispatch_registered_cli(
+                no_config, ["account", "delete", "start", "--email", "owner@example.com"],
+            )
+        self.assertEqual(missing_rc, 2)
+        self.assertEqual(json.loads(missing_out)["error_code"], "CLI_CONFIG_DIR_REQUIRED")
+        self.assertEqual(self._calls(), [])
+
+        config_dir = self.root / "deletion-cli-config"
+        config_dir.mkdir(mode=0o700)
+        context = self._registered_context({"cli_path": str(self.cli), "cli_config_dir": str(config_dir)})
+        with self._call_env(FAKE_MODE="success", FAKE_VERSION="0.15.1"), \
+                profile_scope("alpha", {"TTSBUDDY_API_KEY": "ttsb_speech_only"}):
+            old_rc, old_out, _ = self._dispatch_registered_cli(
+                context, ["account", "delete", "start", "--email", "owner@example.com"],
+            )
+        self.assertEqual(old_rc, 2)
+        self.assertEqual(json.loads(old_out)["error_code"], "CLI_VERSION_UNSUPPORTED")
+        self.assertEqual(len(self._calls()), 1)
+        self.assertNotIn("account", self._calls()[0]["argv"])
+
+        self.record.write_text("", encoding="utf-8")
+        with self._call_env(FAKE_MODE="success", FAKE_VERSION="0.15.1"), \
+                profile_scope("alpha", {"TTSBUDDY_API_KEY": "ttsb_speech_only"}):
+            self._synthesize(path=self.root / "old-cli-speech.mp3")
+        speech_calls = self._calls()
+        self.assertEqual(len(speech_calls), 1)
+        self.assertIn("speak", speech_calls[0]["argv"])
+        self.assertNotIn("version", speech_calls[0]["argv"])
+
+    def test_account_deletion_profile_settings_refresh_for_each_stage(self):
+        first_config = self.root / "profile-a-config"
+        second_config = self.root / "profile-b-config"
+        first_config.mkdir(mode=0o700)
+        second_config.mkdir(mode=0o700)
+        context = self._registered_context(profiles={
+            "alpha": {"cli_path": str(self.cli), "cli_config_dir": str(first_config)},
+            "beta": {"cli_path": str(self.cli), "cli_config_dir": str(second_config)},
+        })
+        with self._call_env(FAKE_MODE="success"):
+            with profile_scope("alpha", {}):
+                self._dispatch_registered_cli(context, ["account", "delete", "start", "--email", "owner@example.com"])
+            with profile_scope("beta", {}):
+                self._dispatch_registered_cli(context, ["account", "delete", "status", "--challenge-id", "a" * 32])
+        deletion_calls = [call for call in self._calls() if "account" in call["argv"]]
+        self.assertEqual([call["argv"][call["argv"].index("--config-dir") + 1] for call in deletion_calls],
+                         [str(first_config.resolve()), str(second_config.resolve())])
+
+    def test_account_deletion_preserves_unknown_partial_mismatch_and_timeout_states(self):
+        config_dir = self.root / "deletion-cli-config"
+        config_dir.mkdir(mode=0o700)
+        context = self._registered_context({"cli_path": str(self.cli), "cli_config_dir": str(config_dir)})
+        challenge = "a" * 32
+
+        with self._call_env(FAKE_MODE="success", FAKE_DELETION_STATE="unknown", FAKE_DELETION_SUCCESS="true"), \
+                profile_scope("alpha", {}):
+            malformed_rc, malformed_out, _ = self._dispatch_registered_cli(
+                context, ["account", "delete", "status", "--challenge-id", challenge],
+            )
+        self.assertEqual(malformed_rc, 1)
+        malformed = json.loads(malformed_out)
+        self.assertEqual(malformed["state"], "unknown")
+        self.assertFalse(malformed["success"])
+        self.assertNotIn("OTP-DO-NOT-RETURN", malformed_out)
+        self.assertNotIn("RAW-UNSAFE-NEXT-ACTION", malformed_out)
+
+        with self._call_env(FAKE_MODE="success", FAKE_DELETION_STATE="partial"), \
+                profile_scope("alpha", {}):
+            partial_rc, partial_out, _ = self._dispatch_registered_cli(
+                context, ["account", "delete", "status", "--challenge-id", challenge],
+            )
+        self.assertEqual(partial_rc, 1)
+        partial = json.loads(partial_out)
+        self.assertEqual(partial["state"], "partial")
+        self.assertTrue(partial["partial_cleanup"])
+        self.assertEqual(partial["request_id"], "11111111-2222-3333-4444-555555555555")
+
+        for continuation_state in ("verification_required", "ready", "unknown", "requested",
+                                   "running", "failed", "none"):
+            with self.subTest(start_state=continuation_state), \
+                    self._call_env(FAKE_MODE="success", FAKE_DELETION_STATE=continuation_state,
+                                   FAKE_DELETION_SUCCESS="true"), profile_scope("alpha", {}):
+                start_rc, start_out, _ = self._dispatch_registered_cli(
+                    context, ["account", "delete", "start", "--email", "owner@example.com"],
+                )
+            self.assertEqual(start_rc, 0)
+            self.assertEqual(json.loads(start_out)["state"], continuation_state)
+            self.assertFalse(json.loads(start_out)["deleted"])
+
+        with self._call_env(FAKE_MODE="success", FAKE_DELETION_CHALLENGE_ID="b" * 32), \
+                profile_scope("alpha", {}):
+            mismatch_rc, mismatch_out, _ = self._dispatch_registered_cli(
+                context, ["account", "delete", "status", "--challenge-id", challenge],
+            )
+        self.assertEqual(mismatch_rc, 1)
+        self.assertEqual(json.loads(mismatch_out)["error_code"], "CLI_RESPONSE_MISMATCH")
+
+        with self._call_env(FAKE_MODE="success", FAKE_DELETION_STATE="completed",
+                            FAKE_DELETION_OMIT_CHALLENGE="true"), profile_scope("alpha", {}):
+            missing_id_rc, missing_id_out, _ = self._dispatch_registered_cli(
+                context, ["account", "delete", "status", "--challenge-id", challenge],
+            )
+        self.assertEqual(missing_id_rc, 1)
+        missing_id = json.loads(missing_id_out)
+        self.assertEqual(missing_id["error_code"], "CLI_RESPONSE_INVALID")
+        self.assertFalse(missing_id["success"])
+        self.assertFalse(missing_id["deleted"])
+        self.assertEqual(missing_id["state"], "unknown")
+        self.assertIn("Inspect challenge", missing_id["next_action"])
+        self.assertEqual(missing_id["challenge_id"], challenge)
+
+        with self._call_env(FAKE_MODE="success", FAKE_DELETION_STATE="completed",
+                            FAKE_DELETION_LOCAL_RECEIPT_SAVED="false",
+                            FAKE_DELETION_ERROR_CODE="LOCAL_RECEIPT_SAVE_FAILED", FAKE_DELETION_EXIT="1"), \
+                profile_scope("alpha", {}), \
+                mock.patch.object(cli_module.sys, "stdin", io.StringIO("")):
+            receipt_rc, receipt_out, _ = self._dispatch_registered_cli(
+                context, ["account", "delete", "confirm", "--challenge-id", challenge,
+                          "--confirm-email", "owner@example.com", "--yes", "--code-stdin"],
+            )
+        self.assertEqual(receipt_rc, 1)
+        completed_receipt = json.loads(receipt_out)
+        self.assertEqual(completed_receipt["state"], "completed")
+        self.assertTrue(completed_receipt["deleted"])
+        self.assertFalse(completed_receipt["local_receipt_saved"])
+        self.assertIn("Retain this verified completion receipt", completed_receipt["cleanup_warning"])
+        self.assertIn("remove temporary authentication state", completed_receipt["cleanup_warning"])
+        self.assertNotIn("retain the receipt and remove temporary authentication state", receipt_out)
+
+        self.record.write_text("", encoding="utf-8")
+        with self._call_env(FAKE_MODE="deletion_timeout"), \
+                profile_scope("alpha", {}), \
+                mock.patch.object(cli_module, "_DELETE_TIMEOUT_SECONDS", 0.05):
+            timeout_rc, timeout_out, _ = self._dispatch_registered_cli(
+                context, ["account", "delete", "status", "--challenge-id", challenge],
+            )
+        self.assertEqual(timeout_rc, 1)
+        self.assertEqual(json.loads(timeout_out)["error_code"], "CLI_TIMEOUT")
+        self.assertEqual(json.loads(timeout_out)["state"], "unknown")
+        self.assertFalse(json.loads(timeout_out)["deleted"])
+        self.assertEqual(sum("account" in call["argv"] for call in self._calls()), 1)
+
+        self.record.write_text("", encoding="utf-8")
+        with self._call_env(FAKE_MODE="deletion_timeout_after_receipt", FAKE_DELETION_STATE="completed",
+                            FAKE_DELETION_LOCAL_RECEIPT_SAVED="false"), \
+                profile_scope("alpha", {}), mock.patch.object(cli_module, "_DELETE_TIMEOUT_SECONDS", 0.05):
+            completed_timeout_rc, completed_timeout_out, _ = self._dispatch_registered_cli(
+                context, ["account", "delete", "status", "--challenge-id", challenge],
+            )
+        self.assertEqual(completed_timeout_rc, 1)
+        completed_timeout = json.loads(completed_timeout_out)
+        self.assertEqual(completed_timeout["error_code"], "CLI_TIMEOUT")
+        self.assertEqual(completed_timeout["state"], "completed")
+        self.assertTrue(completed_timeout["deleted"])
+        self.assertFalse(completed_timeout["local_receipt_saved"])
+        self.assertIn("remove temporary authentication state", completed_timeout["cleanup_warning"])
 
     def test_success_uses_stdin_json_mp3_agent_context_and_scoped_secret(self):
         with self._call_env(

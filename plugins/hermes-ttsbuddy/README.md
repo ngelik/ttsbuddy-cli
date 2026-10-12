@@ -1,6 +1,6 @@
 # TTS Buddy for Hermes Agent
 
-This native Hermes provider invokes the installed TTS Buddy CLI for authentication, submission, polling, and MP3 downloads. The CLI sends synthesis text to the TTS Buddy API and uses the account's available usage quota; each synthesis is marked with the `agent` execution context. The plugin does not install software, log in, or purchase plans. It was validated with Hermes Agent 0.21.7 and TTS Buddy CLI 0.15.1; its minimum Hermes version is 0.21.7.
+This native Hermes provider invokes the installed TTS Buddy CLI for authentication, submission, polling, and MP3 downloads. The CLI sends synthesis text to the TTS Buddy API and uses the account's available usage quota; each synthesis is marked with the `agent` execution context. The plugin does not install software, log in, or purchase plans. Speech was validated with Hermes Agent 0.21.7 and TTS Buddy CLI 0.15.1; account deletion forwarding requires TTS Buddy CLI 0.16.0 or newer. The minimum Hermes version is 0.21.7.
 
 ## Install
 
@@ -58,6 +58,23 @@ The plugin launches the CLI as a subprocess and passes speech text through stand
 A local timeout or interruption stops the CLI process and removes partial local files; it does not cancel a hosted job. If Hermes reports a known job ID, use its `ttsbuddy_recover` tool with that exact ID and a new output path. Recovery uses the same profile credential route and invokes the CLI's download command for that existing job; it never submits speech. If the outcome is uncertain and no job ID is available, keep the returned idempotency key and do not retry with a different key.
 
 Authentication, quota, rate-limit, and provider errors are returned without raw CLI output, credentials, or signed audio URLs. For account or CLI help, contact [support@ttsbuddy.com](mailto:support@ttsbuddy.com). For the CLI's existing authentication and setup guidance, see the [canonical TTS Buddy CLI skill](https://github.com/ngelik/ttsbuddy-cli/tree/main/skills/tts-buddy).
+
+## Account deletion (TTS Buddy CLI 0.16.0+)
+
+Account deletion is available only from the local Hermes terminal through the registered `hermes ttsbuddy` CLI command. The `/ttsbuddy-account` chat command provides guidance only; it never accepts deletion instructions or verification codes. Deletion requires fresh verification of an existing account and permanently removes cloud files, credentials, and identity, while cancelling subscriptions. Local downloaded audio remains.
+
+All deletion stages require an existing, absolute `cli_config_dir` explicitly selected in the active Hermes profile. The same CLI config directory must be selected for `start`, `confirm`, `status`, and `cancel`, because the TTS Buddy CLI owns the protected continuation and recovery state there. The plugin does not open CLI credential or recovery files. A configured speech `api_key` does not authorize deletion and is never passed to these commands; account deletion uses the selected CLI profile even when the speech secret is also configured. The plugin checks for CLI 0.16.0 before running a deletion stage; older versions continue to support speech.
+
+```text
+hermes ttsbuddy account delete start --email <existing-account-email>
+hermes ttsbuddy account delete confirm --challenge-id <id> --confirm-email <exact-email> --yes
+hermes ttsbuddy account delete status --challenge-id <id>
+hermes ttsbuddy account delete cancel --challenge-id <id>
+```
+
+`confirm` requires both the exact prepared email and explicit `--yes`. In a terminal, the plugin prompts for the six-digit email code without echoing it; press Enter only when reusing proof already retained by the CLI. Alternatively, pass `--code-stdin` and provide at most eight bytes of protected input. The code is forwarded only through the child CLI's stdin and is never placed in arguments or receipts. `status` reads stdin only when its own `--code-stdin` flag is explicitly supplied; it delegates verification and GET-only status recovery to the CLI and never submits deletion. An empty code input lets the CLI decide whether verified proof is already retained.
+
+`cancel` revokes an unused challenge and cannot undo a submitted deletion. Use `--apple-manual-fallback-confirmed` only if the service requires manual Sign in with Apple revocation and the account owner accepts that step. The wrapper makes one CLI call per stage and does not retry. It emits allowlisted JSON while preserving safe challenge, request, and correlation IDs, state, partial-cleanup indicators, and the CLI exit status; unknown or incomplete outcomes remain nonzero and should be checked with `status` using the same config directory.
 
 ## Deterministic tests
 

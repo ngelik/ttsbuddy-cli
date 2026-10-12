@@ -1,6 +1,6 @@
 name: ttsbuddy
-version: 0.1.0
-description: "TTS Buddy text-to-speech provider for Hermes Agent"
+version: 0.2.0
+description: "TTS provider and terminal account deletion delegated to the TTS Buddy CLI"
 requires_hermes: ">=0.21.7"
 provides_tools:
   - ttsbuddy_recover
@@ -13,7 +13,7 @@ config_schema:
   cli_config_dir:
     type: string
     label: TTS Buddy CLI config directory
-    description: "Absolute path to the CLI profile whose saved credentials should be used"
+    description: "Absolute path to the selected CLI profile; required and persistent for account deletion"
   cli_path:
     type: string
     default: ttsbuddy
