@@ -99,6 +99,8 @@ Run `ttsbuddy <command> --help` for flags and usage. Use `--json` for structured
 
 Use the [TTS Buddy agent skill](skills/tts-buddy/SKILL.md) for authentication, voice selection, JSON contracts, safe retries, configuration, and billing recovery. Copy `skills/tts-buddy/` into your agent's skills directory, or give the agent the file directly.
 
+For Hermes Agent, see the [native TTS Buddy plugin guide](plugins/hermes-ttsbuddy/README.md) for installation, profile setup, audio delivery, and job recovery.
+
 Agent access is issued through the owner-approved [Auth.md flow](https://www.ttsbuddy.com/auth.md). The CLI accepts those credentials but does not register or renew them. Structured email authentication is also available for authorized mailbox workflows; see the skill for the start/verify protocol.
 
 **Login approval is not spending permission.** Production agent purchases require a separate owner grant for the exact monthly upgrade, completed payment setup, a current quote, and an explicit `billing upgrade` command. Exhausted quota, login, and synthesis retries never purchase a plan automatically. Follow the skill's billing procedure before any purchase or synthesis retry.
